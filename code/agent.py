@@ -1,10 +1,21 @@
 """
-vr_assistant3.py — Redesigned pipeline
-========================================
+Proactive Agent — Multi-modal input / multi-channel output pipeline
+====================================================================
+Inputs (video + optional wearable telemetry):
+  • camera        — first-person video captured by the user (smart glasses / phone camera)
+  • screen_record — phone or computer screen-recording video
+  • wearable      — sensor data from watches, bands, glasses, etc. (JSON dict or file)
+  Combine camera/screen_record video with wearable data via input_source="multimodal".
+
+Outputs (Part 4 delivery channels):
+  • digital_info    — AR overlays, notifications, digital content, app services
+  • device_control  — phone / PC operations (open app, tap, type, navigate UI)
+  • hardware_robot  — smart-home devices and robot motion / action commands
+
 Timing split:
   • PHASE 0  (Pre-check)  : compliance check — did user follow last session's solutions?
   • PHASE A  (Part 1-3)   : parallel extraction → transcribe → analyse → memory add
-  • PHASE B  (Part 4)     : AR display + user feedback  ← separate timer
+  • PHASE B  (Part 4)     : multi-channel output + user feedback  ← separate timer
   • PHASE C  (Post-4)     : memory consolidation  ← triggered AFTER Part4 feedback,
                             never during Part1-3, so it never blocks response time
 
@@ -70,6 +81,16 @@ VIDEO_NUM_FRAMES = 4            # only used when INPUT_MODE == "video"
 RAW_VIDEO_FPS = 1.0             # only used when INPUT_MODE == "raw_video"
 RAW_VIDEO_MAX_FRAMES = 16       # only used when INPUT_MODE == "raw_video"
 
+# INPUT_SOURCE — what kind of video / sensor data is being ingested
+#   "camera"        → user-shot first-person or POV video (default)
+#   "screen_record" → phone / computer screen-recording video
+#   "wearable"      → wearable sensor data only (no video required)
+#   "multimodal"    → video (camera or screen_record) + wearable_data combined
+INPUT_SOURCE = "camera"
+
+# Valid Part-3 / Part-4 output channels
+OUTPUT_CHANNELS = ("digital_info", "device_control", "hardware_robot")
+
 
 # ---------------------------------------------------------------------------
 # Timer decorator
@@ -91,14 +112,28 @@ def timer(func):
 # ---------------------------------------------------------------------------
 
 class VRAssistant:
-    def __init__(self, video_path, output_dir="output",
+    def __init__(self, video_path=None, output_dir="output",
                  num_threads=None, qwen_api_url="http://localhost:8000",
                  input_mode: str = None, video_num_frames: int = None,
-                 raw_video_fps: float = None, raw_video_max_frames: int = None):
+                 raw_video_fps: float = None, raw_video_max_frames: int = None,
+                 input_source: str = None, wearable_data=None):
         self.video_path = video_path
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(exist_ok=True)
         self.qwen_api_url = qwen_api_url
+
+        self.input_source = (input_source or INPUT_SOURCE).lower()
+        valid_sources = ("camera", "screen_record", "wearable", "multimodal")
+        if self.input_source not in valid_sources:
+            raise ValueError(
+                f"input_source must be one of {valid_sources}, got {self.input_source!r}"
+            )
+        self.wearable_data = self._load_wearable_data(wearable_data)
+
+        if self.input_source == "wearable" and not self.wearable_data:
+            raise ValueError("input_source='wearable' requires wearable_data")
+        if self.input_source != "wearable" and not self.video_path:
+            raise ValueError(f"input_source={self.input_source!r} requires video_path")
 
         # Resolve input-mode config: per-instance arg > module-level constant
         self.input_mode = (input_mode or INPUT_MODE).lower()
@@ -122,6 +157,16 @@ class VRAssistant:
         else:
             print(f"🎛️  Input mode: frame")
 
+        source_labels = {
+            "camera": "user-shot video",
+            "screen_record": "phone/PC screen recording",
+            "wearable": "wearable sensor data",
+            "multimodal": "video + wearable sensors",
+        }
+        print(f"📡 Input source: {self.input_source} ({source_labels[self.input_source]})")
+        if self.wearable_data:
+            print(f"⌚ Wearable sensors loaded: {', '.join(self.wearable_data.keys())}")
+
         # CPU threading
         if num_threads is None:
             num_threads = int(os.cpu_count() * 0.75)
@@ -140,7 +185,7 @@ class VRAssistant:
         # Separate timing buckets
         #   phase_0 = Pre-check  (compliance check against last session's solutions)
         #   phase_a = Part1-3    (extraction → analysis → memory add)
-        #   phase_b = Part4      (AR display + user feedback)
+        #   phase_b = Part4      (multi-channel output + user feedback)
         #   phase_c = Post-4     (consolidation)
         self.timings_phase_0: dict = {}
         self.timings_phase_a: dict = {}
@@ -175,6 +220,65 @@ class VRAssistant:
                 print(f"⚠️  API server running but missing: {', '.join(missing)}")
         except Exception:
             print("❌ API server not available. Run: python api_server.py")
+
+    # -----------------------------------------------------------------------
+    # ─── Input-source helpers ─────────────────────────────────────────────
+    # -----------------------------------------------------------------------
+
+    @staticmethod
+    def _load_wearable_data(wearable_data) -> dict:
+        """Accept a dict or a path to a JSON file with wearable sensor readings."""
+        if wearable_data is None:
+            return {}
+        if isinstance(wearable_data, dict):
+            return wearable_data
+        path = Path(wearable_data)
+        if path.exists():
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else {"readings": data}
+        raise FileNotFoundError(f"Wearable data file not found: {path}")
+
+    def _format_wearable_section(self) -> str:
+        if not self.wearable_data:
+            return ""
+        lines = ["Wearable sensor data:"]
+        for key, value in self.wearable_data.items():
+            if isinstance(value, dict):
+                detail = ", ".join(f"{k}={v}" for k, v in value.items())
+                lines.append(f"- {key}: {detail}")
+            else:
+                lines.append(f"- {key}: {value}")
+        return "\n".join(lines)
+
+    def _format_input_context(self) -> str:
+        """Describe the active input modalities for LLM prompts."""
+        parts = []
+        if self.input_source in ("camera", "screen_record", "multimodal") and self.video_path:
+            if self.input_source == "screen_record":
+                parts.append(
+                    "Input type: phone/computer SCREEN RECORDING. Focus on on-screen UI, "
+                    "apps, text, notifications, cursor/touch interactions, and workflow context."
+                )
+            else:
+                parts.append(
+                    "Input type: user-shot FIRST-PERSON video (camera / smart glasses). "
+                    "Focus on the physical scene, people, objects, and user actions."
+                )
+        if self.input_source in ("wearable", "multimodal") and self.wearable_data:
+            parts.append(
+                "Supplemental wearable telemetry is provided — use heart rate, steps, "
+                "location, posture, or other sensor signals to refine need analysis."
+            )
+        if self.input_source == "wearable" and not self.video_path:
+            parts.append(
+                "Input type: WEARABLE SENSOR DATA ONLY (no video). Infer context and needs "
+                "from physiological / motion / location signals."
+            )
+        wearable_block = self._format_wearable_section()
+        if wearable_block:
+            parts.append(wearable_block)
+        return "\n".join(parts)
 
     # -----------------------------------------------------------------------
     # ─── Shared extraction helpers ────────────────────────────────────────
@@ -343,6 +447,14 @@ class VRAssistant:
                 except Exception:
                     pass
 
+    def _call_text_api(self, prompt: str, timeout: int = 120) -> requests.Response:
+        """Text-only analysis via /consolidate (wearable-only or sensor-heavy input)."""
+        return requests.post(
+            f"{self.qwen_api_url}/consolidate",
+            json={"prompt": prompt},
+            timeout=timeout,
+        )
+
     def format_transcript(self, td: dict) -> str:
         if td.get("no_speech") or not td.get("segments"):
             return "Language: unknown\n\n[No speech detected — visual-only analysis]\n"
@@ -430,13 +542,15 @@ class VRAssistant:
         t0 = time.time()
         prompt = f"""You are reviewing whether a user followed their assistant's previous recommendations.
 
+{self._format_input_context()}
+
 PREVIOUS RECOMMENDED SOLUTIONS:
 {solutions_text}
 
 CURRENT OBSERVATION:
-Transcript: {formatted_transcript}
+{formatted_transcript}
 
-Based on the current image and transcript, did the user act according to any of the previous solutions?
+Based on the current input, did the user act according to any of the previous solutions?
 
 Respond ONLY with this JSON format, no markdown, no extra text:
 {{
@@ -453,9 +567,11 @@ Rules:
 - Keep "summary" to one sentence."""
 
         try:
-            # Accept either a single path (legacy) or a list (new video mode).
-            frame_paths = [frame_path] if isinstance(frame_path, str) else list(frame_path)
-            resp = self._call_vision_api(frame_paths, prompt, timeout=60)
+            frame_paths = [frame_path] if isinstance(frame_path, str) else (list(frame_path) if frame_path else [])
+            if frame_paths:
+                resp = self._call_vision_api(frame_paths, prompt, timeout=60)
+            else:
+                resp = self._call_text_api(prompt, timeout=60)
             self.timings_phase_0["llm_check"] = time.time() - t0
 
             if resp.status_code != 200:
@@ -513,37 +629,40 @@ Rules:
         Part 3 — solution generation
         All three are combined in a single LLM call to avoid latency.
 
-        `frame_path` may be either a single string (frame mode) or a list of
-        paths (video mode). The dispatch is handled by `_call_vision_api`.
+        `frame_path` may be a single path, a list of paths, or None (wearable-only).
         """
+        input_context = self._format_input_context()
         no_speech = "[No speech detected" in transcript_text
         ts_section = (
-            "Transcript: [No audio transcript — base analysis on visual information only]"
+            "Transcript: [No audio transcript — infer from visual / sensor data only]"
             if no_speech else f"Transcript:\n{transcript_text}"
         )
 
-        # Pull user-curated hint rules and inject them into the prompt so the
-        # LLM applies them when it sees a matching trigger in the scene.
         hints_block = self.hint_memory.format_for_prompt()
         hints_section = f"\n{hints_block}\n" if hints_block else ""
 
-        # Visual-note tells the model what kind of input it's looking at so
-        # it reasons appropriately (still vs. ordered frames vs. raw clip).
-        if self.input_mode == "raw_video":
+        has_video = frame_path is not None and (
+            isinstance(frame_path, str) or len(frame_path) > 0
+        )
+        if has_video and self.input_mode == "raw_video":
             visual_note = (
                 "You are given the raw video clip directly. Reason over the entire clip — "
                 "motion, action progression, audio cues if present, and what changes over time."
             )
-        elif isinstance(frame_path, (list, tuple)) and len(frame_path) > 1:
+        elif has_video and isinstance(frame_path, (list, tuple)) and len(frame_path) > 1:
             visual_note = (
                 f"You are given {len(frame_path)} ordered frames sampled uniformly across a short "
                 "video clip. Reason over the whole sequence (motion, action progression, what "
                 "changes between frames)."
             )
-        else:
+        elif has_video:
             visual_note = "You are given a single still frame. Base your answer on it."
+        else:
+            visual_note = "No video is available — base analysis on wearable sensor data only."
 
-        prompt = f"""You are a proactive personal assistant analysing first-person VR glasses footage.
+        prompt = f"""You are a proactive personal assistant with multi-modal perception.
+
+{input_context}
 
 {visual_note}
 
@@ -551,30 +670,66 @@ Rules:
 {hints_section}
 {ts_section}
 
-Based on the image (first-person POV), the transcript (if any), and memory above, provide:
+Based on the input above, provide:
 
 ## PART 1 — Scene Recognition
-- Location: [specific location]
-- Time/Occasion: [time, festival, event …]（today is May 28, maybe someone's birthday.
-- People: [name1 (relationship), name2 (relationship), …], if there is a person in hotel wearing suit, should know he is richard, the guest of hotel. His birthday is May 28, and link to today's date.
-- User Action: [what the user is doing]
+- Location: [specific location or on-screen context]
+- Time/Occasion: [time, festival, event …]
+- People: [name1 (relationship), name2 (relationship), …]
+- User Action: [what the user is doing — physical action or on-screen activity]
 
 ## PART 2 — Need Analysis
-Identify the user's top 3 needs in priority order, link the need to the culture of the scene, e.g. after finishing dinner in foreign country, a tips is needed. The first need MUST address who the people in view are. Or, when seeing the user ordered gracy food, should remind hime to not eat it and keep diet and healthy.
+Identify the user's top 3 needs in priority order. Consider physical context, screen content,
+and wearable signals (heart rate, fatigue, location) when available.
 For each need:
 - Need [N]: [description]  (Confidence: [0-1])
 
 ## PART 3 — Solutions
-For each need above, provide a concrete actionable solution:
-- Solution [N]: [action / information to present to user via AR]
+For each need, propose ONE concrete solution routed to the best output channel:
+- Solution [N]: [brief summary]
+  Output Type: digital_info | device_control | hardware_robot
+  Action: [specific deliverable]
+
+Output channel guide:
+- digital_info    → AR overlay, notification, digital content, or in-app service
+- device_control  → phone/PC operation (open app, tap, type, navigate UI, send message)
+- hardware_robot  → smart-home device or robot command (turn on light, move robot arm, etc.)
 
 Keep the response structured and concise."""
 
-        frame_paths = [frame_path] if isinstance(frame_path, str) else list(frame_path)
-        resp = self._call_vision_api(frame_paths, prompt, timeout=180)
+        frame_paths = [frame_path] if isinstance(frame_path, str) else (list(frame_path) if frame_path else [])
+        if frame_paths or self.input_mode == "raw_video":
+            resp = self._call_vision_api(frame_paths, prompt, timeout=180)
+        else:
+            resp = self._call_text_api(prompt, timeout=180)
         if resp.status_code == 200:
             return resp.json()["analysis"]
         raise Exception(f"API error: {resp.json().get('error', 'Unknown')}")
+
+    @staticmethod
+    def _normalize_output_type(raw: str) -> str:
+        val = raw.strip().lower().replace(" ", "_").replace("-", "_")
+        aliases = {
+            "digital": "digital_info", "digital_info": "digital_info",
+            "info": "digital_info", "ar": "digital_info", "app_service": "digital_info",
+            "device": "device_control", "device_control": "device_control",
+            "phone": "device_control", "pc": "device_control", "computer": "device_control",
+            "hardware": "hardware_robot", "hardware_robot": "hardware_robot",
+            "robot": "hardware_robot", "smart_home": "hardware_robot",
+        }
+        return aliases.get(val, "digital_info")
+
+    def _infer_output_type(self, need_text: str, solution_text: str, action_text: str = "") -> str:
+        combined = f"{need_text} {solution_text} {action_text}".lower()
+        device_kw = ("open app", "tap", "click", "type", "send message", "navigate",
+                     "screenshot", "copy", "paste", "browser", "phone", "computer", "pc")
+        hardware_kw = ("turn on", "turn off", "light", "thermostat", "robot",
+                       "vacuum", "speaker", "lock door", "smart home", "arm", "move")
+        if any(k in combined for k in hardware_kw):
+            return "hardware_robot"
+        if any(k in combined for k in device_kw):
+            return "device_control"
+        return "digital_info"
 
     def parse_analysis(self, text: str) -> dict:
         """Extract structured fields from the Part1-3 response."""
@@ -587,6 +742,7 @@ Keep the response structured and concise."""
             "solutions": []
         }
         lines = text.split("\n")
+        current_sol_idx = -1
         for line in lines:
             ll = line.lower().strip()
             if ll.startswith("- location:") or ll.startswith("location:"):
@@ -611,12 +767,28 @@ Keep the response structured and concise."""
                 result["needs"].append({"need": need_text, "confidence": conf})
             elif re.match(r"^-?\s*solution\s*\[?\d", ll):
                 body = line.split(":", 1)[-1].strip()
-                result["solutions"].append({"solution": body})
+                result["solutions"].append({
+                    "solution": body,
+                    "output_type": "digital_info",
+                    "action": body,
+                    "type_explicit": False,
+                })
+                current_sol_idx = len(result["solutions"]) - 1
+            elif re.match(r"^-?\s*output type:", ll) and current_sol_idx >= 0:
+                raw_type = line.split(":", 1)[-1].strip()
+                result["solutions"][current_sol_idx]["output_type"] = self._normalize_output_type(raw_type)
+                result["solutions"][current_sol_idx]["type_explicit"] = True
+            elif re.match(r"^-?\s*action:", ll) and current_sol_idx >= 0:
+                result["solutions"][current_sol_idx]["action"] = line.split(":", 1)[-1].strip()
 
         result["scene"] = result.get("location", "")
         for i, sol in enumerate(result["solutions"]):
             if i < len(result["needs"]):
                 sol["need"] = result["needs"][i]["need"]
+            if not sol.get("type_explicit"):
+                sol["output_type"] = self._infer_output_type(
+                    sol.get("need", ""), sol.get("solution", ""), sol.get("action", "")
+                )
 
         return result
 
@@ -647,7 +819,11 @@ Keep the response structured and concise."""
         print("=" * 60)
 
         # ── parallel extraction (only if not already done) ───────────────
-        if frame_path is None or audio_path is None:
+        if self.input_source == "wearable":
+            frame_path = frame_path or []
+            audio_path = audio_path or None
+            print("⏭️  Wearable-only mode — skipping video/audio extraction.")
+        elif frame_path is None or audio_path is None:
             t0 = time.time()
             with ThreadPoolExecutor(max_workers=2) as ex:
                 ff = ex.submit(self._extract_visual)
@@ -660,7 +836,11 @@ Keep the response structured and concise."""
             print("⏭️  Reusing pre-extracted frame(s) & audio from process().")
 
         # ── transcription (only if not already done) ─────────────────────
-        if transcript_data is None:
+        if self.input_source == "wearable" and transcript_data is None:
+            transcript_data = {"language": "unknown", "full_text": "", "segments": [], "no_speech": True}
+            formatted_transcript = self._format_input_context()
+            print("⏭️  Using wearable sensor context (no audio).")
+        elif transcript_data is None:
             t0 = time.time()
             transcript_data = self.transcribe_audio(audio_path)
             self.timings_phase_a["transcribe"] = time.time() - t0
@@ -716,40 +896,39 @@ Keep the response structured and concise."""
         }
 
     # -----------------------------------------------------------------------
-    # ─── PHASE B — Part4 (AR display + feedback) ─────────────────────────
+    # ─── PHASE B — Part4 (multi-channel output + feedback) ───────────────
     # -----------------------------------------------------------------------
 
     def run_phase_b(self, phase_a_result: dict) -> dict:
         """
-        Part4: decide HOW to present Part3 solutions on the AR device,
+        Part4: route Part3 solutions to output channels, execute delivery,
         then collect user feedback.
 
-        Timing is tracked in self.timings_phase_b separately from Phase A.
-        Consolidation is NOT triggered here.
+        Output channels:
+          digital_info    — AR overlay, notifications, app services
+          device_control  — phone / PC operations
+          hardware_robot  — smart-home devices and robot commands
         """
         phase_start = time.time()
 
         print("\n" + "=" * 60)
-        print("🥽 PHASE B — Part4 (AR presentation + user feedback)")
+        print("📤 PHASE B — Part4 (multi-channel output + user feedback)")
         print("=" * 60)
 
         parsed = phase_a_result["parsed"]
         moment_id = phase_a_result["moment_id"]
 
-        # ── AR presentation decision ─────────────────────────────────────
         t0 = time.time()
-        ar_plan = self._decide_ar_presentation(parsed)
-        self.timings_phase_b["ar_decision"] = time.time() - t0
+        output_plan = self._decide_output_plan(parsed)
+        self.timings_phase_b["output_decision"] = time.time() - t0
 
-        print("\n📺 AR Presentation Plan:")
-        print(json.dumps(ar_plan, indent=2, ensure_ascii=False))
+        print("\n📺 Output Plan:")
+        print(json.dumps(output_plan, indent=2, ensure_ascii=False))
 
-        # ── (Simulated) present on AR device ────────────────────────────
         t0 = time.time()
-        self._present_on_ar(ar_plan, parsed)
-        self.timings_phase_b["ar_presentation"] = time.time() - t0
+        self._execute_outputs(output_plan, parsed)
+        self.timings_phase_b["output_execution"] = time.time() - t0
 
-        # ── User feedback (in real system this would await hardware input) ─
         t0 = time.time()
         feedback = self._collect_feedback_simulated(parsed, moment_id)
         self.timings_phase_b["feedback_collection"] = time.time() - t0
@@ -768,54 +947,48 @@ Keep the response structured and concise."""
         self.timings_phase_b["total_phase_b"] = time.time() - phase_start
 
         return {
-            "ar_plan": ar_plan,
+            "output_plan": output_plan,
+            "ar_plan": output_plan,  # backward compatibility
             "feedback": feedback,
             "moment_id": moment_id,
         }
 
-    def _decide_ar_presentation(self, parsed: dict) -> dict:
+    def _decide_output_plan(self, parsed: dict) -> dict:
         """
-        Decide modality, interaction mode, and timing for each solution.
-
-        Rules (from spec image):
-          Modality:
-            noisy env → text
-            user focused (e.g. driving) → voice
-            physical world info (e.g. nav) → 3D
-            normal → voice + text
-
-          Interaction:
-            need confidence < 0.7 → ask for confirmation
-            solution needs auth (payment etc.) → require confirmation
-            high confidence simple info → direct display
-
-          Timing:
-            simple high-confidence → immediate
-            urgent service (emergency) → immediate
-            auth-required → wait for interaction
+        Decide output channel, modality, interaction mode, and timing for each solution.
         """
         plan = {"solutions": []}
         for i, (need, sol) in enumerate(zip(parsed["needs"], parsed["solutions"])):
             conf = need.get("confidence", 0.8)
             need_text = need.get("need", "").lower()
+            output_type = sol.get("output_type", "digital_info")
+            action = sol.get("action", sol.get("solution", ""))
 
-            # Modality heuristics
-            if any(k in need_text for k in ("navigate", "direction", "map", "route")):
+            if output_type == "device_control":
+                modality = "device_ui"
+                channel_label = "Phone/PC Operation"
+            elif output_type == "hardware_robot":
+                modality = "device_command"
+                channel_label = "Hardware/Robot Command"
+            elif any(k in need_text for k in ("navigate", "direction", "map", "route")):
                 modality = "3D"
+                channel_label = "Digital Info (AR 3D)"
             elif conf < 0.6:
                 modality = "text"
+                channel_label = "Digital Info (Text)"
             else:
                 modality = "voice+text"
+                channel_label = "Digital Info (Voice+Text)"
 
-            # Interaction heuristics
             if conf < 0.7:
                 interaction = "need_confirmation"
             elif any(k in need_text for k in ("pay", "purchase", "buy", "order")):
                 interaction = "solution_confirmation"
+            elif output_type in ("device_control", "hardware_robot"):
+                interaction = "solution_confirmation"
             else:
                 interaction = "direct_display"
 
-            # Timing heuristics
             if any(k in need_text for k in ("emergency", "urgent", "danger", "help")):
                 timing = "immediate"
             elif interaction in ("need_confirmation", "solution_confirmation"):
@@ -827,28 +1000,40 @@ Keep the response structured and concise."""
                 "index": i + 1,
                 "need": need.get("need", ""),
                 "solution": sol.get("solution", ""),
+                "action": action,
+                "output_type": output_type,
+                "channel_label": channel_label,
                 "modality": modality,
                 "interaction": interaction,
                 "timing": timing,
-                "confidence": conf
+                "confidence": conf,
             })
         return plan
 
-    def _present_on_ar(self, ar_plan: dict, parsed: dict):
+    def _execute_outputs(self, output_plan: dict, parsed: dict):
         """
-        Simulate AR presentation output.
-        In production this would call the AR device API.
+        Simulate delivery across all output channels.
+        In production, each channel would call its respective device API.
         """
-        print("\n--- AR Device Output (simulated) ---")
-        for item in ar_plan["solutions"]:
-            icon = {"voice+text": "🔊📝", "text": "📝", "3D": "🌐", "voice": "🔊"}.get(
-                item["modality"], "📝"
-            )
+        channel_icons = {
+            "digital_info": "📱💬",
+            "device_control": "🖥️👆",
+            "hardware_robot": "🤖🏠",
+        }
+        print("\n--- Multi-Channel Output (simulated) ---")
+        for item in output_plan["solutions"]:
+            icon = channel_icons.get(item["output_type"], "📱")
             timing_icon = "⚡" if item["timing"] == "immediate" else "⏳"
             interact_icon = "✅" if item["interaction"] == "direct_display" else "❓"
-            print(f"  {icon}{timing_icon}{interact_icon} [{item['modality']}] "
-                  f"Need {item['index']}: {item['solution'][:80]}")
-        print("--- End AR Output ---\n")
+            print(
+                f"  {icon}{timing_icon}{interact_icon} "
+                f"[{item['channel_label']}] Need {item['index']}: {item['action'][:100]}"
+            )
+        print("--- End Output ---\n")
+
+    # Backward-compatible aliases
+    _decide_ar_presentation = _decide_output_plan
+    _present_on_ar = _execute_outputs
 
     def _collect_feedback_simulated(self, parsed: dict, moment_id: str) -> dict:
         """
@@ -1064,27 +1249,38 @@ IMPORTANT:
         """
         wall_start = time.time()
 
-        # ── Shared extraction (done once, reused by Phase 0 and Phase A) ─
-        print("\n" + "=" * 60)
-        print("📦 Shared extraction (frame + audio + transcription)")
-        print("=" * 60)
-        t0 = time.time()
-        with ThreadPoolExecutor(max_workers=2) as ex:
-            ff = ex.submit(self._extract_visual)
-            af = ex.submit(self.extract_audio)
-            frame_path = ff.result()       # list of frame paths (1 in frame mode, N in video mode)
-            audio_path = af.result()
-        if self.input_mode == "raw_video":
-            print(f"✅ Audio extracted in {time.time() - t0:.2f}s "
-                  f"(visual = raw video, no client-side frames)")
+        if self.input_source == "wearable":
+            print("\n" + "=" * 60)
+            print("📦 Wearable-only input (no video extraction)")
+            print("=" * 60)
+            frame_path = []
+            audio_path = None
+            transcript_data = {"language": "unknown", "full_text": "", "segments": [], "no_speech": True}
+            formatted_transcript = self._format_input_context()
         else:
-            print(f"✅ Frame(s) & audio extracted in {time.time() - t0:.2f}s "
-                  f"({len(frame_path)} frame{'s' if len(frame_path) != 1 else ''})")
+            # ── Shared extraction (done once, reused by Phase 0 and Phase A) ─
+            print("\n" + "=" * 60)
+            print("📦 Shared extraction (frame + audio + transcription)")
+            print("=" * 60)
+            t0 = time.time()
+            with ThreadPoolExecutor(max_workers=2) as ex:
+                ff = ex.submit(self._extract_visual)
+                af = ex.submit(self.extract_audio)
+                frame_path = ff.result()
+                audio_path = af.result()
+            if self.input_mode == "raw_video":
+                print(f"✅ Audio extracted in {time.time() - t0:.2f}s "
+                      f"(visual = raw video, no client-side frames)")
+            else:
+                print(f"✅ Frame(s) & audio extracted in {time.time() - t0:.2f}s "
+                      f"({len(frame_path)} frame{'s' if len(frame_path) != 1 else ''})")
 
-        t0 = time.time()
-        transcript_data = self.transcribe_audio(audio_path)
-        formatted_transcript = self.format_transcript(transcript_data)
-        print(f"✅ Transcription done in {time.time() - t0:.2f}s")
+            t0 = time.time()
+            transcript_data = self.transcribe_audio(audio_path)
+            formatted_transcript = self.format_transcript(transcript_data)
+            if self.wearable_data:
+                formatted_transcript += "\n\n" + self._format_wearable_section()
+            print(f"✅ Transcription done in {time.time() - t0:.2f}s")
 
         # ── Phase 0: compliance check against last session's solutions ───
         phase_0 = self.run_phase_0(frame_path, formatted_transcript)
@@ -1097,7 +1293,7 @@ IMPORTANT:
             formatted_transcript=formatted_transcript
         )
 
-        # ── Phase B: AR presentation + user feedback ──────────────────────
+        # ── Phase B: multi-channel output + user feedback ─────────────────
         phase_b = self.run_phase_b(phase_a)
 
         # ── Phase C: consolidation (after feedback, never blocking Part1-4) ─
@@ -1140,7 +1336,7 @@ IMPORTANT:
         for k, v in sorted(self.timings_phase_a.items(), key=lambda x: x[1], reverse=True):
             print(f"  {k:.<38} {v:>6.2f}s")
 
-        print("\n── Phase B (Part4 AR + Feedback) ──────────────────────────")
+        print("\n── Phase B (Part4 Output + Feedback) ────────────────────────")
         for k, v in sorted(self.timings_phase_b.items(), key=lambda x: x[1], reverse=True):
             print(f"  {k:.<38} {v:>6.2f}s")
 
@@ -1171,8 +1367,9 @@ IMPORTANT:
             f.write(f"\n\n{'='*50}\nPHASE A — PART1-3 ANALYSIS\n{'='*50}\n")
             f.write(phase_a["analysis_text"])
 
-            f.write(f"\n\n{'='*50}\nPHASE B — AR PLAN\n{'='*50}\n")
-            f.write(json.dumps(phase_b["ar_plan"], indent=2, ensure_ascii=False))
+            f.write(f"\n\n{'='*50}\nPHASE B — OUTPUT PLAN\n{'='*50}\n")
+            plan = phase_b.get("output_plan") or phase_b.get("ar_plan", {})
+            f.write(json.dumps(plan, indent=2, ensure_ascii=False))
 
             f.write(f"\n\n{'='*50}\nFINAL MEMORY STATE\n{'='*50}\n")
             f.write(self.memory.get_all_memory())
@@ -1196,19 +1393,29 @@ IMPORTANT:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    video_path = "/hpc2hdd/home/jyinap/Proactive_Agent/test_data/test_data/tips.mp4"
+    # ── Input examples ────────────────────────────────────────────────────
+    # Camera (user-shot video):
+    video_path = "../test_data/test_data/2.travel_abroad/2.1.mp4"
+    assistant = VRAssistant(video_path, input_source="camera")
 
-    # ── Switch mode here ──────────────────────────────────────────────────
-    # Option 1: edit the INPUT_MODE constant (and friends) at the top of
-    #           this file and just call VRAssistant(video_path).
-    # Option 2: override per-instance:
-    #     assistant = VRAssistant(video_path, input_mode="frame")
-    #     assistant = VRAssistant(video_path, input_mode="video",
-    #                             video_num_frames=4)
-    #     assistant = VRAssistant(video_path, input_mode="raw_video",
-    #                             raw_video_fps=1.0, raw_video_max_frames=16)
-    # ──────────────────────────────────────────────────────────────────────
-    assistant = VRAssistant(video_path)
+    # Screen recording:
+    # assistant = VRAssistant("../screen_record.mp4", input_source="screen_record")
+
+    # Wearable sensors only:
+    # assistant = VRAssistant(
+    #     input_source="wearable",
+    #     wearable_data={"heart_rate": 110, "steps": 8200, "stress": "elevated"},
+    # )
+
+    # Multimodal (video + wearable):
+    # assistant = VRAssistant(
+    #     video_path,
+    #     input_source="multimodal",
+    #     wearable_data="memory/wearable_sample.json",
+    # )
+
+    # ── Input mode (frame / video / raw_video) ────────────────────────────
+    # assistant = VRAssistant(video_path, input_mode="video", video_num_frames=4)
 
     # ── (Optional) seed the hint memory with extra trigger→need rules ────
     # Uncomment / add as many as you need. They are persisted to
