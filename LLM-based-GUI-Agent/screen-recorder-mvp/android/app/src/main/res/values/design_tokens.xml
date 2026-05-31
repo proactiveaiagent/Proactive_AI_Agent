@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Mirrors screen-recorder-mvp/design/tokens.json (color/radius/spacing) -->
+<resources>
+    <color name="ds_bg_canvas">#0F1117</color>
+    <color name="ds_bg_surface">#161B26</color>
+    <color name="ds_bg_surface_elevated">#1C2333</color>
+
+    <color name="ds_text_primary">#F4F6FB</color>
+    <color name="ds_text_secondary">#A7B0C0</color>
+    <color name="ds_text_muted">#6B7280</color>
+
+    <color name="ds_accent_primary">#5B8CFF</color>
+    <color name="ds_accent_success">#34D399</color>
+    <color name="ds_accent_warning">#FBBF24</color>
+    <color name="ds_accent_danger">#F87171</color>
+
+    <color name="ds_border_subtle">#2A3142</color>
+    <color name="ds_border_strong">#3D4659</color>
+
+    <!-- Light mock (Recording / Offline flows) -->
+    <color name="mock_ios_blue">#007AFF</color>
+    <color name="mock_bg">#FFFFFF</color>
+    <color name="mock_text">#111111</color>
+    <color name="mock_text_secondary">#3C3C43</color>
+    <color name="mock_nav_gray">#8E8E93</color>
+    <color name="mock_card_blue">#C4E8FF</color>
+    <color name="mock_card_green">#B8F0D4</color>
+    <color name="mock_tip_bg">#F2F2F7</color>
+    <color name="mock_pill_stroke">#E5E5EA</color>
+    <color name="mock_light_surface">#F5F5F7</color>
+
+    <!-- Bottom nav icons (from pc/assets SVGs) -->
+    <color name="bottom_nav_asset_gray">#999999</color>
+    <color name="bottom_nav_asset_blue">#0066FF</color>
+
+    <dimen name="ds_radius_sm">8dp</dimen>
+    <dimen name="ds_radius_md">12dp</dimen>
+    <dimen name="ds_radius_lg">16dp</dimen>
+
+    <dimen name="ds_space_2">8dp</dimen>
+    <dimen name="ds_space_3">12dp</dimen>
+    <dimen name="ds_space_4">16dp</dimen>
+    <dimen name="ds_space_6">24dp</dimen>
+</resources>

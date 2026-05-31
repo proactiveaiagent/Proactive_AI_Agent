@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.ScreenRecorderMVP" parent="Theme.MaterialComponents.Light.NoActionBar">
+        <item name="colorPrimary">@color/mock_ios_blue</item>
+        <item name="colorPrimaryVariant">@color/mock_ios_blue</item>
+        <item name="colorOnPrimary">@android:color/white</item>
+        <item name="android:statusBarColor">@color/mock_bg</item>
+        <item name="android:navigationBarColor">@color/mock_bg</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowBackground">@color/mock_bg</item>
+    </style>
+</resources>

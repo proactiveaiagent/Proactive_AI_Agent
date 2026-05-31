@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- 允许向局域网 PC 使用 HTTP 上传（与 PC 端 Flask 接收服务通信） -->
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

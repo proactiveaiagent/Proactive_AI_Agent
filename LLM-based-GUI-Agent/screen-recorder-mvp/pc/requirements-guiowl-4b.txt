@@ -1,0 +1,12 @@
+# GUI-Owl 1.5 4B（Transformers 本地推理），与 Mobile-Agent-v3.5 README Quick Start 一致。
+# 勿与主程序 requirements.txt 混用同一 venv（numpy/torch 版本会冲突）。
+#
+# 1) 新建虚拟环境后先装 CUDA 版 PyTorch（Windows 示例，Python 3.12）：
+#    pip install torch==2.6.0+cu124 torchvision==0.21.0+cu124 --index-url https://download.pytorch.org/whl/cu124
+# 2) 再装本文件：
+#    pip install -r requirements-guiowl-4b.txt
+#
+transformers>=4.57.0
+accelerate>=1.0.0
+safetensors>=0.4.0
+einops>=0.8.0

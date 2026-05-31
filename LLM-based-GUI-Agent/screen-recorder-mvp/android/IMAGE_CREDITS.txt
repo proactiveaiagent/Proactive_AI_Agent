@@ -1,0 +1,22 @@
+Device images in app/src/main/res/drawable/ (offline recording UI):
+
+1) device_bodycam.png
+   Source: Wikimedia Commons — "Body Worn Video.png"
+   Author: Throwawaysixtynine
+   License: CC BY 4.0
+   https://commons.wikimedia.org/wiki/File:Body_Worn_Video.png
+
+2) device_smartglasses.jpg
+   Source: Wikimedia Commons — "Ray-Ban Stories.jpg"
+   Author: cavebear42
+   License: CC BY-SA 4.0
+   https://commons.wikimedia.org/wiki/File:Ray-Ban_Stories.jpg
+   (May be resized in-repo for app size; attribution still applies.)
+
+3) device_wearable_cam.jpg
+   Source: Wikimedia Commons — "Autographer-wearable-camera-front.jpg"
+   Author: OMG Life Ltd (via Autographer)
+   License: CC BY 2.5
+   https://commons.wikimedia.org/wiki/File:Autographer-wearable-camera-front.jpg
+
+These assets illustrate generic device categories in the UI and are not implied endorsements by the licensors.

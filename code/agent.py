@@ -4,8 +4,9 @@ Proactive Agent — Multi-modal input / multi-channel output pipeline
 Inputs (video + optional wearable telemetry):
   • camera        — first-person video captured by the user (smart glasses / phone camera)
   • screen_record — phone or computer screen-recording video
+  • gui_agent     — screen recordings from LLM-based-GUI-Agent (PC/Android recorder + GUI-Owl)
   • wearable      — sensor data from watches, bands, glasses, etc. (JSON dict or file)
-  Combine camera/screen_record video with wearable data via input_source="multimodal".
+  Combine sources via input_source="multimodal" or connect gui_agent_url for enriched screen context.
 
 Outputs (Part 4 delivery channels):
   • digital_info    — AR overlays, notifications, digital content, app services
@@ -36,6 +37,7 @@ from pathlib import Path
 from moviepy.editor import VideoFileClip
 from concurrent.futures import ThreadPoolExecutor
 from memory import PersonMemory, HintMemory
+from gui_agent_client import GUIAgentClient
 import time
 from functools import wraps
 import requests
@@ -84,9 +86,14 @@ RAW_VIDEO_MAX_FRAMES = 16       # only used when INPUT_MODE == "raw_video"
 # INPUT_SOURCE — what kind of video / sensor data is being ingested
 #   "camera"        → user-shot first-person or POV video (default)
 #   "screen_record" → phone / computer screen-recording video
+#   "gui_agent"     → recordings from LLM-based-GUI-Agent (see LLM-based-GUI-Agent/)
 #   "wearable"      → wearable sensor data only (no video required)
 #   "multimodal"    → video (camera or screen_record) + wearable_data combined
 INPUT_SOURCE = "camera"
+
+# LLM-based-GUI-Agent PC bridge (main_web.py default port 8776)
+GUI_AGENT_URL = "http://localhost:8776"
+GUI_AGENT_AUTO_ANALYZE = True
 
 # Valid Part-3 / Part-4 output channels
 OUTPUT_CHANNELS = ("digital_info", "device_control", "hardware_robot")
@@ -116,24 +123,43 @@ class VRAssistant:
                  num_threads=None, qwen_api_url="http://localhost:8000",
                  input_mode: str = None, video_num_frames: int = None,
                  raw_video_fps: float = None, raw_video_max_frames: int = None,
-                 input_source: str = None, wearable_data=None):
+                 input_source: str = None, wearable_data=None,
+                 gui_agent_url: str = None, gui_agent_auto_analyze: bool = None,
+                 gui_agent_backend: str = "local"):
         self.video_path = video_path
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(exist_ok=True)
         self.qwen_api_url = qwen_api_url
 
         self.input_source = (input_source or INPUT_SOURCE).lower()
-        valid_sources = ("camera", "screen_record", "wearable", "multimodal")
+        valid_sources = ("camera", "screen_record", "gui_agent", "wearable", "multimodal")
         if self.input_source not in valid_sources:
             raise ValueError(
                 f"input_source must be one of {valid_sources}, got {self.input_source!r}"
             )
         self.wearable_data = self._load_wearable_data(wearable_data)
 
+        self.gui_agent_url = gui_agent_url or GUI_AGENT_URL
+        self.gui_agent_auto_analyze = (
+            GUI_AGENT_AUTO_ANALYZE if gui_agent_auto_analyze is None else gui_agent_auto_analyze
+        )
+        self.gui_agent_backend = gui_agent_backend
+        self.gui_agent_client: GUIAgentClient | None = None
+        self.gui_report: dict | None = None
+        self.gui_recording_meta: dict | None = None
+
+        use_gui_agent = self.input_source == "gui_agent" or gui_agent_url is not None
+        if use_gui_agent:
+            self.gui_agent_client = GUIAgentClient(self.gui_agent_url)
+            if self.input_source != "gui_agent":
+                self.input_source = "gui_agent"
+
         if self.input_source == "wearable" and not self.wearable_data:
             raise ValueError("input_source='wearable' requires wearable_data")
-        if self.input_source != "wearable" and not self.video_path:
+        if self.input_source not in ("wearable", "gui_agent") and not self.video_path:
             raise ValueError(f"input_source={self.input_source!r} requires video_path")
+        if self.input_source == "gui_agent" and not self.video_path and not self.gui_agent_client:
+            raise ValueError("input_source='gui_agent' requires gui_agent_url connection")
 
         # Resolve input-mode config: per-instance arg > module-level constant
         self.input_mode = (input_mode or INPUT_MODE).lower()
@@ -160,10 +186,17 @@ class VRAssistant:
         source_labels = {
             "camera": "user-shot video",
             "screen_record": "phone/PC screen recording",
+            "gui_agent": "LLM-based-GUI-Agent screen recording",
             "wearable": "wearable sensor data",
             "multimodal": "video + wearable sensors",
         }
         print(f"📡 Input source: {self.input_source} ({source_labels[self.input_source]})")
+        if self.gui_agent_client:
+            print(f"🖥️  GUI Agent bridge: {self.gui_agent_url}")
+            if self.gui_agent_client.health():
+                print("✅ GUI Agent service reachable")
+            else:
+                print("⚠️  GUI Agent service not reachable — start LLM-based-GUI-Agent/main_web.py")
         if self.wearable_data:
             print(f"⌚ Wearable sensors loaded: {', '.join(self.wearable_data.keys())}")
 
@@ -254,8 +287,14 @@ class VRAssistant:
     def _format_input_context(self) -> str:
         """Describe the active input modalities for LLM prompts."""
         parts = []
-        if self.input_source in ("camera", "screen_record", "multimodal") and self.video_path:
-            if self.input_source == "screen_record":
+        if self.input_source in ("camera", "screen_record", "gui_agent", "multimodal") and self.video_path:
+            if self.input_source == "gui_agent":
+                parts.append(
+                    "Input type: LLM-based-GUI-Agent SCREEN RECORDING. The clip comes from "
+                    "phone/PC screen capture (XOOGUIAGT Android app or PC recorder). "
+                    "Use the GUI-Owl analysis below for app names, pages, UI elements, and on-screen actions."
+                )
+            elif self.input_source == "screen_record":
                 parts.append(
                     "Input type: phone/computer SCREEN RECORDING. Focus on on-screen UI, "
                     "apps, text, notifications, cursor/touch interactions, and workflow context."
@@ -278,7 +317,51 @@ class VRAssistant:
         wearable_block = self._format_wearable_section()
         if wearable_block:
             parts.append(wearable_block)
+        gui_block = self._format_gui_agent_section()
+        if gui_block:
+            parts.append(gui_block)
         return "\n".join(parts)
+
+    def _format_gui_agent_section(self) -> str:
+        if not self.gui_report:
+            return ""
+        return GUIAgentClient.format_report_for_prompt(self.gui_report)
+
+    @timer
+    def _sync_from_gui_agent(self):
+        """
+        Pull the latest (or specified) screen recording from LLM-based-GUI-Agent,
+        optionally run GUI-Owl analysis, and cache structured screen context.
+        """
+        if not self.gui_agent_client:
+            return
+
+        print("\n" + "=" * 60)
+        print("🖥️  Syncing from LLM-based-GUI-Agent")
+        print("=" * 60)
+
+        bundle = self.gui_agent_client.prepare_screen_input(
+            video_path=self.video_path or "",
+            auto_analyze=self.gui_agent_auto_analyze,
+            analysis_backend=self.gui_agent_backend,
+        )
+        self.video_path = bundle["video_path"]
+        self.gui_recording_meta = bundle.get("recording")
+        self.gui_report = bundle.get("report")
+
+        name = (self.gui_recording_meta or {}).get("name", Path(self.video_path).name)
+        if bundle.get("cached"):
+            print(f"✅ Using cached GUI-Owl report for: {name}")
+        elif bundle.get("analyzed"):
+            print(f"✅ GUI-Owl analysis complete for: {name}")
+        elif self.gui_report:
+            print(f"✅ Loaded GUI-Owl report for: {name}")
+        else:
+            print(f"⚠️  Recording loaded without GUI-Owl report: {name}")
+
+        if self.gui_report:
+            preview = self._format_gui_agent_section()
+            print(preview[:600] + ("..." if len(preview) > 600 else ""))
 
     # -----------------------------------------------------------------------
     # ─── Shared extraction helpers ────────────────────────────────────────
@@ -1249,6 +1332,9 @@ IMPORTANT:
         """
         wall_start = time.time()
 
+        if self.gui_agent_client:
+            self._sync_from_gui_agent()
+
         if self.input_source == "wearable":
             print("\n" + "=" * 60)
             print("📦 Wearable-only input (no video extraction)")
@@ -1371,6 +1457,10 @@ IMPORTANT:
             plan = phase_b.get("output_plan") or phase_b.get("ar_plan", {})
             f.write(json.dumps(plan, indent=2, ensure_ascii=False))
 
+            if self.gui_report:
+                f.write(f"\n\n{'='*50}\nGUI AGENT CONTEXT\n{'='*50}\n")
+                f.write(self._format_gui_agent_section())
+
             f.write(f"\n\n{'='*50}\nFINAL MEMORY STATE\n{'='*50}\n")
             f.write(self.memory.get_all_memory())
 
@@ -1395,10 +1485,19 @@ IMPORTANT:
 if __name__ == "__main__":
     # ── Input examples ────────────────────────────────────────────────────
     # Camera (user-shot video):
-    video_path = "../test_data/test_data/2.travel_abroad/2.1.mp4"
-    assistant = VRAssistant(video_path, input_source="camera")
+    # video_path = "../test_data/test_data/2.travel_abroad/2.1.mp4"
+    # assistant = VRAssistant(video_path, input_source="camera")
 
-    # Screen recording:
+    # LLM-based-GUI-Agent (phone/PC screen recordings + GUI-Owl analysis):
+    # 1) Start GUI Agent: cd LLM-based-GUI-Agent/screen-recorder-mvp/pc && python main_web.py
+    # 2) Record on PC or upload from Android app (XOOGUIAGT), then run:
+    assistant = VRAssistant(
+        input_source="gui_agent",
+        gui_agent_url="http://localhost:8776",
+        gui_agent_auto_analyze=True,
+    )
+
+    # Screen recording file (without GUI Agent bridge):
     # assistant = VRAssistant("../screen_record.mp4", input_source="screen_record")
 
     # Wearable sensors only:

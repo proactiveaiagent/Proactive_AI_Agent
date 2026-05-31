@@ -1,0 +1,56 @@
+# Python
+venv/
+.venv-vllm/
+.venv-guiowl/
+.venv-guiowl2/
+.venv-guiowl-hf/
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Android / Gradle
+android/.gradle/
+android/build/
+android/app/build/
+**/local.properties
+android/local.properties
+android/.idea/workspace.xml
+android/.idea/tasks.xml
+android/.idea/caches/
+*.iml
+.gradle/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Recordings (do not commit user recordings)
+recordings/
+
+# Analysis output
+analysis_output/
+screen-recorder-mvp/pc/models/
+
+# Memory (user data)
+memory/
+
+# Dev test DB
+**/test_mem.db
+
+# Offline release artifacts (distribute outside git)
+screen-recorder-mvp/pc/dist_4b_offline/
+screen-recorder-mvp/pc/dist_8b_offline/
+screen-recorder-mvp/pc/dist_fixed/
+screen-recorder-mvp/pc/dist_fixed2/
+screen-recorder-mvp/pc/dist_fixed3/
+screen-recorder-mvp/pc/dist_fixed4/
+MobileAgent/
+screen-recorder-mvp/pc/webui/node_modules/

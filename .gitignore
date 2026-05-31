@@ -1,3 +1,12 @@
 .DS_Store
 __pycache__/
 *.pyc
+
+# LLM-based-GUI-Agent runtime artifacts
+LLM-based-GUI-Agent/screen-recorder-mvp/pc/venv/
+LLM-based-GUI-Agent/screen-recorder-mvp/pc/recordings/
+LLM-based-GUI-Agent/screen-recorder-mvp/pc/analysis_output/
+LLM-based-GUI-Agent/screen-recorder-mvp/pc/memory/
+LLM-based-GUI-Agent/screen-recorder-mvp/pc/dist/
+LLM-based-GUI-Agent/screen-recorder-mvp/pc/dist_*/
+LLM-based-GUI-Agent/screen-recorder-mvp/pc/webui/node_modules/
