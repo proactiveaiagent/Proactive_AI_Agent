@@ -1,0 +1,316 @@
+➜ docker pull 10.120.18.240:5000/admin/pytorch:py310-2.1.0
+py310-2.1.0: Pulling from admin/pytorch
+44ba2882f8eb: Pulling fs layer
+9afb506b42e2: Pulling fs layer
+fe5c9fbe25c3: Pulling fs layer
+b0b1b7dafae7: Pulling fs layer
+a66e4d80ab70: Pulling fs layer
+8ce8f4dc0ac9: Pulling fs layer
+322f8fb56c98: Pulling fs layer
+7900a3e1b24c: Pulling fs layer
+b0b1b7dafae7: Waiting
+1cce61b64db7: Pulling fs layer
+a66e4d80ab70: Waiting
+9d31320095c6: Pulling fs layer
+8ce8f4dc0ac9: Waiting
+0cf76714d43b: Pulling fs layer
+1cce61b64db7: Waiting
+322f8fb56c98: Waiting
+0168738f1218: Pulling fs layer
+7900a3e1b24c: Waiting
+bb674f1bcaeb: Pulling fs layer
+9d31320095c6: Waiting
+0168738f1218: Waiting
+9054751fde43: Pulling fs layer
+bb674f1bcaeb: Waiting
+dd23cb78b7b6: Pulling fs layer
+9054751fde43: Waiting
+7f744532d63b: Pulling fs layer
+dd23cb78b7b6: Waiting
+4f4fb700ef54: Pulling fs layer
+bedc1332c467: Pulling fs layer
+7f744532d63b: Waiting
+4f4fb700ef54: Waiting
+e24847252455: Pulling fs layer
+dbdfd28ad13b: Pulling fs layer
+bedc1332c467: Waiting
+e24847252455: Waiting
+87069aeae006: Pulling fs layer
+dbdfd28ad13b: Waiting
+9a1211eecb36: Pulling fs layer
+87069aeae006: Waiting
+225325d10219: Pulling fs layer
+9a1211eecb36: Waiting
+f9739d82df33: Pulling fs layer
+225325d10219: Waiting
+dce2aaf4e0d1: Pulling fs layer
+07799cb9f510: Pulling fs layer
+dce2aaf4e0d1: Waiting
+fc6c78fb1e7e: Pulling fs layer
+07799cb9f510: Waiting
+04f3f5142dc3: Pulling fs layer
+fc6c78fb1e7e: Waiting
+386bcb77c240: Pulling fs layer
+04f3f5142dc3: Waiting
+09b7dd34e0cd: Pulling fs layer
+5d8505124c08: Pulling fs layer
+09b7dd34e0cd: Waiting
+aa78921f90f5: Pulling fs layer
+5d8505124c08: Waiting
+61c3ebedc4a0: Pulling fs layer
+aa78921f90f5: Waiting
+2b5ee472e2b7: Pulling fs layer
+61c3ebedc4a0: Waiting
+8090d5bfae36: Pulling fs layer
+2b5ee472e2b7: Waiting
+2185a42e3500: Pulling fs layer
+8090d5bfae36: Waiting
+ea1869c4539f: Pulling fs layer
+2185a42e3500: Waiting
+eedf2d2c6dc1: Pulling fs layer
+ea1869c4539f: Waiting
+eedf2d2c6dc1: Waiting
+91265da65042: Pulling fs layer
+53e4c8ddb1d4: Pulling fs layer
+91265da65042: Waiting
+dcd13ec4e9bc: Pulling fs layer
+53e4c8ddb1d4: Waiting
+424ec7bc3238: Pulling fs layer
+dcd13ec4e9bc: Waiting
+4f9ab817adb6: Pulling fs layer
+424ec7bc3238: Waiting
+89f59f40e012: Pulling fs layer
+4f9ab817adb6: Waiting
+5f2576116be1: Pulling fs layer
+1170d1e5c6e0: Pulling fs layer
+5f2576116be1: Waiting
+8671aec34024: Pulling fs layer
+1170d1e5c6e0: Waiting
+841655570686: Pulling fs layer
+84a5b64a473e: Pulling fs layer
+13d443164a82: Pulling fs layer
+84a5b64a473e: Waiting
+89e7e5442fc7: Pulling fs layer
+bbf62aa52867: Pulling fs layer
+89e7e5442fc7: Waiting
+290fe133c040: Pulling fs layer
+2beef7a35c61: Pulling fs layer
+290fe133c040: Waiting
+6906cdf7a526: Pulling fs layer
+2beef7a35c61: Waiting
+4286237fca90: Pulling fs layer
+26ef5f21f2a7: Pulling fs layer
+6906cdf7a526: Waiting
+4286237fca90: Waiting
+26ef5f21f2a7: Waiting
+44ba2882f8eb: Verifying Checksum
+44ba2882f8eb: Download complete
+b0b1b7dafae7: Download complete
+9afb506b42e2: Verifying Checksum
+9afb506b42e2: Download complete
+8ce8f4dc0ac9: Download complete
+322f8fb56c98: Download complete
+7900a3e1b24c: Download complete
+1cce61b64db7: Verifying Checksum
+1cce61b64db7: Download complete
+fe5c9fbe25c3: Verifying Checksum
+fe5c9fbe25c3: Download complete
+9d31320095c6: Verifying Checksum
+9d31320095c6: Download complete
+0168738f1218: Verifying Checksum
+0168738f1218: Download complete
+0cf76714d43b: Verifying Checksum
+0cf76714d43b: Download complete
+44ba2882f8eb: Pull complete
+9054751fde43: Verifying Checksum
+9054751fde43: Download complete
+dd23cb78b7b6: Verifying Checksum
+dd23cb78b7b6: Download complete
+7f744532d63b: Verifying Checksum
+7f744532d63b: Download complete
+4f4fb700ef54: Download complete
+bedc1332c467: Verifying Checksum
+bedc1332c467: Download complete
+e24847252455: Download complete
+bb674f1bcaeb: Verifying Checksum
+bb674f1bcaeb: Download complete
+9afb506b42e2: Pull complete
+dbdfd28ad13b: Verifying Checksum
+dbdfd28ad13b: Download complete
+9a1211eecb36: Download complete
+225325d10219: Verifying Checksum
+225325d10219: Download complete
+f9739d82df33: Download complete
+dce2aaf4e0d1: Verifying Checksum
+dce2aaf4e0d1: Download complete
+07799cb9f510: Download complete
+fc6c78fb1e7e: Verifying Checksum
+fc6c78fb1e7e: Download complete
+04f3f5142dc3: Verifying Checksum
+04f3f5142dc3: Download complete
+fe5c9fbe25c3: Pull complete
+b0b1b7dafae7: Pull complete
+87069aeae006: Verifying Checksum
+87069aeae006: Download complete
+09b7dd34e0cd: Download complete
+5d8505124c08: Verifying Checksum
+5d8505124c08: Download complete
+aa78921f90f5: Verifying Checksum
+aa78921f90f5: Download complete
+61c3ebedc4a0: Verifying Checksum
+61c3ebedc4a0: Download complete
+2b5ee472e2b7: Download complete
+8090d5bfae36: Verifying Checksum
+8090d5bfae36: Download complete
+2185a42e3500: Verifying Checksum
+2185a42e3500: Download complete
+ea1869c4539f: Download complete
+a66e4d80ab70: Verifying Checksum
+a66e4d80ab70: Download complete
+91265da65042: Verifying Checksum
+91265da65042: Download complete
+53e4c8ddb1d4: Download complete
+dcd13ec4e9bc: Verifying Checksum
+dcd13ec4e9bc: Download complete
+424ec7bc3238: Verifying Checksum
+424ec7bc3238: Download complete
+4f9ab817adb6: Verifying Checksum
+4f9ab817adb6: Download complete
+89f59f40e012: Verifying Checksum
+89f59f40e012: Download complete
+5f2576116be1: Download complete
+1170d1e5c6e0: Verifying Checksum
+1170d1e5c6e0: Download complete
+8671aec34024: Verifying Checksum
+8671aec34024: Download complete
+386bcb77c240: Verifying Checksum
+386bcb77c240: Download complete
+841655570686: Verifying Checksum
+841655570686: Download complete
+84a5b64a473e: Verifying Checksum
+84a5b64a473e: Download complete
+13d443164a82: Download complete
+89e7e5442fc7: Verifying Checksum
+89e7e5442fc7: Download complete
+bbf62aa52867: Verifying Checksum
+bbf62aa52867: Download complete
+290fe133c040: Verifying Checksum
+290fe133c040: Download complete
+2beef7a35c61: Verifying Checksum
+2beef7a35c61: Download complete
+4286237fca90: Download complete
+26ef5f21f2a7: Verifying Checksum
+26ef5f21f2a7: Download complete
+6906cdf7a526: Verifying Checksum
+6906cdf7a526: Download complete
+eedf2d2c6dc1: Verifying Checksum
+eedf2d2c6dc1: Download complete
+a66e4d80ab70: Pull complete
+8ce8f4dc0ac9: Pull complete
+322f8fb56c98: Pull complete
+7900a3e1b24c: Pull complete
+1cce61b64db7: Pull complete
+9d31320095c6: Pull complete
+0cf76714d43b: Pull complete
+0168738f1218: Pull complete
+bb674f1bcaeb: Pull complete
+9054751fde43: Pull complete
+dd23cb78b7b6: Pull complete
+7f744532d63b: Pull complete
+4f4fb700ef54: Pull complete
+bedc1332c467: Pull complete
+e24847252455: Pull complete
+dbdfd28ad13b: Pull complete
+87069aeae006: Pull complete
+9a1211eecb36: Pull complete
+225325d10219: Pull complete
+f9739d82df33: Pull complete
+dce2aaf4e0d1: Pull complete
+07799cb9f510: Pull complete
+fc6c78fb1e7e: Pull complete
+04f3f5142dc3: Pull complete
+386bcb77c240: Pull complete
+09b7dd34e0cd: Pull complete
+5d8505124c08: Pull complete
+aa78921f90f5: Pull complete
+61c3ebedc4a0: Pull complete
+2b5ee472e2b7: Pull complete
+8090d5bfae36: Pull complete
+2185a42e3500: Pull complete
+ea1869c4539f: Pull complete
+eedf2d2c6dc1: Pull complete
+91265da65042: Pull complete
+53e4c8ddb1d4: Pull complete
+dcd13ec4e9bc: Pull complete
+424ec7bc3238: Pull complete
+4f9ab817adb6: Pull complete
+89f59f40e012: Pull complete
+5f2576116be1: Pull complete
+1170d1e5c6e0: Pull complete
+8671aec34024: Pull complete
+841655570686: Pull complete
+84a5b64a473e: Pull complete
+13d443164a82: Pull complete
+89e7e5442fc7: Pull complete
+bbf62aa52867: Pull complete
+290fe133c040: Pull complete
+2beef7a35c61: Pull complete
+6906cdf7a526: Pull complete
+4286237fca90: Pull complete
+26ef5f21f2a7: Pull complete
+Digest: sha256:2b7ee51fc62f720e65d09837bbaf02c1ad86eb98574b9bfe88643111f2c859a9
+Status: Downloaded newer image for 10.120.18.240:5000/admin/pytorch:py310-2.1.0
+10.120.18.240:5000/admin/pytorch:py310-2.1.0
+➜ docker save -o /hpc2hdd/home/jyinap/Proactive_Agent/agent.tar
+➜ gzip -f /hpc2hdd/home/jyinap/Proactive_Agent/agent.tar
+➜ docker rmi -f 10.120.18.240:5000/admin/pytorch:py310-2.1.0
+Untagged: 10.120.18.240:5000/admin/pytorch:py310-2.1.0
+Untagged: 10.120.18.240:5000/admin/pytorch@sha256:2b7ee51fc62f720e65d09837bbaf02c1ad86eb98574b9bfe88643111f2c859a9
+Deleted: sha256:69554ee7bb59798bca179ec96c9f66f96605549fc54fd5ea3271f871f2e491d2
+Deleted: sha256:8355da9ae7f6b84065969918349122f919a89c17f90797d142fd2ca744a7e256
+Deleted: sha256:e8a2f93b7eebc96ac3a92e3c4acf28183fddaa4bd79bb203096e4f9c7104da6f
+Deleted: sha256:6bb1474a29b70bf620c3250f1a4a3d92e1fd8ac66b81faafb76817590f583bec
+Deleted: sha256:174f0c02bd5f36a1a9dbb2da46fe9e105f75f603d727e72561017d5ef9ae5984
+Deleted: sha256:7bbbe48de680b0465f03ad5bb239d7d6af458aa350cbdc69b7207681f8a622aa
+Deleted: sha256:702c8694c3db46122e315af130d34dbe5840889ec82e33d1cc55a5332eb8d0df
+Deleted: sha256:de4d07a7504bffd510cc4983df2820d1279d226cad46b860d261d25b7e24769a
+Deleted: sha256:28f29fdde9315b77c5459b938747caa95791b3e80f37383c75e7432e8641a22c
+Deleted: sha256:ae664868018cf7d3e9028bef08fb0835c84bbf1add280c282c7574882933e536
+Deleted: sha256:d40001df3a4241230616a8acdea75061a2af3a5669bb0277eac912dcd52d714e
+Deleted: sha256:13ea9b1449b7c6036d1d9ba75777582a9b53f79501217be628fb9498fa0a5f2c
+Deleted: sha256:f72fb99402e3302ab4519cb74b7d5c5c8cc85ac23dd705331efa5ebc6b8a7ea0
+Deleted: sha256:46e6a5c13d014fe404787aba84f6e1019bab2edd7cadd922b5525ac285e8132a
+Deleted: sha256:f22d796fb885b1aa542b65f747053dde304fa4df7471e58c118200e97b65e703
+Deleted: sha256:0ecc631de5aed2c5a19417a05724583788f821ec42a4856fa68e02b60266ed3d
+Deleted: sha256:525844ac9b3f7f60c98d09bf61a5b0c5a8b274d2df57ce9bd7b5602c256206b5
+Deleted: sha256:6fc42af4a12758d183f51d25b688f6374375c2b93c3521548d0f009e0649d2f2
+Deleted: sha256:9ea547d3e19a49792a10f6bbe6c68645b8217664bea405aa54c4244af4249ef4
+Deleted: sha256:6ff2b2141a71ad0033e04fd502dee3ef665138326886e7b5aea4d0aa5627d243
+
+
+Sender: Unischeduler System <jyinap@mgmt-1>
+Subject: Job 77805: <docker save> Done
+
+Job <docker save> was submitted from host <mgmt-1> by user <jyinap>.
+Job was executed on host(s) <1*cpu2-10>, in queue <docker_image>, as user <jyinap>.
+</hpc2hdd/home/jyinap> was used as the home directory.
+</hpc2hdd/home/jyinap/Proactive_Agent> was used as the working directory.
+Started at 2026-03-24 18:24:41
+Results reported at 2026-03-24 18:53:40
+
+Your job looked like:
+
+------------------------------------------------------------
+# User input
+docker save
+------------------------------------------------------------
+
+Successfully completed.
+
+Resource usage summary:
+
+		CPU time:       1098.09 sec.
+		Max Memory:     60 MB
+		Max Processes:  3
+
+
