@@ -104,6 +104,7 @@ const COPY = {
     "footer.p": "主动式上下文感知助手。产品信息来自当前工程实现。",
     "footer.addrLabel": "地址",
     "footer.phoneLabel": "电话",
+    "footer.emailLabel": "邮箱",
   },
   en: {
     "nav.company": "Company",
@@ -211,6 +212,7 @@ const COPY = {
     "footer.p": "A proactive, context-aware assistant. Product details reflect the current implementation.",
     "footer.addrLabel": "Address",
     "footer.phoneLabel": "Phone",
+    "footer.emailLabel": "Email",
   },
 };
 
