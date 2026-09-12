@@ -158,73 +158,72 @@ scripts/memory/            # 测试与工具（09-12 从 zhx/task2/scripts 迁�
 
 ## 五、zhx_dev 分支历次更改记录（供审查）
 
-> `zhx_dev` 相对 `main`（分叉点 `2fd7b2e`）共 8 个提交（09-12 已按模块细粒度重写历史并 push）。
+> `zhx_dev` 相对 `main`（分叉点 `2fd7b2e`）共 9 个提交（09-12 按模块细粒度重写历史并 push）。
 > 以下按提交时间顺序逐条说明每个 commit 改了哪些文件与代码。
 
-### commit `b0d8bee` — feat(memory): 新增用户画像抽取模块 profile_extractor.py
+### 1. 新增用户画像抽取模块
 
 - **文件**：`code/profile_extractor.py`（全新文件，+283 行）
 - **改动**：按规格书 Part 2 骨架（demographics/preferences/frequent_locations/behavior_patterns）
-  新增画像抽取模块，含 `build_profile_extraction_prompt`（抽取 prompt 构建）、
-  `parse_profile_output`（JSON 多策略兜底解析）、`validate_profile`（低置信剔除 + 动态量拒绝）。
+  新增画像抽取模块，含抽取 prompt 构建、JSON 多策略兜底解析、低置信剔除 + 动态量拒绝。
 
-### commit `8e84345` — fix(agent): 修复 Phase C 记忆整理线程被主进程杀死导致画像从未生成
+### 2. 修复记忆整理在后台线程被终止导致画像从未生成
 
 - **文件**：`code/agent.py`（+22 / -11）
-- **改动**：Phase C 的 `run_phase_c` 后台线程 `daemon=True → False`；脚本入口
-  `process(consolidation_blocking=True)`；`_should_consolidate()` 触发条件澄清（首次 ≥3 才触发）。
-  根因：一次性脚本主进程退出时 daemon 线程被杀，导致 layer6 画像从未生成。
+- **改动**：记忆整理的后台线程由随进程退出被杀改为等待执行完成；脚本入口改为阻塞等待；
+  整理触发条件澄清（首次积累 ≥3 条才触发）。根因：一次性脚本主进程退出时后台线程被杀，
+  导致用户画像从未生成。
 
-### commit `75b4da6` — feat(agent): Phase A 接入分层检索 + Phase C 集成画像抽取
+### 3. 场景分析接入分层检索，记忆整理接入画像抽取
 
 - **文件**：`code/agent.py`（+55 / -25）
-- **改动**：① Phase A 检索从 `get_all_memory()` 全量 dump 改为 `get_context_for_analysis()`
-  最小够用上下文（修复 D2 假检索）；② consolidation prompt 的 profile 部分换规格书骨架 +
-  AttrValue 结构；③ `_consolidation_worker` 把 LLM 返回的 profile 抽出 → `validate_profile` 清洗 →
-  `update_profile()` 独立落库（`compress()` 只处理摘要）。
+- **改动**：① 场景分析（Phase A）检索从「全量 dump」改为「按需分层检索的最小够用上下文」
+  （修复假检索）；② 记忆整理（Phase C）的画像 prompt 换规格书骨架；③ LLM 返回画像后先清洗校验
+  再独立写入画像层（与摘要压缩解耦）。
 
-### commit `fe8e2a7` — feat(memory): 重构记忆模型——分层存储/检索/时间衰减/索引清洗
+### 4. 重构记忆模型：分层存储、检索、时间衰减与索引清洗
 
 - **文件**：`code/memory.py`（+520 / -93）
 - **改动**（按子功能）：
-  1. **分层存储**：`_empty_db` 的 layer6.profile 改为规格书骨架四字段；新增 `update_profile` /
-     `get_profile`（画像写入唯一入口，与 `compress()` 解耦）；`_migrate_profile` 旧数据迁移。
-  2. **合并语义**：新增 `_bigram_jaccard` / `_merge_attr_list`（列表追加去重）/
-     `_resolve_conflict`（频次>最近>置信度）/ `_corroborate_attr`（佐证合并）/
-     `_filter_low_confidence` / `_finalize_attr`。
-  3. **检索**：新增 `tokenize`（提交时为字符 bigram，修复 09-03 中文 0 命中；09-12 定稿改为
-     统一英文分词——非英文先翻译为英文，待改造）；`query` / `retrieve` 改相关性打分 +
-     Top-K + 排除 stale；`get_context_for_analysis` early-stop；`_collect_attrs` 画像展平注入。
-  4. **时间衰减**：新增 `effective_confidence` / `_apply_decay_and_stale`（stale 陈旧淘汰）、
-     `_has_profile_content`（冷启动）。
-  5. **索引清洗**：新增 `_is_valid_person_tag` / `_is_valid_index_tag` / `_clean_layer7_indices` /
-     `clean_layer7_indices`（修复 G7 污染）。
-  6. **原子落盘**：`_save` 改临时文件 + `os.replace`。
+  1. **分层存储**：画像层改为规格书骨架四字段；新增画像写入/读取独立入口（与摘要压缩解耦）；
+     旧数据自动迁移。
+  2. **合并语义**：列表追加去重（相似度阈值 0.85）、单值冲突裁决（频次>最近>置信度）、
+     同值佐证合并、低置信过滤（<0.3 不入库）。
+  3. **检索**：新增分词（提交时为字符 bigram，修复中文 0 命中；09-12 定稿改为统一英文分词——
+     非英文先翻译为英文，待改造）；检索改相关性打分 + Top-K + 排除陈旧数据；
+     上下文按需分层组装（画像 → 摘要 → 索引，取够即停）。
+  4. **时间衰减**：有效置信度随时间衰减、陈旧标记与淘汰、冷启动兜底。
+  5. **索引清洗**：校验并清洗分类归档索引的非法条目（占位符 / 否定短语 / 长句描述），修复索引污染。
+  6. **原子落盘**：临时文件 + 原子替换，防并发写坏。
 
-### commit `4e1b0fb` — feat(api_server): 本机环境适配
+### 5. 适配推理服务到本机环境
 
-- **文件**：`code/api_server.py`（+28 / -?）
-- **改动**：transformers 5.16 类名 `AutoModelForImageTextToText`；`QWEN_MODEL_PATH` / `PORT` /
-  `WHISPER_MODEL_PATH` 环境变量；whisper 本地缓存；safe-delete 临时目录清理规避。
+- **文件**：`code/api_server.py`
+- **改动**：适配本机依赖版本（模型类名变更）、模型路径 / 端口 / 语音模型缓存改为环境变量可配、
+  规避临时目录清理失败问题。
 
-### commit `172f261` — test+docs(memory): 新增单元测试/回归脚本与模块说明书
+### 6. 新增单元测试与记忆模块说明文档
 
-- **文件**：`scripts/memory/test_profile_extractor.py`、`test_profile_storage.py`、
-  `test_retrieval_decay.py`、`test_ddl2_regression.py`、`bench_retrieval_baseline.py`(+json)、
-  `run_all_videos.py`、`code/memory/README.md`
+- **文件**：`scripts/memory/` 下 4 套单测、检索压测、全量视频端到端回归脚本；`code/memory/README.md`
 - **改动**：4 套单测（153 断言）+ 检索压测 + 全量视频端到端回归脚本；本文档（说明书）。
   测试脚本原位于 `zhx/task2/scripts/`，09-12 目录重组迁入主目录 `scripts/memory/`。
 
-### commit `648df71` — chore: gitignore 忽略并移除运行时产物跟踪
+### 7. 忽略运行时产物，不再纳入版本管理
 
-- **文件**：`.gitignore`；`git rm --cached` 移除 `code/memory/memory.json` 与 `code/output/*` 跟踪
-- **改动**：运行时数据（记忆库 / 抽帧 / 音频 / 分析结果）不再入库；新增 `scripts/memory/archive/`、
-  `*.log`、`e2e_regression_*.json`、`_archive/`、`history/`、`logs/`、`scripts/legacy/` 忽略规则。
+- **文件**：`.gitignore`；移除 `code/memory/memory.json` 与 `code/output/*` 的版本跟踪
+- **改动**：运行时数据（记忆库 / 抽帧 / 音频 / 分析结果）不再入库；新增测试产物、日志、
+  归档目录等忽略规则。
 
-### commit `23b2214` — chore(scripts): 新增汇报展示与端到端报告生成工具
+### 8. 新增工作汇报与验证报告生成脚本
 
 - **文件**：`scripts/generate_presentation.py`、`scripts/generate_report.py`
 - **改动**：9.1~9.11 工作汇报 HTML 生成工具与端到端验证报告生成工具。
+
+### 9. 更新记忆模块说明文档以匹配当前历史与分词方案
+
+- **文件**：`code/memory/README.md`
+- **改动**：将本文档的提交记录更新为当前 9 个细粒度 commit；分词策略更新为「统一英文分词、
+  非英文先翻译为英文」的定稿方案。
 
 ---
 
