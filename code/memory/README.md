@@ -86,7 +86,7 @@ code/profile_extractor.py（画像抽取，Phase C 调用）
 |---|---|---|---|
 | 1 | `add()` L559 | Phase A | 写新 moment（layer1/3/7 + 索引） |
 | 2 | `update()` L1009 | 手动 | 更新 moment 的 people/location/notes |
-| 3 | `query()` L745 | 检索 | tokenize 分词 + 命中数排序 + Top-K + 排除 stale |
+| 3 | `query()` L745 | 检索 | tokenize 英文分词 + 命中数排序 + Top-K + 排除 stale |
 | 4 | `retrieve()` L767 | 检索 | 按 person/location/activity 打分取 Top-K |
 | 5 | `compress()` L813 | Phase C | 写 layer4/5/6.summary；**跳过 profile**（职责边界） |
 | 6 | `sort()` L856 | Phase C | layer7 索引归类（带索引键校验） |
@@ -111,7 +111,7 @@ code/profile_extractor.py（画像抽取，Phase C 调用）
 
 | 场景 | 函数 | 语义 |
 |---|---|---|
-| 列表型维度 | `_merge_attr_list()` L250 | 追加去重（bigram Jaccard ≥0.85 佐证合并），绝不整体覆盖 |
+| 列表型维度 | `_merge_attr_list()` L250 | 追加去重（英文单词字符 bigram Jaccard ≥0.85 佐证合并），绝不整体覆盖 |
 | 单值冲突 | `_resolve_conflict()` L234 | 频次 > 最近 > 置信度，败者入 history |
 | 同值重复 | `_corroborate_attr()` L224 | observations+1、confidence 增强、last_seen 更新 |
 | 低置信 <0.3 | `_filter_low_confidence()` L266 | 不入库 |
@@ -158,48 +158,73 @@ scripts/memory/            # 测试与工具（09-12 从 zhx/task2/scripts 迁�
 
 ## 五、zhx_dev 分支历次更改记录（供审查）
 
-`zhx_dev` 相对 `main`（分叉点 `2fd7b2e`）共 4 个提交，净改动集中在 memory 相关模块。逐条说明：
+> `zhx_dev` 相对 `main`（分叉点 `2fd7b2e`）共 8 个提交（09-12 已按模块细粒度重写历史并 push）。
+> 以下按提交时间顺序逐条说明每个 commit 改了哪些文件与代码。
 
-### commit `361ec2a` — feat：新增用户画像抽取模块
+### commit `b0d8bee` — feat(memory): 新增用户画像抽取模块 profile_extractor.py
 
-- **文件**：`code/profile_extractor.py`（+283 行，全新文件）
+- **文件**：`code/profile_extractor.py`（全新文件，+283 行）
 - **改动**：按规格书 Part 2 骨架（demographics/preferences/frequent_locations/behavior_patterns）
   新增画像抽取模块，含 `build_profile_extraction_prompt`（抽取 prompt 构建）、
   `parse_profile_output`（JSON 多策略兜底解析）、`validate_profile`（低置信剔除 + 动态量拒绝）。
 
-### commit `4cdc247` — fix：修复记忆整理线程被主进程杀死
+### commit `8e84345` — fix(agent): 修复 Phase C 记忆整理线程被主进程杀死导致画像从未生成
 
 - **文件**：`code/agent.py`（+22 / -11）
-- **改动**：Phase C 的 `run_phase_c` 后台线程 `daemon=True → False`，脚本入口 `consolidation_blocking=True`，
-  `_should_consolidate()` 触发条件澄清（首次 ≥3 才触发）。根因：一次性脚本主进程退出时 daemon 线程被杀，
-  导致 layer6 画像从未生成。
+- **改动**：Phase C 的 `run_phase_c` 后台线程 `daemon=True → False`；脚本入口
+  `process(consolidation_blocking=True)`；`_should_consolidate()` 触发条件澄清（首次 ≥3 才触发）。
+  根因：一次性脚本主进程退出时 daemon 线程被杀，导致 layer6 画像从未生成。
 
-### commit `1923ba2` — chore：gitignore 忽略个人工作目录
+### commit `75b4da6` — feat(agent): Phase A 接入分层检索 + Phase C 集成画像抽取
 
-- **文件**：`.gitignore`（+1 行）
-- **改动**：新增 `zhx/*` 忽略规则。
+- **文件**：`code/agent.py`（+55 / -25）
+- **改动**：① Phase A 检索从 `get_all_memory()` 全量 dump 改为 `get_context_for_analysis()`
+  最小够用上下文（修复 D2 假检索）；② consolidation prompt 的 profile 部分换规格书骨架 +
+  AttrValue 结构；③ `_consolidation_worker` 把 LLM 返回的 profile 抽出 → `validate_profile` 清洗 →
+  `update_profile()` 独立落库（`compress()` 只处理摘要）。
 
-### commit `843ec57` — feat：画像分层存储与检索落地（Step 06-07）⚠️ 大提交
+### commit `fe8e2a7` — feat(memory): 重构记忆模型——分层存储/检索/时间衰减/索引清洗
 
-- **文件**：8 个文件，+1599 / -422。此提交体量较大，按功能拆解如下（审查时可对照下表）：
+- **文件**：`code/memory.py`（+520 / -93）
+- **改动**（按子功能）：
+  1. **分层存储**：`_empty_db` 的 layer6.profile 改为规格书骨架四字段；新增 `update_profile` /
+     `get_profile`（画像写入唯一入口，与 `compress()` 解耦）；`_migrate_profile` 旧数据迁移。
+  2. **合并语义**：新增 `_bigram_jaccard` / `_merge_attr_list`（列表追加去重）/
+     `_resolve_conflict`（频次>最近>置信度）/ `_corroborate_attr`（佐证合并）/
+     `_filter_low_confidence` / `_finalize_attr`。
+  3. **检索**：新增 `tokenize`（提交时为字符 bigram，修复 09-03 中文 0 命中；09-12 定稿改为
+     统一英文分词——非英文先翻译为英文，待改造）；`query` / `retrieve` 改相关性打分 +
+     Top-K + 排除 stale；`get_context_for_analysis` early-stop；`_collect_attrs` 画像展平注入。
+  4. **时间衰减**：新增 `effective_confidence` / `_apply_decay_and_stale`（stale 陈旧淘汰）、
+     `_has_profile_content`（冷启动）。
+  5. **索引清洗**：新增 `_is_valid_person_tag` / `_is_valid_index_tag` / `_clean_layer7_indices` /
+     `clean_layer7_indices`（修复 G7 污染）。
+  6. **原子落盘**：`_save` 改临时文件 + `os.replace`。
 
-| 子功能 | 文件 | 关键改动 |
-|---|---|---|
-| 分层存储（画像 API + 合并语义） | `code/memory.py` | 新增 `_bigram_jaccard` / `_merge_attr_list` / `_resolve_conflict` / `_corroborate_attr` / `_filter_low_confidence` / `_finalize_attr` / `_migrate_profile` / `update_profile` / `get_profile`；`_empty_db` 的 layer6.profile 改为规格书骨架四字段 |
-| 时间衰减与遗忘 | `code/memory.py` | 新增 `effective_confidence` / `_apply_decay_and_stale` / `_has_profile_content` / `_collect_attrs` |
-| 中文分词 | `code/memory.py` | 新增 `tokenize`（字符 bigram，修复中文 0 命中） |
-| 分层检索 | `code/memory.py` | `query` / `retrieve` 改相关性打分 + Top-K + 排除 stale；`get_context_for_analysis` early-stop |
-| 索引清洗 | `code/memory.py` | 新增 `_is_valid_person_tag` / `_is_valid_index_tag` / `_clean_layer7_indices` / `clean_layer7_indices` |
-| 画像抽取集成 | `code/agent.py` | consolidation prompt 换规格书骨架；`_consolidation_worker` 抽 profile → `update_profile()` 独立落库 |
-| Phase A 检索接入 | `code/agent.py` | `get_all_memory()` 全量 dump → `get_context_for_analysis()` 最小够用上下文 |
-| 环境适配 | `code/api_server.py` | transformers 类名 / QWEN_MODEL_PATH / PORT / whisper 本地缓存（7 处） |
-| 运行时产物 | `code/memory/memory.json`、`code/output/*` | ⚠️ 运行数据不应入库（09-12 已在 .gitignore 清理，见下） |
+### commit `4e1b0fb` — feat(api_server): 本机环境适配
 
-### 未提交工作区（09-12 目录重组，待提交）
+- **文件**：`code/api_server.py`（+28 / -?）
+- **改动**：transformers 5.16 类名 `AutoModelForImageTextToText`；`QWEN_MODEL_PATH` / `PORT` /
+  `WHISPER_MODEL_PATH` 环境变量；whisper 本地缓存；safe-delete 临时目录清理规避。
 
-- `.gitignore`：新增 `scripts/memory/archive/`、`*.log`、`_archive/`、`history/`、`logs/`、`code/output` 二进制产物等忽略规则。
-- `scripts/memory/`：4 套测试脚本 + 压测 + 回归脚本（从 `zhx/task2/scripts/` 迁入）。
-- `code/memory/README.md`：本文档。
+### commit `172f261` — test+docs(memory): 新增单元测试/回归脚本与模块说明书
+
+- **文件**：`scripts/memory/test_profile_extractor.py`、`test_profile_storage.py`、
+  `test_retrieval_decay.py`、`test_ddl2_regression.py`、`bench_retrieval_baseline.py`(+json)、
+  `run_all_videos.py`、`code/memory/README.md`
+- **改动**：4 套单测（153 断言）+ 检索压测 + 全量视频端到端回归脚本；本文档（说明书）。
+  测试脚本原位于 `zhx/task2/scripts/`，09-12 目录重组迁入主目录 `scripts/memory/`。
+
+### commit `648df71` — chore: gitignore 忽略并移除运行时产物跟踪
+
+- **文件**：`.gitignore`；`git rm --cached` 移除 `code/memory/memory.json` 与 `code/output/*` 跟踪
+- **改动**：运行时数据（记忆库 / 抽帧 / 音频 / 分析结果）不再入库；新增 `scripts/memory/archive/`、
+  `*.log`、`e2e_regression_*.json`、`_archive/`、`history/`、`logs/`、`scripts/legacy/` 忽略规则。
+
+### commit `23b2214` — chore(scripts): 新增汇报展示与端到端报告生成工具
+
+- **文件**：`scripts/generate_presentation.py`、`scripts/generate_report.py`
+- **改动**：9.1~9.11 工作汇报 HTML 生成工具与端到端验证报告生成工具。
 
 ---
 
@@ -209,7 +234,7 @@ scripts/memory/            # 测试与工具（09-12 从 zhx/task2/scripts 迁�
 |---|---|---|---|
 | 画像抽取 | `scripts/memory/test_profile_extractor.py` | 骨架字段/低置信剔除/静态动态分存/解析兜底/触发条件/prompt | 42/42 |
 | 分层存储 | `scripts/memory/test_profile_storage.py` | 读写/追加去重/冲突裁决/佐证合并/旧数据迁移/职责边界/原子落盘 | 28/28 |
-| 增量更新+检索 | `scripts/memory/test_retrieval_decay.py` | bigram 分词/排序/early-stop/衰减/stale/冷启动 | 24/24 |
+| 增量更新+检索 | `scripts/memory/test_retrieval_decay.py` | 英文分词/排序/early-stop/衰减/stale/冷启动 | 24/24 |
 | 缺陷回归 | `scripts/memory/test_ddl2_regression.py` | D1/D2/D3 + G1/G5/G6/G7 专项 | 59/59 |
 | 端到端 | `scripts/memory/run_all_videos.py` | 35 视频全链路 | 35/35 |
 
@@ -229,13 +254,15 @@ cd /data/cxr25/zhx/Proactive_AI_Agent/scripts/memory
 | D1 | Phase C daemon 线程被杀 → 画像从未生成 | `agent.py` run_phase_c / process |
 | D2 | Phase A 假检索（全量 dump） | `memory.py` get_context_for_analysis + agent.py 接入 |
 | D3 | compress 浅覆盖 → 画像丢历史 | `memory.py` update_profile 独立 API + 合并语义 |
-| G1 | 中文检索 0 命中 | `memory.py` tokenize 字符 bigram |
+| G1 | 中文检索 0 命中 | `memory.py` tokenize 统一英文分词（非英文先翻译为英文；当前 bigram 实现待改造） |
 | G5 | retrieve 硬截断无排序 | `memory.py` retrieve 相关性打分 + Top-K |
 | G6 | 上下文字符截断/画像不注入 | `memory.py` early-stop + `_collect_attrs` 展平 |
 | G7 | layer7 索引污染 | `memory.py` 三重校验 + agent.py parse_analysis 源头过滤 |
 
 ## 八、下一步（09-12 会议）
 
-1. CRUD 完备化（update/combine/delete 按新 schema 完善 + 补测试）。
-2. 遗忘机制差异化（三类衰减曲线：身份偏好类 / 经历状态类 / 优惠券类）。
-3. EgoLife 测试集 + 三指标验收（存储 ≤100GB / 提取 ≤1s / 准确率 ≥95%）。
+1. **分词策略改造**：`tokenize()` 由中文 bigram 改为**统一英文分词**——英文按空格/单词边界分词；
+   非英文语种（中文等）先翻译为英文再分词；同步更新 `test_retrieval_decay.py`、`test_ddl2_regression.py` 相关用例。
+2. CRUD 完备化（update/combine/delete 按新 schema 完善 + 补测试）。
+3. 遗忘机制差异化（三类衰减曲线：身份偏好类 / 经历状态类 / 优惠券类）。
+4. EgoLife 测试集 + 三指标验收（存储 ≤100GB / 提取 ≤1s / 准确率 ≥95%）。
