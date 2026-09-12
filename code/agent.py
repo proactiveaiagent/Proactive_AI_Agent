@@ -36,8 +36,9 @@ import numpy as np
 from pathlib import Path
 from moviepy import VideoFileClip
 from concurrent.futures import ThreadPoolExecutor
-from memory import PersonMemory, HintMemory
+from memory import PersonMemory, HintMemory, _is_valid_person_tag
 from gui_agent_client import GUIAgentClient
+from profile_extractor import validate_profile, has_any_value
 import time
 from functools import wraps
 import requests
@@ -434,7 +435,7 @@ class VRAssistant:
     def extract_audio(self) -> str:
         path = self.output_dir / "audio.wav"
         video = VideoFileClip(self.video_path)
-        video.audio.write_audiofile(str(path), verbose=False, logger=None)
+        video.audio.write_audiofile(str(path), logger=None)
         video.close()
         return str(path)
 
@@ -834,11 +835,10 @@ Keep the response structured and concise."""
                 raw = line.split(":", 1)[-1].strip()
                 raw_people = re.split(r"[,，、]", raw)
                 result["people"] = [
-                    re.sub(r"（[^）]*）|\([^)]*\)", "", p).strip()
+                    cleaned
                     for p in raw_people
-                    if re.sub(r"（[^）]*）|\([^)]*\)", "", p).strip()
-                    and re.sub(r"（[^）]*）|\([^)]*\)", "", p).strip().lower()
-                    not in ("none", "n/a")
+                    for cleaned in [re.sub(r"（[^）]*）|\([^)]*\)", "", p).strip()]
+                    if _is_valid_person_tag(cleaned)
                 ]
             elif ll.startswith("- user action:") or ll.startswith("user action:"):
                 result["user_action"] = line.split(":", 1)[-1].strip()
@@ -935,9 +935,12 @@ Keep the response structured and concise."""
             print(f"📝 Language: {transcript_data['language']}")
             print(formatted_transcript)
 
-        # ── memory context retrieval ─────────────────────────────────────
+        # ── memory context retrieval（分层检索 early-stop，替代全量 dump）──
+        # 09-10：get_all_memory() 只输出统计数字、不含画像内容，且全量 dump；
+        # 改为 get_context_for_analysis() 按 layer6画像→layer4/5摘要→layer7 索引
+        # 分层渲染最小够用上下文（同步链路不含 LLM 调用）。
         t0 = time.time()
-        memory_context = self.memory.get_all_memory()
+        memory_context = self.memory.get_context_for_analysis()
         self.timings_phase_a["memory_retrieval"] = time.time() - t0
         print(f"\n{memory_context}\n")
 
@@ -1206,9 +1209,15 @@ CURRENT MEMORY:
 
 TASKS:
 1. Compress layers 1-3 into updated summaries for layers 4, 5, 6.
-2. Sort layer-7 indices: assign canonical tags to people, locations, activity_events.
-3. Combine near-duplicate location / event names into canonical forms.
-4. Extract and update user profile (name, preferences, habits) for layer 6.
+2. Sort layer-7 indices: assign canonical tags to people, locations, activity_events (only if specific named entity exists; do NOT use placeholder literals like "canonical_name" or "canonical_location"; use empty dict {{}} if none).
+3. Combine near-duplicate location / event names into canonical forms (do NOT use placeholder literals).
+4. Extract and update user profile (spec-skeleton fields, each attribute carries confidence/evidence):
+   - demographics: {{name, age, gender, identity, living_region, occupation, education, social_relations}}
+   - preferences: {{food: [...], hobbies: [...]}}
+   - frequent_locations: [...]
+   - behavior_patterns: {{with_surroundings: [...], with_ar_system: {{common_apps:[...], typical_behaviors:[...]}}, with_agents:[...]}}
+   Single-value fields (name/age/gender/...) use {{"value":..., "confidence":..., "evidence":...}};
+   list fields (food/hobbies/locations/...) use a list of such dicts.
 
 OUTPUT FORMAT — respond ONLY with valid JSON, no markdown:
 {{
@@ -1226,21 +1235,35 @@ OUTPUT FORMAT — respond ONLY with valid JSON, no markdown:
     "layer6": {{
       "summary": "...",
       "profile": {{
-        "name": "...",
-        "basic_info": {{}},
-        "preferences": {{}},
-        "habits": {{}}
+        "demographics": {{
+          "name": {{"value": "...", "confidence": 0.9, "evidence": "..."}},
+          "age": {{"value": "...", "confidence": 0.6, "evidence": "..."}},
+          "social_relations": [{{"value": "...", "confidence": 0.6, "evidence": "..."}}]
+        }},
+        "preferences": {{
+          "food": [{{"value": "spicy", "confidence": 0.85, "evidence": "..."}}],
+          "hobbies": [{{"value": "...", "confidence": 0.6, "evidence": "..."}}]
+        }},
+        "frequent_locations": [{{"value": "...", "confidence": 0.6, "evidence": "..."}}],
+        "behavior_patterns": {{
+          "with_surroundings": [{{"value": "...", "confidence": 0.6, "evidence": "..."}}],
+          "with_ar_system": {{
+            "common_apps": [{{"value": "...", "confidence": 0.6, "evidence": "..."}}],
+            "typical_behaviors": [{{"value": "...", "confidence": 0.6, "evidence": "..."}}]
+          }},
+          "with_agents": [{{"value": "...", "confidence": 0.6, "evidence": "..."}}]
+        }}
       }}
     }}
   }},
   "sort": {{
-    "people": {{"canonical_name": ["moment_id_1", "moment_id_2"]}},
-    "locations": {{"canonical_location": ["moment_id_1"]}},
-    "activity_events": {{"event_tag": ["moment_id_1"]}}
+    "people": {{}},
+    "locations": {{}},
+    "activity_events": {{}}
   }},
   "combine": {{
-    "locations": {{"old fuzzy name": "canonical name"}},
-    "activity_events": {{"old tag": "canonical tag"}}
+    "locations": {{}},
+    "activity_events": {{}}
   }}
 }}
 
@@ -1272,7 +1295,14 @@ IMPORTANT:
             # Apply operations
             t0 = time.time()
             if "compress" in data:
+                # 画像独立落库：compress 只写 layer4/5 摘要 + layer6.summary，
+                # layer6.profile 走 update_profile()（合并语义 + 原子落盘，避免浅覆盖丢历史）。
+                profile_inc = (data["compress"].get("layer6") or {}).get("profile")
                 self.memory.compress(data["compress"])
+                if isinstance(profile_inc, dict) and profile_inc:
+                    cleaned, _rejected = validate_profile(profile_inc)
+                    if has_any_value(cleaned):
+                        self.memory.update_profile(cleaned, moment_id="consolidation")
             if "sort" in data:
                 self.memory.sort(data["sort"])
             if "combine" in data:
@@ -1500,11 +1530,11 @@ if __name__ == "__main__":
     # LLM-based-GUI-Agent (phone/PC screen recordings + GUI-Owl analysis):
     # 1) Start GUI Agent: cd LLM-based-GUI-Agent/screen-recorder-mvp/pc && python main_web.py
     # 2) Record on PC or upload from Android app (XOOGUIAGT), then run:
-    assistant = VRAssistant(
-        input_source="gui_agent",
-        gui_agent_url="http://localhost:8776",
-        gui_agent_auto_analyze=True,
-    )
+    # assistant = VRAssistant(
+    #     input_source="gui_agent",
+    #     gui_agent_url="http://localhost:8776",
+    #     gui_agent_auto_analyze=True,
+    # )
 
     # Screen recording file (without GUI Agent bridge):
     # assistant = VRAssistant("../screen_record.mp4", input_source="screen_record")
