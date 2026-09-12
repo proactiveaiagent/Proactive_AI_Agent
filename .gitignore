@@ -10,3 +10,20 @@ LLM-based-GUI-Agent/screen-recorder-mvp/pc/memory/
 LLM-based-GUI-Agent/screen-recorder-mvp/pc/dist/
 LLM-based-GUI-Agent/screen-recorder-mvp/pc/dist_*/
 LLM-based-GUI-Agent/screen-recorder-mvp/pc/webui/node_modules/
+zhx/*
+
+# 记忆模型测试脚本的运行时产物（测试脚本本身保留提交）
+scripts/memory/archive/
+scripts/memory/*.log
+scripts/memory/e2e_regression_*.json
+
+# code/ 运行时产物（记忆数据 / 抽帧 / 音频 / 分析结果，均不提交）
+code/memory/memory.json
+code/memory/hints.json
+code/output/
+
+# 历史归档与运行日志（整理自 zhx/，不提交）
+_archive/
+history/
+logs/
+scripts/legacy/
