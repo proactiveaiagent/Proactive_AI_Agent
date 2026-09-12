@@ -34,7 +34,7 @@ import cv2
 import torch
 import numpy as np
 from pathlib import Path
-from moviepy.editor import VideoFileClip
+from moviepy import VideoFileClip
 from concurrent.futures import ThreadPoolExecutor
 from memory import PersonMemory, HintMemory
 from gui_agent_client import GUIAgentClient
@@ -92,7 +92,7 @@ RAW_VIDEO_MAX_FRAMES = 16       # only used when INPUT_MODE == "raw_video"
 INPUT_SOURCE = "camera"
 
 # LLM-based-GUI-Agent PC bridge (main_web.py default port 8776)
-GUI_AGENT_URL = "http://localhost:8776"
+GUI_AGENT_URL = None  # 禁用 GUI Agent
 GUI_AGENT_AUTO_ANALYZE = True
 
 # Valid Part-3 / Part-4 output channels
@@ -148,7 +148,7 @@ class VRAssistant:
         self.gui_report: dict | None = None
         self.gui_recording_meta: dict | None = None
 
-        use_gui_agent = self.input_source == "gui_agent" or gui_agent_url is not None
+        use_gui_agent = self.input_source == "gui_agent" or (gui_agent_url is not None and gui_agent_url != "")
         if use_gui_agent:
             self.gui_agent_client = GUIAgentClient(self.gui_agent_url)
             if self.input_source != "gui_agent":
@@ -1146,19 +1146,28 @@ Keep the response structured and concise."""
         if blocking:
             self._consolidation_worker(phase_b_result)
         else:
+            # daemon=False：让 Python 解释器在进程退出前隐式 join 此线程，
+            # 避免「主进程结束 → 后台线程被杀死 → consolidation 从未完成」的问题
+            # （09-03 已定位：daemon=True 是画像从未生成的根因）。
             t = threading.Thread(
                 target=self._consolidation_worker,
                 args=(phase_b_result,),
-                daemon=True
+                daemon=False
             )
             t.start()
             print("🔄 Phase C (consolidation) started in background thread.")
             return t
 
     def _should_consolidate(self) -> bool:
+        """决定是否触发 consolidation（Phase C）。
+        规则：首次积累 >= 3 条 moment 后触发；之后每新增 3 条触发一次。
+        这样画像能尽早生成（首次），又不会每次交互都调用 LLM 压缩。
+        """
         total = self.memory.memory["metadata"]["total_moments"]
         last = self.memory.memory["metadata"].get("last_consolidation")
-        return (total % 3 == 0) or (last is None and total > 1)
+        if last is None:
+            return total >= 3
+        return total % 3 == 0
 
     def _consolidation_worker(self, phase_b_result: dict):
         """Background consolidation: compress + sort + combine."""
@@ -1332,7 +1341,7 @@ IMPORTANT:
         """
         wall_start = time.time()
 
-        if self.gui_agent_client:
+        if self.gui_agent_client and self.gui_agent_url:
             self._sync_from_gui_agent()
 
         if self.input_source == "wearable":
@@ -1485,8 +1494,8 @@ IMPORTANT:
 if __name__ == "__main__":
     # ── Input examples ────────────────────────────────────────────────────
     # Camera (user-shot video):
-    # video_path = "../test_data/test_data/2.travel_abroad/2.1.mp4"
-    # assistant = VRAssistant(video_path, input_source="camera")
+    video_path = "../test_data/test_data/2.travel_abroad/2.1.mp4"
+    assistant = VRAssistant(video_path, input_source="camera")
 
     # LLM-based-GUI-Agent (phone/PC screen recordings + GUI-Owl analysis):
     # 1) Start GUI Agent: cd LLM-based-GUI-Agent/screen-recorder-mvp/pc && python main_web.py
@@ -1529,6 +1538,8 @@ if __name__ == "__main__":
     #     then="remind the user to keep to their diet and pick a lighter option",
     # )
 
-    # blocking=False  → Phase C runs in background (default, best for production)
-    # blocking=True   → wait for consolidation before printing final timing
-    results = assistant.process(consolidation_blocking=False)
+    # blocking=False  → Phase C runs in background (for long-running services)
+    # blocking=True   → wait for consolidation before returning (REQUIRED for one-shot scripts)
+    # ⚠️ 09-07 修复：脚本是一次性进程，必须 blocking=True，否则后台线程会在
+    #    主进程退出时被杀死，导致 consolidation（画像生成）从未完成。
+    results = assistant.process(consolidation_blocking=True)
