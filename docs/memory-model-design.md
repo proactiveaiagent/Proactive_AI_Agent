@@ -1,6 +1,9 @@
 # 记忆模型体系设计说明书（v1）
 
-> 版本：v1 ｜ 日期：2026-09-14 ｜ 状态：定稿（供开发与代码审查使用）
+> 版本：v1.1 ｜ 日期：2026-09-14 ｜ 状态：定稿（供开发与代码审查使用）
+>
+> v1.1 补全：§2.4 层间晋升与跨天清理定稿、§4.2 update 完整语义、§4.4 combine 完整语义、
+> §4.5 delete/highlight 完整语义、§8 存储容量预算（≤100GB）、§9 检索性能设计（≤1s）。
 >
 > 范围：7 层记忆模型的**体系设计**——分层定义、字段字典、CRUD 语义、遗忘机制（三类衰减曲线）。
 > 只管记忆模型本身（存储 / 检索 / 更新 / 遗忘 / 压缩 / 索引），LLM 理解等其他模块不在本设计范围。
@@ -67,30 +70,31 @@
 | 存储内容 | 当前时刻原始观察（scene / user_action / needs / solutions = 一个 moment） |
 | 写入时机 | 每次交互（Phase A `memory.add`） |
 | 保留时长【推导】 | 1 小时 |
-| 晋升 | 满 1 小时 → 晋升 layer2 |
-| 淘汰 | 不淘汰，晋升后原层清空 |
+| 窗口容量 | 5 条（`MAX_LAYER1`，超出时最旧滑出） |
+| 滑出去向 | 与当前 scene 同场景（location+activity 相同）→ layer2；否则 → layer3 |
+| 淘汰 | 不丢数据（真身在 layer7.moments，滑出只是移出窗口） |
 
 **Layer 2 · 同场景历史（瞬时）**
 
 | 项 | 定稿 |
 |---|---|
-| 存储内容 | 同一场景（location + activity 相同）内历史 moment，按时间排序 |
-| 写入时机 | layer1 晋升时；同场景新 moment 到达时追加 |
-| 保留时长【推导】 | 24 小时 |
-| 晋升 | 满 24 小时 → 晋升 layer3 |
-| 淘汰 | 不淘汰，晋升后原层清空 |
+| 存储内容 | 当前场景（location + activity 相同）的最近历史 moment |
+| 写入时机 | layer1 滑出（同场景判定） |
+| 窗口容量 | 20 条（`MAX_LAYER2`，超出时最旧滑入 layer3） |
+| 淘汰 | 不丢数据（滑入 layer3 窗口，真身仍在 layer7.moments） |
 
-> 注：09-03 实测 layer2 为 0 条（同场景聚合逻辑未生效），晋升机制待 CRUD 完备化时修复。
+> 注：09-03 实测 layer2 为 0 条——当前实现「滑出即进 layer2、无同场景判定」，定稿后需在
+> `_graduate_to_layer2` 补同场景判定（location+activity 相同才进 layer2，否则直接进 layer3）。
 
-**Layer 3 · 短期记忆（瞬时）**
+**Layer 3 · 当日窗口（瞬时）**
 
 | 项 | 定稿 |
 |---|---|
-| 存储内容 | 最近 24h 内全部 moment，按时间排序 |
-| 写入时机 | layer2 晋升时 |
-| 保留时长【推导】 | 7 天 |
-| 晋升 | 满 7 天 → 由 Phase C 压缩生成 layer4 |
-| 淘汰 | 不淘汰，压缩后原层清空 |
+| 存储内容 | 当日最近的 moment 窗口 |
+| 写入时机 | 每次 add 同步追加；layer2 滑出 |
+| 窗口容量 | 1000 条（初定，EgoLife 实测后校准；当前代码为 100） |
+| 跨天清理 | 新一天首次 add 时清空窗口（数据仍在 layer7.moments，见 §2.4） |
+| 压缩 | 不依赖 layer3：Phase C 从 layer7.moments 生成 layer4/5/6 |
 
 **Layer 4 · 近期摘要**
 
@@ -146,6 +150,38 @@ moment 到达 ──add()──► layer1 ──溢出──► layer2 ──晋
                        sort()/combine() ► layer7（索引）
 检索：layer6 画像 → layer5 → layer4 → layer7 索引（取够即停）
 ```
+
+### 2.4 层间晋升与跨天清理（定稿）
+
+**核心原则（三条）**：
+
+1. **窗口视图模型**：layer1/2/3 是「窗口视图」而非数据容器——数据真身唯一存放在
+   layer7.moments（主存储），窗口只是对最近 N 条的视图。晋升 = 窗口滑动，**不是数据的物理移动**，
+   因此任何窗口滑出都不丢数据。
+2. **惰性执行**：记忆系统是被动存储（单 JSON 文件、单进程），**不引入后台定时器**。
+   所有晋升/清理在写操作（add / compress）时顺带执行，避免与 ≤1s 检索竞争资源。
+3. **容量上限为硬约束**：每个窗口有容量上限（MAX），超出即滑动；时间语义（当日/近期）
+   由「跨天清理」和「Phase C 压缩」承载，不靠定时器逐条判定。
+
+**晋升规则表**：
+
+| 事件 | 触发时机 | 动作 |
+|---|---|---|
+| layer1 超限（>5） | add() 内 | 最旧滑出：同场景（location+activity 相同）→ layer2；否则 → layer3 |
+| layer2 超限（>20） | add() 内 | 最旧滑入 layer3 窗口 |
+| layer3 超限（>1000） | add() 内 | 最旧滑出窗口（真身保留在 layer7.moments） |
+| 跨天（today 变化） | add() 内 | 清空 layer1/2/3 窗口，更新 metadata.today（layer7.time_nodes 历史保留） |
+| 压缩（Phase C） | 每 3 条 moment | 从 **layer7.moments** 生成 layer4/5/6，不依赖 layer3 窗口 |
+
+**与现状代码的差距**（9.15 CRUD 完备化落地）：
+
+| # | 现状 | 定稿 |
+|---|---|---|
+| 1 | `_graduate_to_layer2` 无同场景判定（所有滑出都进 layer2） | 补 location+activity 判定，不同场景直接进 layer3 |
+| 2 | layer2 超限 pop 丢弃 | 改为滑入 layer3 |
+| 3 | MAX_LAYER3=100 | 上调 1000（EgoLife 实测校准） |
+| 4 | 跨天无清理（layer3 持续累积） | add 时检测 today 变化，清空窗口 |
+| 5 | update() 是旧版 shim（实为 add） | 重定义为 moment 字段更新操作（见 §4.2） |
 
 ---
 
@@ -246,7 +282,7 @@ moment 到达 ──add()──► layer1 ──溢出──► layer2 ──晋
 | # | 操作 | 方法 | 触发者 | 状态 |
 |---|---|---|---|---|
 | 1 | add | `add()` L559 | Phase A | ✅ |
-| 2 | update | `update()` L1009 | 手动 | ⚠️ 仅局部字段，待补全 |
+| 2 | update | `update()` L1009 | 手动 | ⚠️ 现为旧版 shim，语义已定稿待实现（§4.2） |
 | 3 | query | `query()` L745 | 检索 | ✅ |
 | 4 | retrieve | `retrieve()` L767 | 检索 | ✅ |
 | 5 | compress | `compress()` L813 | Phase C | ✅ |
@@ -270,7 +306,21 @@ moment 到达 ──add()──► layer1 ──溢出──► layer2 ──晋
 6. metadata.total_moments + 1；原子落盘。
 
 **update_feedback(moment_id, corrections, rating, confirmed)**：把 Part4 反馈写回
-layer7.moments 对应 moment 的 `feedback` 字段。
+layer7.moments 对应 moment 的 `feedback` 字段；corrections 中允许的字段直接改正 moment 本体
+（Part1-3 数据），并同步 layer1/2/3 中的同 id 条目。
+
+**update(moment_id, updates) → bool**（定稿；当前代码为旧版 shim，9.15 落地）
+- **语义**：改正指定 moment 的 Part1-3 数据（与 `update_feedback` 的分工：update 改数据，
+  update_feedback 改反馈）。
+- **允许字段白名单**：`scene` / `user_action` / `needs` / `solutions` / `people` / `location` /
+  `activity` / `notes`；禁止改 `id` / `timestamp` / `feedback` / `highlighted` / `layer`（越权字段忽略）。
+- **同步**：修改 layer7.moments 主存储后，同步 layer1/2/3 中同 id 条目（JSON 落盘重载后引用断开，
+  需防御同步）。
+- **索引联动**：若 `people` / `location` / `activity` 变更，同步增删 layer7 对应索引的 moment_id
+  （新键过 `_is_valid_index_tag` 校验）。
+- **返回**：moment 存在且至少一个合法字段被更新 → True；否则 False。
+- **旧签名**：`update(people, location, notes)` 无调用方（已确认 `agent.py` 零调用），直接替换，
+  不做兼容层。
 
 **update_profile(extracted, moment_id, timestamp) → profile**（画像写入唯一入口）
 1. **白名单过滤**：只接受 `PROFILE_FIELDS` 四字段；
@@ -301,16 +351,31 @@ list 型字段追加去重；**跳过 layer6.profile**（打印警告）；更�
 **sort(sort_analysis)**：把 LLM 归类的 layer7 索引（people/locations/activity_events/time_nodes）
 写入；每个索引键过 `_is_valid_index_tag` 校验（修复 G7 污染）；同键 moment_id 集合去重合并；落盘。
 
-**combine(canonical_map)**：把 layer7 索引中近义旧键合并到规范键（如 "Old fuzzy name" →
-canonical）；合并 moment_id 集合并同步更新 moments 主存储里的引用字段；规范键同样过校验；落盘。
+**combine(canonical_map)**（定稿补全；当前实现待补测试）
+- **canonical_map 来源（双通道）**：① Phase C LLM 输出——识别近义索引键对（如
+  "LAX" → "Los Angeles International Airport"）；② 规则兜底——大小写/空白规范化后的
+  精确重复检测（不引入语义推断）。
+- **合并规则**：对每个 `old_key → canonical`：校验 canonical 过 `_is_valid_index_tag`
+  （非法则跳过）；old_key ≠ canonical 且存在 → 把 old_key 的 moment_id 集并入 canonical，
+  删除 old_key；同步更新 moments 主存储中引用字段（如 `location` 从 old_key 改为 canonical）。
+- **幂等**：重复执行不产生副作用（old_key 已不存在则跳过）。
+- **不处理**：画像内的属性合并（那是 `update_profile` 的合并语义），combine 只管 layer7 索引键。
 
 ### 4.5 删除与标记
 
-**delete(moment_id, reason)**：删除 moments 主存储条目 + 四个索引中的 moment_id 引用 +
-layer1/2/3 中的该 moment；落盘。语义：一次性/错误/压缩后重复条目的移除。
+**delete(moment_id, reason="manual", force=False) → bool**（定稿补全；当前实现待补测试）
+- **清理范围**：moments 主存储条目 + 四个索引（people/locations/activity_events/time_nodes）中
+  的 moment_id 引用 + layer1/2/3 中的该 moment 条目。
+- **highlight 保护（定稿新增）**：`highlighted=True` 的 moment 是用户确认正确的高价值数据，
+  默认**拒绝删除**并返回 False；`force=True` 才允许（对应"错误标记需强制纠正"场景）。
+- **metadata 语义**：`total_moments` **不减**——moment_id 由累计序号生成，保留计数可防止
+  新 moment 与已删除 moment 的 ID 复用冲突；删除仅影响存储与索引。
+- **返回**：删除成功 → True；moment 不存在或被 highlight 保护拒绝 → False。
+- **语义边界**：delete 是「单条移除」，批量清扫（如压缩后去重）走 v2 的 sweep 接口。
 
-**highlight(moment_id)**：把 moment 标记为 confirmed-correct（`highlighted=True`）；
-highlight 条目在删除清扫中保留、检索中提权。
+**highlight(moment_id) → bool**：把 moment 标记为 confirmed-correct（`highlighted=True`）；
+效果：① 删除清扫中受保护（见上）；② 检索排序中提权（v2：highlight 条目在同等命中数下优先）；
+③ 画像更新的高权重佐证来源（v2）。moment 不存在返回 False。
 
 ### 4.6 画像合并语义（精确规则）
 
@@ -421,19 +486,94 @@ def effective_confidence(attr, now=None):
 
 ---
 
-## 八、演进路线（v1 → v2）
+## 八、存储容量预算设计（≤100GB 目标）
+
+### 8.1 存储构成与单条开销估算
+
+记忆库只存**结构化数据**；视频/音频**不入库**（仅存路径引用或丢弃）。
+
+| 构成 | 单条估算 | 说明 |
+|---|---|---|
+| moment 本体（scene/user_action/needs/solutions/feedback） | ~1 KB | 文本字段，Phase A 输出 |
+| layer7 索引（4 个索引 + 时间节点） | ~100 B | 每 moment 在 4 个索引中各出现一次 |
+| 抽帧缩略图（可选） | ≤50 KB/张 | JPEG 压缩；仅 highlight moment 或关键帧留存 |
+| 画像 / 摘要（layer4/5/6） | 恒定 ~几十 KB | 与 moment 数量无关 |
+
+### 8.2 容量预算表（按 moment 总量 N）
+
+| N（moment 总量） | 无图 | 每 moment 1 帧（50KB） |
+|---|---|---|
+| 10 万 | ~0.1 GB | ~5.1 GB |
+| 100 万 | ~1.1 GB | ~51 GB |
+| 500 万 | ~5.5 GB | ~255 GB ❌ 超预算 |
+
+**结论**：结构化数据本身远低于 100GB；**预算的主要约束是帧附件**。
+EgoLife（300h / 6 人一周）按每 5 分钟一个 moment 估算约 3.6 万条/人、总量约 20 万条——
+即使全存帧也在 ~10GB 量级。**定稿策略**：
+
+1. 视频/音频一律不入库，帧只存**路径引用**（原始文件在数据集目录）；
+2. 缩略图按需留存：仅 highlight（用户确认正确）moment 保留 ≤50KB 缩略图，其余不存；
+3. 容量监控：metadata 增加 `storage_bytes` 累计估算，超出阈值（如 50GB）触发告警；
+4. 压缩兜底：容量逼近上限时，layer7 中已被压缩进 layer4/5 的旧 moment 可降级为
+   摘要引用（保留 moment_id + 摘要指针，正文移出热库）——v2 实现。
+
+### 8.3 容量控制分层职责
+
+| 层 | 容量控制手段 |
+|---|---|
+| layer1/2/3 | 窗口容量上限（5 / 20 / 1000），恒定小 |
+| layer4/5 | 摘要覆盖式更新（不累积），恒定小 |
+| layer6 | 画像合并去重 + stale 标记（不物理膨胀） |
+| layer7 | 唯一随 N 线性增长的层：索引 + 主存储；由 8.2 预算约束 |
+
+---
+
+## 九、检索性能设计（≤1s 目标）
+
+### 9.1 现状与瓶颈
+
+| 环节 | 现状 | 100 万条外推 |
+|---|---|---|
+| `_load()` 全量解析 | 59.22ms @5000 条 | ~12s ❌ |
+| `query()` O(n) 全量 json.dumps 扫描 | 13.69ms p50 @5000 条 | ~2.7s ❌ |
+| layer6 画像直读 | 毫秒级 | 恒定 ✅ |
+
+外推超出 ≤1s 目标，必须按定稿方案优化。
+
+### 9.2 定稿优化方案（三件套）
+
+| # | 方案 | 内容 | 预算 |
+|---|---|---|---|
+| 1 | 倒排索引（G3） | `token → [moment_id]` 倒排表，写入时增量维护；查询 O(命中数) 而非 O(n) | <100ms @100 万条 |
+| 2 | 索引缓存 + 懒加载（G4） | 进程内缓存索引与热数据（layer6 画像常驻内存）；`_load` 只读 metadata + 画像，layer7 按需加载；写时增量更新缓存 | 冷启动 ~100ms |
+| 3 | 上下文截断 | 已落地：early-stop + Top-K + 按语义单元展平（不按字符硬截断） | 恒定 |
+
+**检索路径预算（定稿）**：① 画像直读 <1ms → ②/③ 摘要 <5ms → ④ 倒排检索 <100ms，
+同步链路合计 <150ms，相对 ≤1s 目标有约 7 倍余量。
+
+### 9.3 与「同步链路不含 LLM」的兼容
+
+倒排索引与缓存都是纯本地数据结构操作，不引入 LLM 调用，不违反硬约束。
+分词（统一英文）翻译环节若走 LLM，必须**离线预翻译并缓存**（写入时翻译，查询时查缓存），
+检索同步链路上不得实时调用 LLM。
+
+---
+
+## 十、演进路线（v1 → v2）
 
 | 项 | v1（本版） | v2 计划 |
 |---|---|---|
 | 遗忘判定 | 字段路径默认 + 写入时语义校正 | Agent 完全自主判断衰减策略（会议目标） |
 | 分词 | 统一英文分词（非英文先翻译） | 翻译质量与延迟优化（缓存翻译结果） |
 | 索引 | layer7 字典式索引 | 倒排索引 + 热画像缓存（≤1s 达标关键） |
-| CRUD | 9 操作骨架齐备 | update/combine/delete 补全语义 + 全覆盖测试 |
+| CRUD | 9 操作骨架齐备 + 语义定稿（§4） | update/combine/delete 按定稿落地 + 全覆盖测试 |
+| 晋升机制 | 窗口视图 + 惰性执行（§2.4 定稿） | 落地实现 + EgoLife 实测校准 MAX 值 |
+| 存储 | 容量预算定稿（§8） | storage_bytes 监控 + 降级压缩兜底 |
 | 评测 | 待 EgoLife 测试集 | 三指标（容量/速度/准确率）月末验收 |
 
 ---
 
-## 九、附录：代码位置索引
+## 十一、附录：代码位置索引
 
 | 主题 | 位置 |
 |---|---|
