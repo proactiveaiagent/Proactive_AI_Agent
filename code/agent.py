@@ -226,9 +226,14 @@ class VRAssistant:
         self.timings_phase_b: dict = {}
         self.timings_phase_c: dict = {}
 
-        # Memory
+        # Memory（注入翻译函数：统一英文分词——非英文先翻译为英文，见设计说明书 §6.2）
         print("Initialising memory (7-layer)...")
-        self.memory = PersonMemory()
+        try:
+            from translator import make_translator
+            translate_fn = make_translator(self.qwen_api_url)
+        except Exception:
+            translate_fn = None  # 翻译不可用时降级：纯英文分词，原文兜底
+        self.memory = PersonMemory(translate_fn=translate_fn)
 
         # Hint memory — extra user-curated trigger→need rules, separate from
         # the episodic 7-layer memory. Hints are spliced into the analysis

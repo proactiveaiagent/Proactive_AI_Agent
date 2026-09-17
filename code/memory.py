@@ -281,42 +281,41 @@ def _filter_low_confidence(node, min_conf: float = MIN_CONFIDENCE):
 
 
 # ---------------------------------------------------------------------------
-# 检索分词（04 文档 2.3.4 定稿：字符 bigram，兼容中英，零依赖）
+# 检索分词（09-12 定稿：统一英文分词——非英文语种先翻译为英文再分词）
 # ---------------------------------------------------------------------------
 
 def tokenize(text: str) -> list:
-    """中文按字符 bigram 切分，英文/数字按空格与边界切分。零第三方依赖。
+    """统一英文分词：按空格/单词边界切分（仅 ASCII 字母数字），小写化。
 
-    解决 09-03 实测的 `query("在图书馆学习") → 0 条` 问题：
-    中文整句按 split() 只出 1 个 token，bigram 后能命中「图书馆」等多字词。
+    非英文语种（中文等）必须先翻译为英文（见 `code/translator.py` 与
+    PersonMemory 的 translate_fn 注入），再调用本函数。未翻译的中文文本
+    不产生任何 token（返回空列表），由调用方降级处理。
     """
     if not text:
         return []
     tokens, buf = [], ""
     for ch in text.lower():
-        if '\u4e00' <= ch <= '\u9fff':          # 中文字符
-            if buf:
-                tokens.append(buf)
-                buf = ""
-            tokens.append(ch)
-        elif ch.isalnum():                       # 英数，累积成词
+        if ('a' <= ch <= 'z') or ('0' <= ch <= '9') or ch == "'":
             buf += ch
-        else:                                    # 分隔符
+        else:
             if buf:
                 tokens.append(buf)
                 buf = ""
     if buf:
         tokens.append(buf)
+    return tokens
 
-    # 中文相邻单字再生成 bigram，提升多字词可匹配性
-    out = []
-    for i, t in enumerate(tokens):
-        out.append(t)
-        if len(t) == 1 and '\u4e00' <= t <= '\u9fff':
-            if i + 1 < len(tokens) and len(tokens[i + 1]) == 1 \
-               and '\u4e00' <= tokens[i + 1] <= '\u9fff':
-                out.append(t + tokens[i + 1])
-    return out
+
+def _contains_cjk(text: str) -> bool:
+    """检测是否含中日韩字符（需先翻译为英文才能分词）。"""
+    if not text:
+        return False
+    return any(
+        '\u4e00' <= ch <= '\u9fff'      # CJK 统一汉字
+        or '\u3040' <= ch <= '\u30ff'   # 日文假名
+        or '\uac00' <= ch <= '\ud7af'   # 韩文
+        for ch in text
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -490,15 +489,18 @@ class PersonMemory:
         asynchronously / after the main pipeline returns.
     """
 
-    MAX_LAYER1 = 5    # keep last N moments in the "current" layer
-    MAX_LAYER2 = 20   # same-env history within a session
-    MAX_LAYER3 = 100  # all moments today (before daily compress)
+    MAX_LAYER1 = 5      # keep last N moments in the "current" layer
+    MAX_LAYER2 = 20     # same-env history within a session
+    MAX_LAYER3 = 1000   # today's window（设计说明书 §2.4：100→1000，EgoLife 实测校准）
 
-    def __init__(self, memory_dir: str = "memory"):
+    def __init__(self, memory_dir: str = "memory", translate_fn=None):
         self.memory_dir = Path(memory_dir)
         self.memory_dir.mkdir(exist_ok=True)
         self.memory_file = self.memory_dir / "memory.json"
         self.memory: Dict = self._load()
+        # 非英文 → 英文翻译函数（统一英文分词策略，见设计说明书 §6.2）。
+        # 可注入；None 时跳过翻译（非英文文本无法分词，检索走原文兜底降级）。
+        self.translate_fn = translate_fn
 
     # ------------------------------------------------------------------
     # Persistence
@@ -589,16 +591,40 @@ class PersonMemory:
         moment_id = self._new_moment_id()
         moment["id"] = moment_id
 
+        # 预翻译（统一英文分词：写入时翻译非英文文本存 normalized，检索查英文）
+        if self.translate_fn:
+            normalized = {}
+            for field, raw in (("scene", scene), ("user_action", user_action),
+                               ("location", location), ("activity", activity),
+                               ("notes", extra_notes)):
+                if raw and _contains_cjk(str(raw)):
+                    try:
+                        normalized[field] = self.translate_fn(str(raw))
+                    except Exception:
+                        pass  # 翻译失败降级：不存 normalized，原文兜底
+            if normalized:
+                moment["normalized"] = normalized
+
+        # ---- 跨天清理（设计说明书 §2.4：窗口视图，新一天清空窗口）----
+        today = _today_str()
+        if self.memory["metadata"]["today"] != today:
+            self.memory["layer1"].clear()
+            self.memory["layer2"].clear()
+            self.memory["layer3"].clear()
+            self.memory["metadata"]["today"] = today
+            self.memory["metadata"]["session_start"] = _now_iso()
+
         # ---- Layer 1 (current window) ----
         self.memory["layer1"].append(moment)
         if len(self.memory["layer1"]) > self.MAX_LAYER1:
-            # oldest moment graduates to layer2
+            # oldest moment slides out: same-env → layer2, otherwise → layer3
             old = self.memory["layer1"].pop(0)
-            self._graduate_to_layer2(old)
+            self._graduate_to_layer2(old, moment)
 
-        # ---- Layer 3 (today) ----
+        # ---- Layer 3 (today's window) ----
         self.memory["layer3"].append(moment)
         if len(self.memory["layer3"]) > self.MAX_LAYER3:
+            # 窗口超限：最旧滑出（真身保留在 layer7.moments，不丢数据）
             self.memory["layer3"].pop(0)
 
         # ---- Layer 7 master store ----
@@ -626,12 +652,31 @@ class PersonMemory:
         self._save()
         return moment_id
 
-    def _graduate_to_layer2(self, moment: Dict):
-        """Move a moment from layer1 to layer2 if env matches current scene."""
-        moment["layer"] = 2
-        self.memory["layer2"].append(moment)
-        if len(self.memory["layer2"]) > self.MAX_LAYER2:
-            self.memory["layer2"].pop(0)
+    def _graduate_to_layer2(self, moment: Dict, current: Dict):
+        """layer1 滑出（设计说明书 §2.4）：与当前 moment 同场景
+        （location + activity 相同）→ layer2；否则直接滑入 layer3。
+        layer2 超限时最旧滑入 layer3（不丢弃，真身保留在 layer7.moments）。
+        窗口内 moment 唯一（滑入前按 id 去重，防止 add 时已入 layer3 的重复）。
+        """
+        def _push(target: list, m: Dict, layer_no: int):
+            m["layer"] = layer_no
+            if not any(x.get("id") == m.get("id") for x in target):
+                target.append(m)
+
+        same_env = (
+            bool(moment.get("location"))
+            and moment.get("location") == current.get("location")
+            and moment.get("activity") == current.get("activity")
+        )
+        if same_env:
+            _push(self.memory["layer2"], moment, 2)
+            if len(self.memory["layer2"]) > self.MAX_LAYER2:
+                old = self.memory["layer2"].pop(0)
+                _push(self.memory["layer3"], old, 3)
+        else:
+            _push(self.memory["layer3"], moment, 3)
+            if len(self.memory["layer3"]) > self.MAX_LAYER3:
+                self.memory["layer3"].pop(0)
 
     # ------------------------------------------------------------------
     # Operation 2 : UPDATE
@@ -742,9 +787,28 @@ class PersonMemory:
     # Operation 3 : QUERY  (called by Part2 before need analysis)
     # ------------------------------------------------------------------
 
+    def _query_tokens(self, *texts: str) -> list:
+        """查询词 → 英文 tokens：非英文先翻译（走注入的翻译函数）再英文分词。
+
+        统一英文分词策略（设计说明书 §6.2）：查询与写入两端一致——
+        写入时 moment 已预翻译存 normalized，查询词同样翻译后命中。
+        翻译失败或未注入翻译函数时降级为原文分词（不崩溃）。
+        """
+        tokens = []
+        for text in texts:
+            if not text:
+                continue
+            if _contains_cjk(text) and self.translate_fn:
+                try:
+                    text = self.translate_fn(text)
+                except Exception:
+                    pass  # 降级：原文分词（非英文不产生 token）
+            tokens += tokenize(text)
+        return tokens
+
     def query(self, query_text: str, top_k: int = 5) -> List[Dict]:
-        """关键词检索（bigram 分词，兼容中文），按 token 命中数排序取 Top-K。"""
-        tokens = tokenize(query_text)
+        """关键词检索（统一英文分词），按 token 命中数排序取 Top-K。"""
+        tokens = self._query_tokens(query_text)
         if not tokens:
             return []
 
@@ -777,14 +841,14 @@ class PersonMemory:
             if ldata.get("summary"):
                 parts.append(f"[Layer {lnum}] {ldata['summary']}")
 
-        # Layer 7：按 person/location/activity 关键词打分排序
+        # Layer 7：按 person/location/activity 关键词打分排序（统一英文分词）
         query_tokens = []
         for p in (people or []):
-            query_tokens += tokenize(p)
+            query_tokens += self._query_tokens(p)
         if location:
-            query_tokens += tokenize(location)
+            query_tokens += self._query_tokens(location)
         if activity:
-            query_tokens += tokenize(activity)
+            query_tokens += self._query_tokens(activity)
 
         scored = []
         for m in self.memory["layer7"]["moments"].values():
@@ -913,36 +977,53 @@ class PersonMemory:
     # Operation 8 : DELETE
     # ------------------------------------------------------------------
 
-    def delete(self, moment_id: str = None, reason: str = "manual"):
+    def delete(self, moment_id: str = None, reason: str = "manual",
+               force: bool = False) -> bool:
+        """删除 moment（设计说明书 §4.5）。
+
+        - 清理范围：moments 主存储 + 四个索引引用 + layer1/2/3 条目。
+        - highlight 保护：highlighted=True 且非 force → 拒绝删除（返回 False）。
+        - metadata.total_moments 不减（moment_id 依赖累计序号，防 ID 复用冲突）。
+        - 返回：删除成功 True；moment 不存在或被保护拒绝 False。
         """
-        Remove a one-off / accidental / post-compress duplicate moment.
-        """
-        if moment_id and moment_id in self.memory["layer7"]["moments"]:
-            del self.memory["layer7"]["moments"][moment_id]
-            # Remove from indices
-            for index_key in ["people", "locations", "activity_events", "time_nodes"]:
-                for tag, ids in self.memory["layer7"][index_key].items():
-                    if moment_id in ids:
-                        ids.remove(moment_id)
-            # Remove from raw layers
-            for lkey in ["layer1", "layer2", "layer3"]:
-                self.memory[lkey] = [m for m in self.memory[lkey]
-                                     if m.get("id") != moment_id]
-            self._save()
-            print(f"🗑️  Deleted moment {moment_id} ({reason})")
+        if not moment_id:
+            return False
+        moment = self.memory["layer7"]["moments"].get(moment_id)
+        if not moment:
+            return False
+        if moment.get("highlighted") and not force:
+            print(f"⛔ 拒绝删除 highlighted moment {moment_id}（force=True 可强制）")
+            return False
+
+        del self.memory["layer7"]["moments"][moment_id]
+        # Remove from indices
+        for index_key in ["people", "locations", "activity_events", "time_nodes"]:
+            for tag, ids in self.memory["layer7"][index_key].items():
+                if moment_id in ids:
+                    ids.remove(moment_id)
+        # Remove from raw layers
+        for lkey in ["layer1", "layer2", "layer3"]:
+            self.memory[lkey] = [m for m in self.memory[lkey]
+                                 if m.get("id") != moment_id]
+        self._save()
+        print(f"🗑️  Deleted moment {moment_id} ({reason})")
+        return True
 
     # ------------------------------------------------------------------
     # Operation 9 : HIGHLIGHT
     # ------------------------------------------------------------------
 
-    def highlight(self, moment_id: str):
-        """
-        Mark a moment as confirmed-correct / high-value.
-        Highlighted moments survive delete sweeps and get higher retrieval priority.
+    def highlight(self, moment_id: str) -> bool:
+        """标记 moment 为 confirmed-correct（设计说明书 §4.5）。
+
+        效果：① 删除清扫中受保护（delete 默认拒删）；② v2：检索排序提权、
+        画像更新高权重佐证。moment 不存在返回 False。
         """
         if moment_id in self.memory["layer7"]["moments"]:
             self.memory["layer7"]["moments"][moment_id]["highlighted"] = True
             self._save()
+            return True
+        return False
 
     # ------------------------------------------------------------------
     # Context helpers (called by pipeline)
@@ -1003,20 +1084,95 @@ class PersonMemory:
         return "\n".join(lines)
 
     # ------------------------------------------------------------------
-    # Backward-compatible shim (so old code calling memory.update() works)
+    # Operation 2 : UPDATE（改正 moment 的 Part1-3 数据）
     # ------------------------------------------------------------------
 
-    def update(self, people: List[str], location: str, notes: Optional[str] = None):
-        """Backward-compatible shim — stores a minimal moment."""
-        self.add(
-            scene=location,
-            user_action="",
-            needs=[],
-            solutions=[],
-            people=people,
-            location=location,
-            extra_notes=notes or ""
-        )
+    UPDATE_FIELDS = ("scene", "user_action", "needs", "solutions",
+                     "people", "location", "activity", "notes")
+
+    def _sync_indices_for_moment(self, moment_id: str, moment: Dict,
+                                 old_people, old_location, old_activity):
+        """moment 的 people/location/activity 变更时联动 layer7 索引
+        （设计说明书 §4.2 update 语义：新键过校验，旧键清理空引用）。
+        """
+        def sync(key: str, old_val, new_val):
+            if old_val == new_val:
+                return
+            idx = self.memory["layer7"][key]
+            olds = [old_val] if isinstance(old_val, str) else (old_val or [])
+            for tag in olds:
+                if tag in idx and moment_id in idx[tag]:
+                    idx[tag].remove(moment_id)
+                    if not idx[tag]:
+                        del idx[tag]
+            news = [new_val] if isinstance(new_val, str) else (new_val or [])
+            for tag in news:
+                if not tag or not _is_valid_index_tag(key, tag):
+                    continue
+                idx.setdefault(tag, [])
+                if moment_id not in idx[tag]:
+                    idx[tag].append(moment_id)
+
+        sync("people", old_people, moment.get("people"))
+        sync("locations", old_location, moment.get("location"))
+        sync("activity_events", old_activity, moment.get("activity"))
+
+    def update(self, moment_id: str, updates: Dict) -> bool:
+        """改正指定 moment 的 Part1-3 数据（设计说明书 §4.2 定稿语义）。
+
+        - 允许字段白名单：UPDATE_FIELDS；禁止改 id/timestamp/feedback/highlighted/layer。
+        - 同步 layer1/2/3 同 id 条目（落盘重载后引用断开，防御同步）。
+        - people/location/activity 变更时联动 layer7 索引（含预翻译刷新）。
+        - 返回：至少一个合法字段被更新 → True；否则 False。
+        """
+        if not isinstance(updates, dict):
+            return False
+        moment = self.memory["layer7"]["moments"].get(moment_id)
+        if not moment:
+            return False
+
+        old_people = moment.get("people") or []
+        old_location = moment.get("location")
+        old_activity = moment.get("activity")
+
+        changed = False
+        for field, val in updates.items():
+            if field not in self.UPDATE_FIELDS or val is None:
+                continue
+            if field == "people":
+                moment["people"] = [p for p in val if _is_valid_person_tag(p)]
+            else:
+                moment[field] = val
+            changed = True
+
+        if not changed:
+            return False
+
+        # 预翻译刷新（统一英文分词：更新后重译，保持 normalized 与正文一致）
+        if self.translate_fn:
+            normalized = moment.get("normalized") or {}
+            for field in ("scene", "user_action", "location", "activity"):
+                v = moment.get(field)
+                if v and _contains_cjk(str(v)):
+                    try:
+                        normalized[field] = self.translate_fn(str(v))
+                    except Exception:
+                        pass
+            if normalized:
+                moment["normalized"] = normalized
+
+        # 同步 layer1/2/3 同 id 条目
+        for layer_key in ("layer1", "layer2", "layer3"):
+            for i, m in enumerate(self.memory[layer_key]):
+                if m.get("id") == moment_id:
+                    self.memory[layer_key][i] = moment
+
+        # 索引联动
+        self._sync_indices_for_moment(
+            moment_id, moment, old_people, old_location, old_activity)
+
+        self._save()
+        return True
 
     def get_context(self, people: List[str] = None, location: str = None) -> str:
         """Backward-compatible shim."""

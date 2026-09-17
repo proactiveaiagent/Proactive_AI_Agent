@@ -16,6 +16,7 @@ test_ddl2_regression.py — DDL 2 全量回归测试套件（覆盖 09-03 实证
     /data/cxr25/zhx/Proactive_AI_Agent/zhx/miniforge3/envs/agent/bin/python test_ddl2_regression.py
 """
 
+import json
 import sys
 import shutil
 import tempfile
@@ -38,6 +39,20 @@ from profile_extractor import validate_profile, parse_profile_output  # noqa: E4
 
 PASS = 0
 FAIL = 0
+
+# 模拟翻译（统一英文分词：非英文先翻译为英文，测试用 mock 不走 LLM）
+MOCK_TRANSLATE = {
+    "市图书馆": "city library",
+    "洛杉矶国际机场": "Los Angeles International Airport",
+    "机场航站楼办理登机牌": "checking in at the airport terminal",
+    "机场贵宾厅候机喝咖啡": "waiting and drinking coffee in the airport lounge",
+    "酒店大堂办理入住": "checking in at the hotel lobby",
+    "大学图书馆": "university library",
+    "市图书馆三楼自习室": "self-study room on the third floor of the city library",
+    "在图书馆学习人工智能": "studying artificial intelligence in the library",
+    "在图书馆学习": "studying in the library",
+}
+mock_translate = lambda text: MOCK_TRANSLATE.get(text, text)  # noqa: E731
 
 
 def check(name: str, cond: bool, detail: str = ""):
@@ -160,7 +175,7 @@ def run_all_tests():
     # -----------------------------------------------------------------------
     tmpdir = tempfile.mkdtemp(prefix="test_d2_")
     try:
-        mem = PersonMemory(memory_dir=tmpdir)
+        mem = PersonMemory(memory_dir=tmpdir, translate_fn=mock_translate)
         # 空库冷启动
         ctx_empty = mem.get_context_for_analysis("user", "library")
         check("冷启动不注入画像段落", "[Profile]" not in ctx_empty)
@@ -246,15 +261,17 @@ def run_all_tests():
         shutil.rmtree(tmpdir, ignore_errors=True)
 
     # -----------------------------------------------------------------------
-    section("5. G1 缺陷回归：中文分词与检索命中（09-03 实证 0 命中回归）")
+    section("5. G1 缺陷回归：统一英文分词（非英文先翻译，09-03 中文 0 命中回归）")
     # -----------------------------------------------------------------------
+    tokens_en = tokenize("Studying in the Library")
+    check("英文分词包含 'studying'", "studying" in tokens_en)
+    check("英文分词包含 'library'（小写化）", "library" in tokens_en)
     tokens_cn = tokenize("在图书馆学习")
-    check("中文 bigram 分词包含 '图书'", "图书" in tokens_cn)
-    check("中文 bigram 分词包含 '学习'", "学习" in tokens_cn)
+    check("未翻译中文不产生 token（需先翻译为英文）", tokens_cn == [])
 
     tmpdir = tempfile.mkdtemp(prefix="test_g1_")
     try:
-        mem = PersonMemory(memory_dir=tmpdir)
+        mem = PersonMemory(memory_dir=tmpdir, translate_fn=mock_translate)
         mem.add(
             scene="在图书馆学习人工智能",
             user_action="看书笔记",
@@ -264,8 +281,10 @@ def run_all_tests():
             activity="学习研究",
         )
         res_cn = mem.query("在图书馆学习")
-        check("中文 query 成功命中 (>=1 条)", len(res_cn) >= 1)
+        check("中文 query 经翻译成功命中 (>=1 条)", len(res_cn) >= 1)
         check("命中内容包含目标场景", "在图书馆学习人工智能" in res_cn[0]["scene"])
+        check("写入时预翻译 normalized 已存英文",
+              "library" in json.dumps(res_cn[0].get("normalized", {})).lower())
 
         res_en = mem.query("study in library")
         check("英文 query 保持命中兼容", len(res_en) >= 1)
@@ -277,7 +296,7 @@ def run_all_tests():
     # -----------------------------------------------------------------------
     tmpdir = tempfile.mkdtemp(prefix="test_g5_")
     try:
-        mem = PersonMemory(memory_dir=tmpdir)
+        mem = PersonMemory(memory_dir=tmpdir, translate_fn=mock_translate)
         # 存入不同匹配度的 moment
         mem.add(
             scene="机场航站楼办理登机牌",

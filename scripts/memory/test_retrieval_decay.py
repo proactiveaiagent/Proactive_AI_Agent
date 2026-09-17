@@ -40,32 +40,49 @@ def check(name, cond, detail=""):
 _counter = {"n": 0}
 
 
-def make_mem(tmpdir):
+def make_mem(tmpdir, translate_fn=None):
     _counter["n"] += 1
     d = tmpdir / f"case_{_counter['n']}"
     d.mkdir(parents=True, exist_ok=True)
-    return M.PersonMemory(memory_dir=str(d))
+    return M.PersonMemory(memory_dir=str(d), translate_fn=translate_fn)
 
 
-def T1_tokenize_cn():
-    print("\n[T1] tokenize 中文 bigram 分词")
-    toks = M.tokenize("在图书馆学习")
-    check("中文整句切出多个 token（非 1 个）", len(toks) > 1, f"got {toks}")
-    check("含 bigram「图书」", "图书" in toks, f"got {toks}")
-    check("含「学习」", "学习" in toks, f"got {toks}")
-    en = M.tokenize("library study")
-    check("英文切出 library/study", "library" in en and "study" in en, f"got {en}")
+# 模拟翻译（统一英文分词策略：非英文先翻译为英文，测试用 mock 不走 LLM）
+MOCK_TRANSLATE = {
+    "在图书馆学习": "studying in the library",
+    "在图书馆学习，准备考试": "studying in the library preparing for the exam",
+    "用户在图书馆学习，准备考试": "user studying in the library preparing for the exam",
+}
+mock_translate = lambda text: MOCK_TRANSLATE.get(text, text)  # noqa: E731
+
+
+def T1_tokenize_en():
+    print("\n[T1] tokenize 统一英文分词")
+    en = M.tokenize("Studying in the LIBRARY, preparing exam!")
+    check("英文切出 library/studying/preparing/exam",
+          all(t in en for t in ("library", "studying", "preparing", "exam")), f"got {en}")
+    check("大小写归一（全部小写）", "LIBRARY" not in en and "studying" in en, f"got {en}")
+    check("标点被清理", "!" not in "".join(en) and "," not in "".join(en), f"got {en}")
+    cn = M.tokenize("在图书馆学习")
+    check("未翻译中文不产生 token（需先翻译）", cn == [], f"got {cn}")
     check("空串返回空", M.tokenize("") == [])
 
 
-def T2_query_cn(tmpdir):
-    print("\n[T2] query 中文命中（09-03 回归：0 命中 → 命中）")
-    m = make_mem(tmpdir)
+def T2_query_cn_translated(tmpdir):
+    print("\n[T2] 中文查询经翻译后命中（统一英文分词：非英文先翻译）")
+    m = make_mem(tmpdir, translate_fn=mock_translate)
     m.add(scene="用户在图书馆学习，准备考试", user_action="看书", needs=[], solutions=[])
+    # 写入时 scene 已预翻译存 normalized；查询词 mock 翻译后英文分词命中
     res = m.query("在图书馆学习")
-    check("中文 query 命中", len(res) >= 1, f"got {len(res)} 条")
+    check("中文 query 经翻译命中", len(res) >= 1, f"got {len(res)} 条")
     check("命中的是图书馆 moment",
           any("图书馆" in r.get("scene", "") for r in res), f"got {[r.get('scene') for r in res]}")
+    check("moment 带 normalized 英文翻译",
+          "library" in (res[0].get("normalized", {}).get("scene", "")).lower(), f"got {res[0].get('normalized')}")
+    # 无翻译函数时降级：中文 query 不产生 token → 0 条（不崩溃）
+    m2 = make_mem(tmpdir)
+    m2.add(scene="用户在图书馆学习", user_action="", needs=[], solutions=[])
+    check("无翻译函数时中文 query 优雅降级（0 条不崩溃）", m2.query("在图书馆学习") == [])
 
 
 def T3_query_en(tmpdir):
@@ -168,8 +185,8 @@ def T10_context_no_stale_profile(tmpdir):
 if __name__ == "__main__":
     tmp = Path(tempfile.mkdtemp(prefix="retrieval_decay_"))
     try:
-        T1_tokenize_cn()
-        T2_query_cn(tmp)
+        T1_tokenize_en()
+        T2_query_cn_translated(tmp)
         T3_query_en(tmp)
         T4_retrieve_rank_topk(tmp)
         T5_context_profile(tmp)
