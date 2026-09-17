@@ -997,14 +997,19 @@ class PersonMemory:
                     if isinstance(v, dict) and isinstance(layer.get(k), dict):
                         layer[k].update(v)
                     elif isinstance(v, list) and isinstance(layer.get(k), list):
-                        # Merge lists (avoid duplicates)
-                        existing = set(str(x) for x in layer[k])
+                        # 列表合并去重（设计说明书 §4.4）：json.dumps + sort_keys 精确比较，
+                        # 支持 str 与嵌套 dict 元素（str(item) 对 dict 的顺序不稳定）。
+                        existing = {json.dumps(x, ensure_ascii=False, sort_keys=True)
+                                    for x in layer[k]}
                         for item in v:
-                            if str(item) not in existing:
+                            key = json.dumps(item, ensure_ascii=False, sort_keys=True)
+                            if key not in existing:
                                 layer[k].append(item)
-                                existing.add(str(item))
+                                existing.add(key)
                     else:
-                        layer[k] = v
+                        # 空值保护：空字符串/None 不覆盖已有值（防 LLM 返回空摘要丢历史）
+                        if v is not None and v != "":
+                            layer[k] = v
                 layer["last_updated"] = _now_iso()
                 layer["source_moment_count"] = self.memory["metadata"]["total_moments"]
 
@@ -1016,8 +1021,7 @@ class PersonMemory:
     # ------------------------------------------------------------------
 
     def sort(self, sort_analysis: Dict):
-        """
-        Re-classify layer7 indices based on LLM analysis.
+        """layer7 索引归类（设计说明书 §4.4 定稿）。
 
         sort_analysis format:
         {
@@ -1026,15 +1030,20 @@ class PersonMemory:
           "activity_events": {"chinese_new_year": ["m_xxx", ...]},
           "time_nodes": {"2024-02-10": ["m_xxx", ...]}
         }
+        规则：索引键过校验（防 G7 污染）；过滤悬挂 moment_id（不存在的 id 不写索引）；
+        同键 moment_id 集合去重合并。
         """
+        moments = self.memory["layer7"]["moments"]
         for index_key in ["people", "locations", "activity_events", "time_nodes"]:
-            if index_key in sort_analysis:
-                for tag, ids in sort_analysis[index_key].items():
-                    if not _is_valid_index_tag(index_key, tag):
-                        continue
-                    existing = set(self.memory["layer7"][index_key].get(tag, []))
-                    existing.update(ids)
-                    self.memory["layer7"][index_key][tag] = list(existing)
+            if index_key not in sort_analysis:
+                continue
+            for tag, ids in sort_analysis[index_key].items():
+                if not _is_valid_index_tag(index_key, tag):
+                    continue
+                valid_ids = [i for i in ids if i in moments]  # 过滤悬挂引用
+                existing = set(self.memory["layer7"][index_key].get(tag, []))
+                existing.update(valid_ids)
+                self.memory["layer7"][index_key][tag] = list(existing)
         self._save()
 
     # ------------------------------------------------------------------
@@ -1042,33 +1051,54 @@ class PersonMemory:
     # ------------------------------------------------------------------
 
     def combine(self, canonical_map: Dict):
-        """
-        Merge near-duplicate layer7 index keys into a canonical form.
+        """合并 layer7 索引近义旧键到规范键（设计说明书 §4.4 定稿）。
 
         canonical_map format:
         {
-          "locations": {"Old fuzzy name": "canonical_name"},
+          "people": {"old fuzzy name": "canonical_name"},
+          "locations": {"old tag": "canonical tag"},
           "activity_events": {"old tag": "canonical tag"}
         }
+
+        - canonical 过校验（防 G7 污染）；old_key 不存在或等于 canonical 则跳过（幂等）。
+        - 合并 moment_id 集合并同步更新 moments 主存储里的引用字段：
+          locations → location 字段；people → people 列表元素；activity_events → activity 字段。
         """
+        # 索引 → (moments 引用字段, 字段类型[str 单值 / list 列表])
+        REF_FIELD = {
+            "locations": ("location", "str"),
+            "people": ("people", "list"),
+            "activity_events": ("activity", "str"),
+        }
         for index_key, mapping in canonical_map.items():
-            if index_key not in self.memory["layer7"]:
+            if index_key not in self.memory["layer7"] or not isinstance(mapping, dict):
                 continue
+            ref = REF_FIELD.get(index_key)
             index = self.memory["layer7"][index_key]
             for old_key, canonical in mapping.items():
                 if not _is_valid_index_tag(index_key, canonical):
                     continue
-                if old_key in index and old_key != canonical:
-                    ids = index.pop(old_key)
-                    existing = set(index.get(canonical, []))
-                    existing.update(ids)
-                    index[canonical] = list(existing)
-                    # Update moment references too
+                if old_key not in index or old_key == canonical:
+                    continue
+                ids = index.pop(old_key)
+                existing = set(index.get(canonical, []))
+                existing.update(ids)
+                index[canonical] = list(existing)
+                # 同步更新 moments 主存储引用字段
+                if ref:
+                    field, kind = ref
+                    moments = self.memory["layer7"]["moments"]
                     for mid in existing:
-                        m = self.memory["layer7"]["moments"].get(mid)
-                        if m:
-                            if index_key == "locations" and m.get("location") == old_key:
-                                m["location"] = canonical
+                        m = moments.get(mid)
+                        if not m:
+                            continue
+                        if kind == "str":
+                            if m.get(field) == old_key:
+                                m[field] = canonical
+                        elif kind == "list":
+                            if isinstance(m.get(field), list) and old_key in m[field]:
+                                m[field] = [canonical if x == old_key else x
+                                            for x in m[field]]
         self._save()
 
     # ------------------------------------------------------------------
