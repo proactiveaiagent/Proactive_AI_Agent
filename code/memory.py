@@ -210,7 +210,7 @@ def _finalize_attr(attr: Dict, source: str, timestamp: str) -> Optional[Dict]:
     except (TypeError, ValueError):
         conf = 0.5
     ts = timestamp or _now_iso()
-    return {
+    out = {
         "value": value,
         "confidence": max(0.0, min(1.0, conf)),
         "source": attr.get("source") or source or "llm_inference",
@@ -219,6 +219,19 @@ def _finalize_attr(attr: Dict, source: str, timestamp: str) -> Optional[Dict]:
         "last_seen": ts,
         "observations": 1,
     }
+    # 三类衰减曲线（设计说明书 §5）：LLM 标注优先；带 expires_at 强制 deadline（语义校正）
+    if attr.get("expires_at"):
+        out["decay_type"] = DECAY_DEADLINE
+        out["expires_at"] = str(attr["expires_at"])
+    elif attr.get("decay_type") in (DECAY_STABLE, DECAY_DECAYING, DECAY_DEADLINE):
+        out["decay_type"] = attr["decay_type"]
+        if "decay_rate" in attr:
+            try:
+                out["decay_rate"] = float(attr["decay_rate"])
+            except (TypeError, ValueError):
+                pass
+    # 未标注 decay_type：不设，由 _assign_default_decay 按字段路径兜底
+    return out
 
 
 def _corroborate_attr(old: Dict, new: Dict) -> Dict:
@@ -319,19 +332,64 @@ def _contains_cjk(text: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# 时间衰减与陈旧淘汰（04 文档 2.4.4）
+# 时间衰减与陈旧淘汰（设计说明书 §5：三类衰减曲线，09-16 落地）
 # ---------------------------------------------------------------------------
 
-# 衰减率（每天）：稳定量（layer6 画像）0.5%；中期量 2%；瞬时量 15%（画像全为稳定量）
+# 兼容旧数据：无 decay_type 时的默认渐变衰减率（0.5%/天，半衰期约 139 天）
 STABLE_DAILY_DECAY = 0.005
 # 陈旧淘汰阈值：有效置信度 < 0.3 标记 stale（不参与检索，不物理删除）
 STALE_THRESHOLD = 0.3
 
+# 三类衰减曲线类型（设计说明书 §5.2）
+DECAY_STABLE = "stable"       # 身份偏好类：较长有效期或永久有效
+DECAY_DECAYING = "decaying"   # 经历状态类：随时间流逝逐渐衰减
+DECAY_DEADLINE = "deadline"   # 优惠券类：过期前完全有效，过期瞬间失效
+
+# 各曲线衰减率（每天）
+DECAY_RATE_PERMANENT = 0.0      # 硬身份（性别/姓名/受教育）：永久，不衰减
+DECAY_RATE_STABLE = 0.001       # 偏好/行为/习惯/地点：长有效（半衰期约 1.9 年）
+DECAY_RATE_DECAYING = 0.005     # 经历状态：渐变（半衰期约 139 天）
+
+# 硬身份字段（永久有效，decay=0）——设计说明书 §3.3 字段字典
+PERMANENT_FIELDS = {"name", "gender", "identity", "education"}
+# 渐变字段（经历状态类，随时间的推移自然变化）——设计说明书 §3.3
+DECAYING_FIELDS = {"occupation"}
+
+
+def _now_before(expires_at: str, now: Optional[str] = None) -> bool:
+    """判断 now 是否早于 expires_at（过期前）。解析失败保守视为未过期。"""
+    try:
+        exp = datetime.fromisoformat(expires_at)
+        now_dt = datetime.fromisoformat(now) if now else datetime.now()
+        return now_dt < exp
+    except (TypeError, ValueError):
+        return True
+
 
 def effective_confidence(attr: Dict, daily_decay: float = STABLE_DAILY_DECAY,
                          now: Optional[str] = None) -> float:
-    """有效置信度 = 原始置信度 × (1-daily_decay)^days，days 按 last_seen 起算。"""
+    """按 decay_type 计算有效置信度（设计说明书 §5 三类衰减曲线）。
+
+    - stable：不衰减 / 极低衰减（decay_rate 由字段决定，默认 0.001）
+    - decaying：随时间渐变衰减（decay_rate 默认 0.005）
+    - deadline：过期前 eff=confidence，过期后 eff=0（阶跃）
+    - 旧数据（无 decay_type）：按 daily_decay 渐变衰减（兼容）
+    """
     conf = float(attr.get("confidence", 0))
+
+    dt = attr.get("decay_type")
+    if dt == DECAY_DEADLINE:
+        if attr.get("expires_at"):
+            return conf if _now_before(attr["expires_at"], now) else 0.0
+        # deadline 缺失 expires_at → 按渐变兜底
+        daily = float(attr.get("decay_rate", DECAY_RATE_DECAYING))
+    elif dt == DECAY_STABLE:
+        daily = float(attr.get("decay_rate", DECAY_RATE_STABLE))
+    elif dt == DECAY_DECAYING:
+        daily = float(attr.get("decay_rate", DECAY_RATE_DECAYING))
+    else:
+        daily = daily_decay  # 旧数据兼容
+
     last_seen = attr.get("last_seen")
     if not last_seen:
         return conf
@@ -341,7 +399,45 @@ def effective_confidence(attr: Dict, daily_decay: float = STABLE_DAILY_DECAY,
         days = max(0, (now_dt - last).days)
     except (TypeError, ValueError):
         days = 0
-    return max(conf * (1 - daily_decay) ** days, 0.0)
+    return max(conf * (1 - daily) ** days, 0.0)
+
+
+def _default_decay_for_path(path: tuple) -> tuple:
+    """字段路径 → 默认 (decay_type, decay_rate)（设计说明书 §5.3 兜底）。
+
+    - demographics 硬身份字段 → stable 永久（0.0）
+    - demographics.occupation（经历状态）→ decaying（0.005）
+    - 其余（preferences / frequent_locations / behavior_patterns 等）→ stable 长有效（0.001）
+    """
+    if not path:
+        return (DECAY_STABLE, DECAY_RATE_STABLE)
+    field = path[0]
+    sub = path[1] if len(path) > 1 else ""
+    if field == "demographics":
+        if sub in PERMANENT_FIELDS:
+            return (DECAY_STABLE, DECAY_RATE_PERMANENT)
+        if sub in DECAYING_FIELDS:
+            return (DECAY_DECAYING, DECAY_RATE_DECAYING)
+    return (DECAY_STABLE, DECAY_RATE_STABLE)
+
+
+def _assign_default_decay(node, path: tuple = ()):
+    """递归给缺失 decay_type 的 AttrValue 按字段路径补默认策略（就地修改）。"""
+    if isinstance(node, list):
+        for x in node:
+            _assign_default_decay(x, path)
+        return node
+    if isinstance(node, dict):
+        if "value" in node:
+            if "decay_type" not in node:
+                dt, rate = _default_decay_for_path(path)
+                node["decay_type"] = dt
+                node["decay_rate"] = rate
+            return node
+        for k, v in node.items():
+            _assign_default_decay(v, path + (k,))
+        return node
+    return node
 
 
 def _apply_decay_and_stale(node, daily_decay: float = STABLE_DAILY_DECAY,
@@ -771,7 +867,9 @@ class PersonMemory:
                 continue
             profile[field] = self._merge_profile_node(profile.get(field), node, source, ts)
 
-        # 时间衰减重算 + 陈旧标记（04 文档 2.5 步骤④⑤，用真实当前时间相对 last_seen 计算）
+        # 字段路径默认衰减策略兜底（LLM 未标注 decay_type 时，按设计说明书 §5.3 补默认）
+        profile = _assign_default_decay(profile)
+        # 按 decay_type 重算有效置信度 + 陈旧标记（三类衰减曲线，见 §5）
         profile = _apply_decay_and_stale(profile)
 
         self.memory["layer6"]["profile"] = profile

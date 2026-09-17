@@ -139,18 +139,26 @@ def T7_effective_confidence():
 
 
 def T8_decay_stale_mark(tmpdir):
-    print("\n[T8] update_profile 后陈旧淘汰（stale 标记）")
+    print("\n[T8] update_profile 后陈旧淘汰（stale 标记，按三类曲线）")
     m = make_mem(tmpdir)
-    # 用很旧的 timestamp 写入，模拟 600+ 天前的观察（相对真实当前时间）
+    # 渐变型（decaying）字段 + 很旧 timestamp → 衰减至 stale
     m.update_profile(
-        {"demographics": {"name": {"value": "旧观察", "confidence": 0.4}}},
+        {"behavior_patterns": {"with_agents": [
+            {"value": "旧观察", "confidence": 0.4, "decay_type": M.DECAY_DECAYING}]}},
         moment_id="m1", timestamp="2025-01-01T00:00:00",
     )
+    bhv = m.get_profile()["behavior_patterns"]["with_agents"][0]
+    check("attr 带 effective_confidence", "effective_confidence" in bhv, f"got {bhv.keys()}")
+    check("attr 带 stale 标记", "stale" in bhv, f"got {bhv.keys()}")
+    check("低置信 + 久远（decaying）→ stale=True", bhv.get("stale") is True,
+          f"stale={bhv.get('stale')} eff={bhv.get('effective_confidence')}")
+    # 永久字段（name）同样久远但不 stale（三类曲线：硬身份永久有效）
+    m.update_profile(
+        {"demographics": {"name": {"value": "永久", "confidence": 0.4}}},
+        moment_id="m2", timestamp="2025-01-01T00:00:00",
+    )
     name = m.get_profile()["demographics"]["name"]
-    check("attr 带 effective_confidence", "effective_confidence" in name, f"got {name.keys()}")
-    check("attr 带 stale 标记", "stale" in name, f"got {name.keys()}")
-    # 0.4 置信度 × 600+ 天衰减（0.995^600≈0.049）≈ 0.02 < 0.3 → stale
-    check("低置信 + 久远 → stale=True", name.get("stale") is True,
+    check("永久字段（name）久远不 stale", name.get("stale") is False,
           f"stale={name.get('stale')} eff={name.get('effective_confidence')}")
 
 
@@ -167,12 +175,13 @@ def T10_context_no_stale_profile(tmpdir):
     m = make_mem(tmpdir)
     m.update_profile(
         {
-            "demographics": {"name": {"value": "活跃用户", "confidence": 0.9},
-                             "old_field": {"value": "过期信息", "confidence": 0.4}},
+            "demographics": {"name": {"value": "活跃用户", "confidence": 0.9}},
+            "behavior_patterns": {"with_agents": [
+                {"value": "过期信息", "confidence": 0.9, "decay_type": M.DECAY_DECAYING}]},
         },
-        moment_id="m1", timestamp="2026-01-01T00:00:00",  # 很旧 → old_field 会 stale
+        moment_id="m1", timestamp="2025-01-01T00:00:00",  # 很旧 → decaying 字段会 stale
     )
-    # 重新 update 用新 timestamp 激活 name，但 old_field 保持旧
+    # 重新 update 用新 timestamp 激活 name，但 decaying 字段保持旧（不再佐证 → 衰减至 stale）
     m.update_profile(
         {"demographics": {"name": {"value": "活跃用户", "confidence": 0.9}}},
         moment_id="m2", timestamp="2026-09-10T10:00:00",

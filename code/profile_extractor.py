@@ -69,7 +69,12 @@ RULES:
 1. Only output a field if you have EVIDENCE from the analysis. Do NOT hallucinate.
 2. Each attribute value carries "confidence" (0.0-1.0) and "evidence" (short quote/paraphrase from the analysis).
 3. A first-time / single observation should have LOW confidence (< 0.5); repeated evidence raises confidence.
-4. Output ONLY valid JSON (no markdown, no code fences).
+4. OPTIONAL: each attribute may carry "decay_type" to indicate its temporal nature:
+   - "stable"   : identity / preference (gender, name, taste) — long-lasting or permanent
+   - "decaying" : life-stage / state (e.g. occupation, "currently a student") — fades over time
+   - "deadline" : time-limited (coupon, membership expiry) — MUST also give "expires_at" in ISO format
+   If unsure, OMIT "decay_type" (the system assigns a default by field).
+5. Output ONLY valid JSON (no markdown, no code fences).
 
 OUTPUT FORMAT:
 {{
