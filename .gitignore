@@ -27,3 +27,6 @@ _archive/
 history/
 logs/
 scripts/legacy/
+
+# EgoLife 数据集（运行时数据，512GB 不提交）
+data/
