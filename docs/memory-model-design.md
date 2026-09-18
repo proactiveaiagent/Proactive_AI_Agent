@@ -83,8 +83,8 @@
 | 窗口容量 | 20 条（`MAX_LAYER2`，超出时最旧滑入 layer3） |
 | 淘汰 | 不丢数据（滑入 layer3 窗口，真身仍在 layer7.moments） |
 
-> 注：09-03 实测 layer2 为 0 条——当前实现「滑出即进 layer2、无同场景判定」，定稿后需在
-> `_graduate_to_layer2` 补同场景判定（location+activity 相同才进 layer2，否则直接进 layer3）。
+> 注：09-03 实测 layer2 为 0 条（旧实现「滑出即进 layer2、无同场景判定」）。09-15 已在
+> `_graduate_to_layer2` 落地同场景判定（location+activity 相同才进 layer2，否则直接进 layer3）。
 
 **Layer 3 · 当日窗口（瞬时）**
 
@@ -282,13 +282,13 @@ moment 到达 ──add()──► layer1 ──溢出──► layer2 ──晋
 | # | 操作 | 方法 | 触发者 | 状态 |
 |---|---|---|---|---|
 | 1 | add | `add()` L559 | Phase A | ✅ |
-| 2 | update | `update()` L1009 | 手动 | ⚠️ 现为旧版 shim，语义已定稿待实现（§4.2） |
+| 2 | update | `update()` L1009 | 手动 | ✅（09-15 落地：moment 字段更新 + 索引联动） |
 | 3 | query | `query()` L745 | 检索 | ✅ |
 | 4 | retrieve | `retrieve()` L767 | 检索 | ✅ |
 | 5 | compress | `compress()` L813 | Phase C | ✅ |
 | 6 | sort | `sort()` L856 | Phase C | ✅ |
-| 7 | combine | `combine()` L882 | Phase C | ⚠️ 待补测试 |
-| 8 | delete | `delete()` L916 | 手动 | ⚠️ 待补测试 |
+| 7 | combine | `combine()` L882 | Phase C | ✅（09-17 落地 + 补测试） |
+| 8 | delete | `delete()` L916 | 手动 | ✅（09-15 落地 + 测试覆盖） |
 | 9 | highlight | `highlight()` L938 | Phase B 确认 | ✅ |
 | — | update_profile | L709 | Phase C | ✅（画像唯一写入口） |
 | — | get_profile | L737 | 任意 | ✅ |
@@ -309,7 +309,7 @@ moment 到达 ──add()──► layer1 ──溢出──► layer2 ──晋
 layer7.moments 对应 moment 的 `feedback` 字段；corrections 中允许的字段直接改正 moment 本体
 （Part1-3 数据），并同步 layer1/2/3 中的同 id 条目。
 
-**update(moment_id, updates) → bool**（定稿；当前代码为旧版 shim，9.15 落地）
+**update(moment_id, updates) → bool**（定稿，9.15 落地）
 - **语义**：改正指定 moment 的 Part1-3 数据（与 `update_feedback` 的分工：update 改数据，
   update_feedback 改反馈）。
 - **允许字段白名单**：`scene` / `user_action` / `needs` / `solutions` / `people` / `location` /
@@ -346,24 +346,29 @@ layer7.moments 对应 moment 的 `feedback` 字段；corrections 中允许的字
 ### 4.4 整理类（Phase C）
 
 **compress(llm_summary)**：把 LLM 整理的 layer4/5/6.summary 写入对应层；
-list 型字段追加去重；**跳过 layer6.profile**（打印警告）；更新 last_consolidation；落盘。
+list 型字段追加去重（`json.dumps(sort_keys=True)` 精确比较，支持 str 与嵌套 dict 元素）；
+**跳过 layer6.profile**（打印警告，画像走 update_profile）；**空值保护**（空字符串/None 不覆盖已有值，
+防 LLM 返回空摘要丢历史）；更新 last_consolidation；落盘。
 
 **sort(sort_analysis)**：把 LLM 归类的 layer7 索引（people/locations/activity_events/time_nodes）
-写入；每个索引键过 `_is_valid_index_tag` 校验（修复 G7 污染）；同键 moment_id 集合去重合并；落盘。
+写入；每个索引键过 `_is_valid_index_tag` 校验（修复 G7 污染）；**悬挂 moment_id 过滤**（不存在的 id
+不写索引）；同键 moment_id 集合去重合并；落盘。
 
-**combine(canonical_map)**（定稿补全；当前实现待补测试）
+**combine(canonical_map)**（定稿补全，9.17 落地 + 补测试）
 - **canonical_map 来源（双通道）**：① Phase C LLM 输出——识别近义索引键对（如
   "LAX" → "Los Angeles International Airport"）；② 规则兜底——大小写/空白规范化后的
   精确重复检测（不引入语义推断）。
 - **合并规则**：对每个 `old_key → canonical`：校验 canonical 过 `_is_valid_index_tag`
   （非法则跳过）；old_key ≠ canonical 且存在 → 把 old_key 的 moment_id 集并入 canonical，
-  删除 old_key；同步更新 moments 主存储中引用字段（如 `location` 从 old_key 改为 canonical）。
-- **幂等**：重复执行不产生副作用（old_key 已不存在则跳过）。
+  删除 old_key；同步更新 moments 主存储中引用字段：
+  `locations → location`（str 单值）、`activity_events → activity`（str 单值）、
+  `people → people`（list 元素逐个替换）。
+- **幂等**：重复执行不产生副作用（old_key 已不存在或等于 canonical 则跳过）。
 - **不处理**：画像内的属性合并（那是 `update_profile` 的合并语义），combine 只管 layer7 索引键。
 
 ### 4.5 删除与标记
 
-**delete(moment_id, reason="manual", force=False) → bool**（定稿补全；当前实现待补测试）
+**delete(moment_id, reason="manual", force=False) → bool**（定稿补全，9.15 落地 + 测试覆盖）
 - **清理范围**：moments 主存储条目 + 四个索引（people/locations/activity_events/time_nodes）中
   的 moment_id 引用 + layer1/2/3 中的该 moment 条目。
 - **highlight 保护（定稿新增）**：`highlighted=True` 的 moment 是用户确认正确的高价值数据，
