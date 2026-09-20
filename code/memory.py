@@ -298,11 +298,11 @@ def _filter_low_confidence(node, min_conf: float = MIN_CONFIDENCE):
 # ---------------------------------------------------------------------------
 
 def tokenize(text: str) -> list:
-    """统一英文分词：按空格/单词边界切分（仅 ASCII 字母数字），小写化。
+    """中英混合分词：英文/数字按单词边界切分，中文按单字切分。零 LLM 依赖。
 
-    非英文语种（中文等）必须先翻译为英文（见 `code/translator.py` 与
-    PersonMemory 的 translate_fn 注入），再调用本函数。未翻译的中文文本
-    不产生任何 token（返回空列表），由调用方降级处理。
+    设计依据（设计说明书 §6.2，09-20 修订）：统一分词不再依赖「先翻译为英文」，
+    而是让 tokenize 同时处理中英文——中文输出单字 token（命中中文原文），
+    英文输出单词 token（命中写入时预翻译的 normalized）。检索同步链路零 LLM。
     """
     if not text:
         return []
@@ -310,6 +310,11 @@ def tokenize(text: str) -> list:
     for ch in text.lower():
         if ('a' <= ch <= 'z') or ('0' <= ch <= '9') or ch == "'":
             buf += ch
+        elif '\u4e00' <= ch <= '\u9fff':   # 中文字符 → 单字 token
+            if buf:
+                tokens.append(buf)
+                buf = ""
+            tokens.append(ch)
         else:
             if buf:
                 tokens.append(buf)
@@ -886,22 +891,16 @@ class PersonMemory:
     # ------------------------------------------------------------------
 
     def _query_tokens(self, *texts: str) -> list:
-        """查询词 → 英文 tokens：非英文先翻译（走注入的翻译函数）再英文分词。
+        """查询词 → tokens：中英混合分词，不实时调用 LLM（对齐 §9.3 硬约束）。
 
-        统一英文分词策略（设计说明书 §6.2）：查询与写入两端一致——
-        写入时 moment 已预翻译存 normalized，查询词同样翻译后命中。
-        翻译失败或未注入翻译函数时降级为原文分词（不崩溃）。
+        统一分词策略：tokenize 同时处理中文（单字）与英文（单词）——
+        中文查询词按单字命中 moment 中文原文，英文查询词按单词命中写入时
+        预翻译的 normalized。检索同步链路零 LLM 调用。
         """
         tokens = []
         for text in texts:
-            if not text:
-                continue
-            if _contains_cjk(text) and self.translate_fn:
-                try:
-                    text = self.translate_fn(text)
-                except Exception:
-                    pass  # 降级：原文分词（非英文不产生 token）
-            tokens += tokenize(text)
+            if text:
+                tokens += tokenize(text)
         return tokens
 
     def query(self, query_text: str, top_k: int = 5) -> List[Dict]:

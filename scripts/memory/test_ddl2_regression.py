@@ -267,7 +267,7 @@ def run_all_tests():
     check("英文分词包含 'studying'", "studying" in tokens_en)
     check("英文分词包含 'library'（小写化）", "library" in tokens_en)
     tokens_cn = tokenize("在图书馆学习")
-    check("未翻译中文不产生 token（需先翻译为英文）", tokens_cn == [])
+    check("中文切单字 token", tokens_cn == ['在', '图', '书', '馆', '学', '习'], f"got {tokens_cn}")
 
     tmpdir = tempfile.mkdtemp(prefix="test_g1_")
     try:
@@ -281,7 +281,7 @@ def run_all_tests():
             activity="学习研究",
         )
         res_cn = mem.query("在图书馆学习")
-        check("中文 query 经翻译成功命中 (>=1 条)", len(res_cn) >= 1)
+        check("中文 query 单字命中 (>=1 条)", len(res_cn) >= 1)
         check("命中内容包含目标场景", "在图书馆学习人工智能" in res_cn[0]["scene"])
         check("写入时预翻译 normalized 已存英文",
               "library" in json.dumps(res_cn[0].get("normalized", {})).lower())

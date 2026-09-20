@@ -2,8 +2,8 @@
 test_retrieval_decay.py — Step 07+08 单元测试
 ===============================================
 验证对象：
-  - tokenize（字符 bigram 中文分词，09-03 中文 0 命中回归）
-  - query / retrieve（bigram 分词 + 相关性排序 + 排除 stale）
+  - tokenize（中英混合分词：中文单字 + 英文单词，09-03 中文 0 命中回归）
+  - query / retrieve（中英混合分词 + 相关性排序 + 排除 stale）
   - get_context_for_analysis（early-stop 路径 + 画像注入 + 冷启动）
   - effective_confidence（时间衰减）
   - _apply_decay_and_stale（陈旧淘汰 stale 标记）
@@ -64,25 +64,25 @@ def T1_tokenize_en():
     check("大小写归一（全部小写）", "LIBRARY" not in en and "studying" in en, f"got {en}")
     check("标点被清理", "!" not in "".join(en) and "," not in "".join(en), f"got {en}")
     cn = M.tokenize("在图书馆学习")
-    check("未翻译中文不产生 token（需先翻译）", cn == [], f"got {cn}")
+    check("中文切单字 token", cn == ['在', '图', '书', '馆', '学', '习'], f"got {cn}")
     check("空串返回空", M.tokenize("") == [])
 
 
-def T2_query_cn_translated(tmpdir):
-    print("\n[T2] 中文查询经翻译后命中（统一英文分词：非英文先翻译）")
+def T2_query_cn(tmpdir):
+    print("\n[T2] 中文查询单字命中（中英混合分词，零 LLM）")
     m = make_mem(tmpdir, translate_fn=mock_translate)
     m.add(scene="用户在图书馆学习，准备考试", user_action="看书", needs=[], solutions=[])
-    # 写入时 scene 已预翻译存 normalized；查询词 mock 翻译后英文分词命中
+    # 中文查询词按单字分词，直接命中中文原文，不依赖查询时翻译
     res = m.query("在图书馆学习")
-    check("中文 query 经翻译命中", len(res) >= 1, f"got {len(res)} 条")
+    check("中文 query 单字命中", len(res) >= 1, f"got {len(res)} 条")
     check("命中的是图书馆 moment",
           any("图书馆" in r.get("scene", "") for r in res), f"got {[r.get('scene') for r in res]}")
-    check("moment 带 normalized 英文翻译",
+    check("写入预翻译 normalized 仍存英文",
           "library" in (res[0].get("normalized", {}).get("scene", "")).lower(), f"got {res[0].get('normalized')}")
-    # 无翻译函数时降级：中文 query 不产生 token → 0 条（不崩溃）
+    # 无翻译函数时中文 query 仍命中（零 LLM 依赖）
     m2 = make_mem(tmpdir)
     m2.add(scene="用户在图书馆学习", user_action="", needs=[], solutions=[])
-    check("无翻译函数时中文 query 优雅降级（0 条不崩溃）", m2.query("在图书馆学习") == [])
+    check("无翻译函数时中文 query 仍命中（零 LLM）", len(m2.query("在图书馆学习")) >= 1)
 
 
 def T3_query_en(tmpdir):
@@ -195,7 +195,7 @@ if __name__ == "__main__":
     tmp = Path(tempfile.mkdtemp(prefix="retrieval_decay_"))
     try:
         T1_tokenize_en()
-        T2_query_cn_translated(tmp)
+        T2_query_cn(tmp)
         T3_query_en(tmp)
         T4_retrieve_rank_topk(tmp)
         T5_context_profile(tmp)
