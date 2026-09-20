@@ -133,14 +133,14 @@ HTML = r"""<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>任务 2 · 终身用户建模与画像精化 — 工作汇报（09-01 ~ 09-11）</title>
 <style>
-:root{--bg:#0f1020;--card:#171931;--card2:#1e2040;--ink:#e8e9f5;--muted:#9aa0c3;--brand:#6d7cff;--brand2:#a855f7;--ok:#34d399;--warn:#fbbf24;--bad:#f87171;--border:#2a2d52;--code:#0b0d1f}
+:root{--bg:#f5f6fb;--card:#ffffff;--card2:#f0f2fa;--ink:#1f2430;--muted:#6b7189;--brand:#5b6cff;--brand2:#a855f7;--ok:#0ca678;--warn:#e8930c;--bad:#e5484d;--border:#e3e6f0;--code:#eef0f8}
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--ink);line-height:1.65;padding-bottom:92px}
-.hero{background:linear-gradient(135deg,#1b1d3f,#2b1e52 55%,#3b1e63);color:#fff;padding:36px 28px 30px;border-bottom:1px solid var(--border)}
+.hero{background:linear-gradient(135deg,#e9edff,#dfe6ff 55%,#e9dfff);color:#1f2430;padding:36px 28px 30px;border-bottom:1px solid var(--border)}
 .hero h1{font-size:26px;font-weight:800;letter-spacing:.5px}
 .hero .sub{margin-top:8px;font-size:14px;opacity:.9;max-width:1000px}
 .hero .tags{margin-top:14px;display:flex;flex-wrap:wrap;gap:8px}
-.hero .tag{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.28);padding:3px 13px;border-radius:999px;font-size:12.5px}
+.hero .tag{background:rgba(31,36,48,.08);border:1px solid rgba(31,36,48,.18);padding:3px 13px;border-radius:999px;font-size:12.5px}
 .wrap{max-width:1120px;margin:0 auto;padding:0 22px}
 .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin:22px 0 6px}
 .kpi{background:var(--card);border:1px solid var(--border);border-radius:13px;padding:14px 16px}
@@ -153,44 +153,44 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Micr
 section{margin-top:26px}
 h2{font-size:19px;font-weight:800;display:flex;align-items:center;gap:9px;margin-bottom:14px}
 h2 .dot{width:10px;height:10px;border-radius:50%;background:linear-gradient(135deg,var(--brand),var(--brand2));display:inline-block;flex:none}
-h3{font-size:15px;font-weight:700;margin:16px 0 8px;color:#c9cdf2}
+h3{font-size:15px;font-weight:700;margin:16px 0 8px;color:#3a4058}
 .card{background:var(--card);border:1px solid var(--border);border-radius:13px;padding:20px}
 .muted{color:var(--muted);font-size:12.5px}
-code{background:#262a55;padding:1px 6px;border-radius:5px;font-size:12px;color:#d6dbff;word-break:break-all}
-pre{background:var(--code);border:1px solid var(--border);border-radius:11px;padding:14px 16px;font-size:12.5px;line-height:1.55;overflow-x:auto;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#cdd3f5}
+code{background:#eef0f8;padding:1px 6px;border-radius:5px;font-size:12px;color:#3d4bd1;word-break:break-all}
+pre{background:var(--code);border:1px solid var(--border);border-radius:11px;padding:14px 16px;font-size:12.5px;line-height:1.55;overflow-x:auto;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#2b3147}
 pre .cm{color:#6b7399}.pre .k{color:#7dd3fc}.pre .s{color:#86efac}
 table{width:100%;border-collapse:collapse;font-size:13px}
-th{background:#232552;color:#c9cdf2;text-align:left;padding:8px 12px;font-weight:600}
+th{background:#eef0f8;color:#3a4058;text-align:left;padding:8px 12px;font-weight:600}
 td{padding:8px 12px;border-top:1px solid var(--border);vertical-align:top}
-tr:hover td{background:rgba(109,124,255,.05)}
+tr:hover td{background:rgba(91,108,255,.06)}
 .badge{display:inline-block;padding:2px 10px;border-radius:999px;font-size:11.5px;font-weight:700;white-space:nowrap}
-.badge.ok{background:rgba(52,211,153,.15);color:var(--ok)}
-.badge.warn{background:rgba(251,191,36,.15);color:var(--warn)}
-.badge.bad{background:rgba(248,113,113,.15);color:var(--bad)}
-.badge.gray{background:#2a2d52;color:#9aa0c3}
-.badge.brand{background:rgba(109,124,255,.15);color:#a5b0ff}
+.badge.ok{background:rgba(12,166,120,.12);color:var(--ok)}
+.badge.warn{background:rgba(232,147,12,.12);color:var(--warn)}
+.badge.bad{background:rgba(229,72,77,.12);color:var(--bad)}
+.badge.gray{background:#e3e6f0;color:#6b7189}
+.badge.brand{background:rgba(91,108,255,.12);color:#5b6cff}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
 .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
 @media(max-width:820px){.grid2,.grid3{grid-template-columns:1fr}}
 /* 流程节点 */
 .flow{display:flex;align-items:stretch;gap:8px;flex-wrap:wrap}
-.fnode{background:#232552;border:1px solid #3b4180;border-radius:11px;padding:10px 14px;font-size:12.5px;font-weight:600;color:#c9cdf2;text-align:center}
-.fnode.model{background:#2c1f4d;border-color:#5b3b9e;color:#d8c6ff}
-.fnode.hot{background:#12302a;border-color:#1f5c4c;color:#9ff0d3}
-.fnode.bad{background:#3a1a1a;border-color:#7c3030;color:#ffc2c2}
-.farrow{color:#5b618f;font-size:19px;align-self:center}
-.fnode small{display:block;font-size:10.5px;color:#8b91bd;font-weight:400;margin-top:2px}
+.fnode{background:#eef0f8;border:1px solid #c9d1f2;border-radius:11px;padding:10px 14px;font-size:12.5px;font-weight:600;color:#3a4058;text-align:center}
+.fnode.model{background:#ece6ff;border-color:#a879d8;color:#5b3b9e}
+.fnode.hot{background:#e0f5ec;border-color:#7fd4b0;color:#0c8a5f}
+.fnode.bad{background:#fde8e8;border-color:#f0a8a8;color:#c0392b}
+.farrow{color:#9aa0c3;font-size:19px;align-self:center}
+.fnode small{display:block;font-size:10.5px;color:#6b7189;font-weight:400;margin-top:2px}
 /* 分层记忆 */
 .layers{display:flex;flex-direction:column;gap:8px}
 .layer{display:grid;grid-template-columns:54px 1fr auto;align-items:center;gap:14px;background:var(--card2);border:1px solid var(--border);border-radius:10px;padding:10px 16px}
-.layer .no{width:42px;height:42px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:15px;color:#fff;background:linear-gradient(135deg,#4c5be0,#7c3aed)}
+.layer .no{width:42px;height:42px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:15px;color:#fff;background:linear-gradient(135deg,#5b6cff,#a855f7)}
 .layer.hot .no{background:linear-gradient(135deg,#059669,#10b981)}
 .layer.warn .no{background:linear-gradient(135deg,#d97706,#f59e0b)}
-.layer.empty .no{background:#3a3f6b}
+.layer.empty .no{background:#c3c9e0}
 .layer .ttl{font-weight:700;font-size:14px}
 .layer .desc{font-size:12px;color:var(--muted);margin-top:1px}
 /* 柱状图 */
-.bar-track{background:#2a2d52;border-radius:999px;height:14px;overflow:hidden;flex:1}
+.bar-track{background:#e3e6f0;border-radius:999px;height:14px;overflow:hidden;flex:1}
 .bar{height:100%;border-radius:999px;background:linear-gradient(90deg,var(--brand),var(--brand2))}
 .bar.c{background:linear-gradient(90deg,#f59e0b,#ef4444)}
 .bar.ok{background:linear-gradient(90deg,#059669,#10b981)}
@@ -204,42 +204,42 @@ tr:hover td{background:rgba(109,124,255,.05)}
 .frame{max-width:100%;border-radius:11px;border:1px solid var(--border)}
 .framelbl,.vidlbl{font-size:12px;color:var(--muted);font-weight:700;margin-bottom:8px}
 video{width:100%;border-radius:11px;border:1px solid var(--border);background:#000}
-.transcript{background:#101226;border:1px solid var(--border);border-radius:10px;padding:12px;font-size:12.5px;color:#a9b0d8}
+.transcript{background:#f0f2f8;border:1px solid var(--border);border-radius:10px;padding:12px;font-size:12.5px;color:#3a4058}
 .tsline{padding:2px 0}
 .note{font-size:12.5px;color:var(--muted);margin-top:11px;line-height:1.7}
-.note b{color:#ffd58a}
+.note b{color:#c77400}
 /* 画像 */
 .field{margin-bottom:14px}
-.fname{font-weight:800;font-size:13.5px;padding:4px 12px;border-radius:8px;background:linear-gradient(135deg,rgba(109,124,255,.18),rgba(168,85,247,.15));color:#b9c2ff;display:inline-block;margin-bottom:8px}
-.attr{display:grid;grid-template-columns:1fr 150px;gap:10px;align-items:center;padding:6px 0;border-bottom:1px dashed #2e3260}
+.fname{font-weight:800;font-size:13.5px;padding:4px 12px;border-radius:8px;background:linear-gradient(135deg,rgba(91,108,255,.12),rgba(168,85,247,.15));color:#b9c2ff;display:inline-block;margin-bottom:8px}
+.attr{display:grid;grid-template-columns:1fr 150px;gap:10px;align-items:center;padding:6px 0;border-bottom:1px dashed #e3e6f0}
 .attr .v{font-size:13px}
 .attr .v .ev{display:block;font-size:11px;color:var(--muted);margin-top:2px}
 .conf{display:flex;align-items:center;gap:8px}
 .conf .bar-track{height:9px}
 .conf .pct{font-size:11.5px;font-weight:700;width:36px;text-align:right}
-.sname{font-size:12px;font-weight:700;color:#8b91bd;margin:8px 0 3px}
-.warnbox{background:rgba(251,191,36,.07);border:1px solid rgba(251,191,36,.35);border-radius:10px;padding:12px 15px;margin-top:12px;font-size:12.5px;color:#ffd58a}
-.okbox{background:rgba(52,211,153,.07);border:1px solid rgba(52,211,153,.35);border-radius:10px;padding:12px 15px;margin-top:12px;font-size:12.5px;color:#9ff0d3}
+.sname{font-size:12px;font-weight:700;color:#6b7189;margin:8px 0 3px}
+.warnbox{background:rgba(232,147,12,.08);border:1px solid rgba(251,191,36,.35);border-radius:10px;padding:12px 15px;margin-top:12px;font-size:12.5px;color:#c77400}
+.okbox{background:rgba(12,166,120,.08);border:1px solid rgba(52,211,153,.35);border-radius:10px;padding:12px 15px;margin-top:12px;font-size:12.5px;color:#0c8a5f}
 /* 图例+统计 */
 .statrow{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-top:14px}
 .stat{background:var(--card2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;text-align:center}
-.stat .n{font-size:19px;font-weight:800;color:#c9cdf2}
+.stat .n{font-size:19px;font-weight:800;color:#3a4058}
 .stat .l{font-size:11px;color:var(--muted);margin-top:2px}
 /* e2e 柱群 */
 .e2echart{display:flex;align-items:flex-end;gap:3px;height:150px;padding:10px;background:var(--card2);border:1px solid var(--border);border-radius:10px;overflow-x:auto}
-.e2ebar{flex:none;width:12px;border-radius:3px 3px 0 0;background:linear-gradient(180deg,var(--brand),#7c3aed);opacity:.85}
+.e2ebar{flex:none;width:12px;border-radius:3px 3px 0 0;background:linear-gradient(180deg,var(--brand),#a855f7);opacity:.85}
 .e2ebar:hover{opacity:1}
 /* 翻页条 */
-.pager{position:fixed;left:0;right:0;bottom:0;background:rgba(15,16,32,.92);backdrop-filter:blur(10px);border-top:1px solid var(--border);padding:10px 16px;display:flex;align-items:center;justify-content:center;gap:8px;z-index:99;flex-wrap:wrap}
-.pbtn{min-width:44px;height:38px;border-radius:10px;border:1px solid var(--border);background:var(--card);color:#c9cdf2;font-size:13px;font-weight:700;cursor:pointer;padding:0 10px;transition:.15s}
-.pbtn:hover{border-color:#6d7cff}
+.pager{position:fixed;left:0;right:0;bottom:0;background:rgba(245,246,251,.92);backdrop-filter:blur(10px);border-top:1px solid var(--border);padding:10px 16px;display:flex;align-items:center;justify-content:center;gap:8px;z-index:99;flex-wrap:wrap}
+.pbtn{min-width:44px;height:38px;border-radius:10px;border:1px solid var(--border);background:var(--card);color:#3a4058;font-size:13px;font-weight:700;cursor:pointer;padding:0 10px;transition:.15s}
+.pbtn:hover{border-color:#5b6cff}
 .pbtn.on{background:linear-gradient(135deg,var(--brand),var(--brand2));color:#fff;border-color:transparent}
 .pbtn.nav{background:transparent;font-size:17px}
-.pbtn .d{display:block;font-size:9px;font-weight:400;color:#8b91bd;margin-top:-2px}
+.pbtn .d{display:block;font-size:9px;font-weight:400;color:#6b7189;margin-top:-2px}
 .pbtn.on .d{color:rgba(255,255,255,.75)}
-.phint{position:fixed;left:16px;bottom:64px;font-size:11px;color:#5b618f;z-index:99}
-.svglbl{font-size:11px;fill:#9aa0c3}
-.svggrid{stroke:#2a2d52}
+.phint{position:fixed;left:16px;bottom:64px;font-size:11px;color:#9aa0c3;z-index:99}
+.svglbl{font-size:11px;fill:#6b7189}
+.svggrid{stroke:#e3e6f0}
 </style>
 </head>
 <body>
@@ -394,9 +394,9 @@ bash pipeline.sh</pre>
             <line x1="45" y1="68" x2="410" y2="68" class="svggrid" stroke-dasharray="4 4"/>
             <text x="0" y="10" class="svglbl">15</text>
             <line x1="45" y1="6" x2="410" y2="6" class="svggrid" stroke-dasharray="4 4"/>
-            <rect x="58"  y="196" width="52" height="4"  fill="#6d7cff" rx="2"><title>n=100: p95=0.26ms</title></rect>
-            <rect x="152" y="183" width="52" height="17" fill="#6d7cff" rx="2"><title>n=500: p95=1.27ms</title></rect>
-            <rect x="246" y="158" width="52" height="42" fill="#7c3aed" rx="2"><title>n=1000: p95=3.09ms</title></rect>
+            <rect x="58"  y="196" width="52" height="4"  fill="#5b6cff" rx="2"><title>n=100: p95=0.26ms</title></rect>
+            <rect x="152" y="183" width="52" height="17" fill="#5b6cff" rx="2"><title>n=500: p95=1.27ms</title></rect>
+            <rect x="246" y="158" width="52" height="42" fill="#a855f7" rx="2"><title>n=1000: p95=3.09ms</title></rect>
             <rect x="340" y="8"   width="52" height="192" fill="#a855f7" rx="2"><title>n=5000: p95=14.38ms</title></rect>
             <text x="84" y="215" class="svglbl">100</text>
             <text x="178" y="215" class="svglbl">500</text>
@@ -421,7 +421,7 @@ bash pipeline.sh</pre>
       <h3>③ 三大实证缺陷（脚本 verify_profile_write.py 实测）</h3>
       <div class="grid3">
         <div>
-          <h3 style="color:#f87171">P0 · 画像从未生成</h3>
+          <h3 style="color:#e5484d">P0 · 画像从未生成</h3>
           <pre>layer4/5/6: (empty)
 metadata.last_consolidation = null
 
@@ -434,7 +434,7 @@ process(consolidation_blocking=False)   ← 默认非阻塞
           <div class="note">根因已定位：<b>运行配置问题</b>，非代码 bug。改 <code>consolidation_blocking=True</code> 即可。</div>
         </div>
         <div>
-          <h3 style="color:#f87171">P0 · 画像增量更新丢历史</h3>
+          <h3 style="color:#e5484d">P0 · 画像增量更新丢历史</h3>
           <table>
             <tr><th>字段</th><th>合并前</th><th>合并后</th></tr>
             <tr><td>hobbies</td><td>['photography','travel']</td><td style="color:var(--bad)">['hiking'] ❌</td></tr>
@@ -444,7 +444,7 @@ process(consolidation_blocking=False)   ← 默认非阻塞
           <div class="note">根因：<code>compress()</code> 对 profile 内部是 <code>dict.update()</code> 浅合并，列表被整体覆盖。<b>必须重写合并逻辑</b>。</div>
         </div>
         <div>
-          <h3 style="color:#f87171">P1 · 中文检索 0 命中</h3>
+          <h3 style="color:#e5484d">P1 · 中文检索 0 命中</h3>
           <pre>'在图书馆学习'.split()
 → ['在图书馆学习']    ← 整句 1 个 token
 → query() 返回 0 条 ❌
@@ -786,8 +786,8 @@ def effective_confidence(attr, daily_decay=0.005, now=None) -> float:
             <tr><td><code>test_ddl2_regression.py</code></td><td>09-03 缺陷专项回归（D1/D2/D3 + G1/G5/G6/G7）</td><td><span class="badge ok">59/59</span></td></tr>
           </table>
           <div class="statrow">
-            <div class="stat"><div class="n" style="color:#34d399">153</div><div class="l">断言总数</div></div>
-            <div class="stat"><div class="n" style="color:#34d399">0</div><div class="l">失败</div></div>
+            <div class="stat"><div class="n" style="color:#0ca678">153</div><div class="l">断言总数</div></div>
+            <div class="stat"><div class="n" style="color:#0ca678">0</div><div class="l">失败</div></div>
             <div class="stat"><div class="n">4</div><div class="l">测试脚本</div></div>
           </div>
         </div>
@@ -814,8 +814,8 @@ def effective_confidence(attr, daily_decay=0.005, now=None) -> float:
           <div class="e2echart">{{E2E_BARS}}</div>
           <div class="muted" style="margin-top:6px">每个柱子 = 1 个视频的端到端耗时（9.0s ~ 89.4s，均值 25.3s）。峰值出现在 Phase C consolidation 触发的视频（每 3 条 moment 触发一次）。</div>
           <div class="statrow">
-            <div class="stat"><div class="n" style="color:#34d399">35/35</div><div class="l">视频全部跑通</div></div>
-            <div class="stat"><div class="n" style="color:#34d399">34</div><div class="l">画像生成（首条冷启动不触发）</div></div>
+            <div class="stat"><div class="n" style="color:#0ca678">35/35</div><div class="l">视频全部跑通</div></div>
+            <div class="stat"><div class="n" style="color:#0ca678">34</div><div class="l">画像生成（首条冷启动不触发）</div></div>
             <div class="stat"><div class="n">0</div><div class="l">崩溃 / 异常</div></div>
             <div class="stat"><div class="n">36</div><div class="l">累计 moments</div></div>
           </div>
