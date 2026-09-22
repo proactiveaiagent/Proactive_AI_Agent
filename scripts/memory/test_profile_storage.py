@@ -178,7 +178,8 @@ def T6_old_data_compat(tmpdir):
     check("旧 habits 迁移到 behavior_patterns.with_agents",
           p["behavior_patterns"].get("with_agents", [{}])[0].get("value") == "drink coffee")
     check("新结构字段齐全",
-          set(p.keys()) == {"demographics", "preferences", "frequent_locations", "behavior_patterns"})
+          set(p.keys()) == {"demographics", "preferences", "frequent_locations", "behavior_patterns",
+                            "personality", "goals", "decisions", "motivations"})
 
 
 def T7_compress_no_profile(tmpdir):

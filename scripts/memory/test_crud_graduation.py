@@ -199,6 +199,37 @@ def T7_pretranslate_normalized(tmpdir):
           "normalized" not in m2.memory["layer7"]["moments"][mid2])
 
 
+def T8_six_dimension_indices(tmpdir):
+    print("\n[T8] 六维索引：environments/objects 写入 + 联动 + 排序（09-22 规范）")
+    m = make_mem(tmpdir)
+    mid = m.add(scene="在厨房做饭", user_action="拿杯子喝水",
+                needs=[], solutions=[],
+                people=["张三"], location="厨房", activity="做饭",
+                environments=["厨房", "餐桌"], objects=["杯子", "手机"])
+    l7 = m.memory["layer7"]
+    check("environments 索引写入",
+          "厨房" in l7["environments"] and "餐桌" in l7["environments"],
+          f"got {list(l7['environments'].keys())}")
+    check("objects 索引写入",
+          "杯子" in l7["objects"] and "手机" in l7["objects"],
+          f"got {list(l7['objects'].keys())}")
+    moment = l7["moments"][mid]
+    check("moment 存 environments 字段", "厨房" in moment.get("environments", []))
+    check("moment 存 objects 字段", "杯子" in moment.get("objects", []))
+
+    # update 联动：改 environments/objects，旧键清理 + 新键建立
+    m.update(mid, {"environments": ["卧室"], "objects": ["眼镜"]})
+    check("update 联动 environments（旧键清理）",
+          "厨房" not in l7["environments"] and "卧室" in l7["environments"])
+    check("update 联动 objects（旧键清理）",
+          "杯子" not in l7["objects"] and "眼镜" in l7["objects"])
+
+    # 排序：objects 从高频到低频（"眼镜"出现 2 次，"手机"1 次）
+    m.add(scene="", user_action="", needs=[], solutions=[], objects=["眼镜"])
+    sorted_tags = m._sorted_index_tags("objects")
+    check("objects 高频优先排序", sorted_tags[:1] == ["眼镜"], f"got {sorted_tags}")
+
+
 if __name__ == "__main__":
     tmp = Path(tempfile.mkdtemp(prefix="crud_graduation_"))
     try:
@@ -209,6 +240,7 @@ if __name__ == "__main__":
         T5_layer2_overflow_to_layer3(tmp)
         T6_daily_rollover(tmp)
         T7_pretranslate_normalized(tmp)
+        T8_six_dimension_indices(tmp)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

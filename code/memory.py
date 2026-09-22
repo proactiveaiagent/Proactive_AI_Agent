@@ -161,10 +161,10 @@ def _is_valid_index_tag(index_key: str, tag: str) -> bool:
 
 def _clean_layer7_indices(layer7: Dict) -> Dict[str, List[str]]:
     """清洗 layer7 索引：移除占位符、描述性长句、无意义负向词（G7 缺陷修复）。"""
-    removed = {"people": [], "locations": [], "activity_events": [], "time_nodes": []}
+    removed = {k: [] for k in LAYER7_INDICES}
     if not isinstance(layer7, dict):
         return removed
-    for k in ["people", "locations", "activity_events", "time_nodes"]:
+    for k in LAYER7_INDICES:
         idx = layer7.get(k, {})
         if not isinstance(idx, dict):
             continue
@@ -185,6 +185,10 @@ def _migrate_profile(profile: Dict) -> Dict:
         "preferences": {},
         "frequent_locations": [],
         "behavior_patterns": {},
+        "personality": {},
+        "goals": [],
+        "decisions": {},
+        "motivations": [],
     }
     if not isinstance(profile, dict):
         return new
