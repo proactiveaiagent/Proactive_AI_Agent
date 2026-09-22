@@ -1,8 +1,9 @@
 """
-generate_presentation_week3.py — 生成 9.12~9.18 任务 2 工作汇报 HTML（翻页式 · 日间模式）
+generate_presentation_week3.py — 生成 9.12~9.22 任务 2 工作汇报 HTML（翻页式 · 日间模式）
 ======================================================================
 输出：zhx/task2/汇报展示-0912-0918.html（单文件，无外部依赖）
-覆盖：阶段 A（会议重构 + 设计说明书 v1.1）+ 阶段 B（CRUD 完备 + 遗忘差异化 + 压缩归类）
+覆盖：阶段 A（范围重构 + 设计说明书 v1.1）+ 阶段 B（增删改查完备 + 遗忘差异化 + 归类压缩）
+      + 阶段 C（数据集下载 + 预处理 + 测试集构建 + 数据库规范对齐）
 用法：
     cd /data/cxr25/zhx/Proactive_AI_Agent/scripts
     /data/cxr25/zhx/Proactive_AI_Agent/zhx/miniforge3/envs/agent/bin/python generate_presentation_week3.py
@@ -18,7 +19,7 @@ HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>任务 2 · 7 层记忆模型 — 工作汇报（09-12 ~ 09-18）</title>
+<title>任务 2 · 7 层记忆模型 — 工作汇报（09-12 ~ 09-22）</title>
 <style>
 :root{--bg:#f5f6fb;--card:#ffffff;--card2:#f0f2fa;--ink:#1f2430;--muted:#6b7189;--brand:#5b6cff;--brand2:#a855f7;--ok:#0ca678;--warn:#e8930c;--bad:#e5484d;--border:#e3e6f0;--code:#eef0f8}
 *{box-sizing:border-box;margin:0;padding:0}
@@ -87,68 +88,70 @@ tr:hover td{background:rgba(91,108,255,.06)}
 
 <div class="hero">
   <h1>🧠 任务 2 · 7 层记忆模型</h1>
-  <div class="sub">多模态识别结果 → 持续构建与精化用户画像 → 分层 RAG 记忆系统，目标 <b>存储 ≤100GB · 检索 ≤1s · 归类准确率 ≥95%</b>。本汇报覆盖 <b>09-12 ~ 09-18</b>：阶段 A（会议重构 + 设计说明书）+ 阶段 B（CRUD 完备 / 遗忘差异化 / 压缩归类 / EgoLife 数据）。</div>
+  <div class="sub">把看到听到的内容持续整理成用户画像，存进一个分层的记忆系统。目标是存储不超过 100GB、检索不超过 1 秒、归类准确率不低于 95%。本汇报覆盖 9 月 12 日到 9 月 22 日：先是重新界定了范围并写出设计说明书，然后把 CRUD、遗忘、归类压缩这些能力一个个写成代码，接着把 EgoLife 数据集下载下来并整理成能用的数据，最后构建测试集并对齐了数据库规范。</div>
   <div class="tags">
-    <span class="tag">阶段 A · 会议重构 ✅</span>
+    <span class="tag">阶段 A · 范围重构与设计 ✅</span>
     <span class="tag">阶段 B · CRUD 完备 ✅</span>
-    <span class="tag">单测 263/263 ✅</span>
+    <span class="tag">阶段 C · 数据处理与测试集 ✅</span>
+    <span class="tag">274 项自动检查全过 ✅</span>
     <span class="tag">设计说明书 v1.1 ✅</span>
-    <span class="tag">EgoLife 下载 ✅</span>
+    <span class="tag">EgoLife 数据 ✅</span>
   </div>
+  <div class="note" style="color:#3a4058;max-width:1000px">几个词先说清楚：<b>CRUD</b> 指新增、读取、更新、删除这四类操作；<b>LLM</b> 指大语言模型，也就是负责理解内容的大模型；<b>ASR</b> 指语音转文字；<b>检查项</b>指为验证代码行为是否符合预期而写的自动检查，跑一遍就能知道代码有没有写错。</div>
 </div>
 
 <div class="wrap">
 
 <div class="kpis">
-  <div class="kpi"><div class="num brand">7 天</div><div class="lbl">汇报跨度（09-12 ~ 09-18）</div></div>
-  <div class="kpi"><div class="num ok">263</div><div class="lbl">测试断言全通过（7 套）</div></div>
-  <div class="kpi"><div class="num brand">9 操作</div><div class="lbl">CRUD 全面落地</div></div>
-  <div class="kpi"><div class="num brand">3 类</div><div class="lbl">遗忘衰减曲线</div></div>
-  <div class="kpi"><div class="num brand">4 维</div><div class="lbl">索引全链路联动</div></div>
-  <div class="kpi"><div class="num ok">216G</div><div class="lbl">EgoLife 视频 + 文本</div></div>
+  <div class="kpi"><div class="num brand">11 天</div><div class="lbl">汇报跨度（9 月 12 日 ~ 9 月 22 日）</div></div>
+  <div class="kpi"><div class="num ok">274</div><div class="lbl">项自动检查全部通过</div></div>
+  <div class="kpi"><div class="num brand">9 个</div><div class="lbl">CRUD 操作全部实现</div></div>
+  <div class="kpi"><div class="num brand">6 个</div><div class="lbl">索引分类维度</div></div>
+  <div class="kpi"><div class="num brand">8 个</div><div class="lbl">用户画像字段</div></div>
+  <div class="kpi"><div class="num ok">9002</div><div class="lbl">条整理好的数据</div></div>
 </div>
 
 <!-- ============================== PAGE 1 · 09-12 ============================== -->
 <div class="page" id="p1">
   <section>
-    <h2><span class="dot"></span>09-12 · 会议重构 — 范围扩大为整个 7 层记忆模型</h2>
+    <h2><span class="dot"></span>09-12 · 会议重新界定了范围</h2>
     <div class="card">
-      <h3>① 为什么要重构：范围发生了根本变化</h3>
+      <h3>① 范围为什么变了</h3>
       <div class="flow">
-        <div class="fnode">原范围<br><small>仅 layer6 用户画像优化</small></div>
+        <div class="fnode">原范围<br><small>只优化用户画像那一层</small></div>
         <div class="farrow">→</div>
-        <div class="fnode hot">新范围 ⭐<br><small>整个 7 层记忆模型</small></div>
+        <div class="fnode hot">新范围<br><small>整个 7 层记忆模型</small></div>
       </div>
-      <p style="font-size:13px;margin-top:10px">09-12 会议重新定义了任务 2 的工作范围：从「只优化 layer6 画像」扩大到「构建整个 7 层记忆模型的基础架构 + 增删改查（CRUD）机制 + 数据归类压缩流程 + 一套完整体系说明书」。核心交付不再是单一画像，而是<b>一整套记忆系统</b>。</p>
-      <h3>② 会议五条决议（逐条落地）</h3>
+      <p style="font-size:13px;margin-top:10px">原来只打算优化用户画像那一层，开会讨论后决定把整个 7 层记忆模型都做一遍——包括基础架构、增删改查机制、数据归类压缩流程，还要配套一份完整的设计说明书。核心交付从一个画像模块，变成了一整套记忆系统。</p>
+      <h3>② 会议的五条决定</h3>
       <table>
-        <tr><th>#</th><th>决议</th><th>含义</th></tr>
-        <tr><td>1</td><td>范围边界</td><td>只管记忆模型本身（存储 / 检索 / 更新 / 遗忘 / 压缩 / 索引），LLM 理解等其他模块一律不管</td></tr>
-        <tr><td>2</td><td>属性统一结构</td><td>所有属性统一带「置信度 / 时间戳 / 最后使用时间」等字段（即 AttrValue）</td></tr>
-        <tr><td>3</td><td>遗忘机制差异化</td><td>按属性类型分三类：身份偏好类（永久/不衰减）、经历状态类（渐变衰减）、优惠券类（过期阶跃失效）</td></tr>
-        <tr><td>4</td><td>文档规范</td><td>摒弃日报周报式概括，改成「说明书 + 论文」形式，记录设计原理、代码位置、修改说明</td></tr>
-        <tr><td>5</td><td>代码规范</td><td>代码与产出直接放主目录（<code>scripts/memory/</code>、<code>code/</code>），不再放 <code>zhx/</code> 下</td></tr>
+        <tr><th>#</th><th>决定</th><th>具体含义</th></tr>
+        <tr><td>1</td><td>范围边界</td><td>只管记忆模型本身（存储、检索、更新、遗忘、压缩、索引），LLM怎么理解内容等其他模块一律不管</td></tr>
+        <tr><td>2</td><td>属性统一结构</td><td>所有属性统一带上置信度（这条信息有多可靠）、时间戳、最后使用时间这些字段</td></tr>
+        <tr><td>3</td><td>遗忘机制差异化</td><td>按属性类型分三类处理：身份偏好类基本不衰减，经历状态类随时间渐变，优惠券这类有使用期限的一到期就失效</td></tr>
+        <tr><td>4</td><td>文档规范</td><td>不再写日报周报式的概括，改成说明书加论文的形式，记录设计原理、代码位置、修改说明</td></tr>
+        <tr><td>5</td><td>代码规范</td><td>代码和产出直接放主目录（<code>scripts/memory/</code>、<code>code/</code>），不再放在 <code>zhx/</code> 下</td></tr>
       </table>
-      <h3>③ 当天产出的文档重写</h3>
+      <h3>③ 当天重写的文档</h3>
       <table>
         <tr><th>文档</th><th>改动</th></tr>
-        <tr><td><code>zhx/task2/todo.md</code></td><td>重写为「7 层记忆模型体系」工作计划，含验收标准、范围澄清、阶段 A~E 计划</td></tr>
-        <tr><td><code>zhx/task2/report.md</code></td><td>重写为「体系说明书 + 设计文档」形式（v3）</td></tr>
-        <tr><td>代码目录</td><td>测试脚本从 <code>zhx/task2/scripts/</code> 迁入主目录 <code>scripts/memory/</code></td></tr>
+        <tr><td><code>zhx/task2/todo.md</code></td><td>重写成 7 层记忆模型的工作计划，含验收标准、范围澄清、阶段 A 到 E 的安排</td></tr>
+        <tr><td><code>zhx/task2/report.md</code></td><td>重写成体系说明书加设计文档的形式</td></tr>
+        <tr><td>代码目录</td><td>测试脚本从 <code>zhx/task2/scripts/</code> 迁到主目录 <code>scripts/memory/</code></td></tr>
       </table>
-      <h3>④ 代码整理：细粒度重写为 8 个 commit 提交 zhx_dev</h3>
+      <h3>④ 代码整理：梳理成 8 个清晰的 commit（一次代码提交），推送到开发分支</h3>
       <table>
         <tr><th>#</th><th>commit 内容</th></tr>
         <tr><td>1</td><td>新增用户画像抽取模块 <code>profile_extractor.py</code></td></tr>
-        <tr><td>2</td><td>修复记忆整理后台线程被终止导致画像从未生成</td></tr>
-        <tr><td>3</td><td>场景分析接入分层检索 + 记忆整理接入画像抽取</td></tr>
+        <tr><td>2</td><td>修复记忆整理后台线程被终止、导致画像从未生成的问题</td></tr>
+        <tr><td>3</td><td>场景分析接入分层检索，记忆整理接入画像抽取</td></tr>
         <tr><td>4</td><td>重构记忆模型：分层存储、检索、时间衰减、索引清洗</td></tr>
         <tr><td>5</td><td>适配推理服务到本机环境</td></tr>
         <tr><td>6</td><td>新增单元测试与记忆模块说明文档</td></tr>
-        <tr><td>7</td><td>忽略运行时产物（memory.json / output 不入库）</td></tr>
-        <tr><td>8</td><td>更新记忆模块说明文档匹配当前历史与分词方案</td></tr>
+        <tr><td>7</td><td>忽略运行时产物（memory.json、output 不入库）</td></tr>
+        <tr><td>8</td><td>更新记忆模块说明文档，匹配当前历史与分词方案</td></tr>
       </table>
-      <div class="okbox">✅ <b>本周起点</b>：范围明确、文档重写、代码梳理完毕，为阶段 A（设计说明书）和阶段 B（CRUD 落地）打好基础。</div>
+      <div class="okbox">✅ 这一天的意义是把范围、文档、代码都理顺了，为后面写设计说明书、实现 CRUD 打好基础。</div>
     </div>
   </section>
 </div>
@@ -156,37 +159,37 @@ tr:hover td{background:rgba(91,108,255,.06)}
 <!-- ============================== PAGE 2 · 09-14 ============================== -->
 <div class="page" id="p2">
   <section>
-    <h2><span class="dot"></span>09-14 · 记忆模型体系设计说明书 v1.1（定稿）</h2>
+    <h2><span class="dot"></span>09-14 · 记忆模型设计说明书定稿</h2>
     <div class="card">
-      <h3>① 产出：<code>docs/memory-model-design.md</code>（11 章完整定义）</h3>
+      <h3>① 产出：<code>docs/memory-model-design.md</code>，一共 11 章</h3>
       <table>
-        <tr><th>章节</th><th>定义内容</th></tr>
-        <tr><td>§2</td><td>7 层逐层定义（每层存储内容 / 写入时机 / 保留时长 / 晋升降级）+ 层间晋升与跨天清理</td></tr>
-        <tr><td>§3</td><td>字段字典（每个字段的类型 / 元字段 / 衰减策略）</td></tr>
-        <tr><td>§4</td><td>CRUD 9 操作精确语义（写入 / 读取 / 整理 / 删除 / 画像合并）</td></tr>
-        <tr><td>§5</td><td>三类遗忘曲线定稿（stable 0/0.001、decaying 0.005、deadline 阶跃）</td></tr>
-        <tr><td>§8</td><td>存储容量预算（≤100GB 预算表 + 控制策略）</td></tr>
-        <tr><td>§9</td><td>检索性能设计（倒排索引 / 缓存 / 懒加载，≤1s 预算）</td></tr>
+        <tr><th>章节</th><th>定义了什么</th></tr>
+        <tr><td>§2</td><td>7 层逐层定义（每层存什么、什么时候写入、保留多久、怎么在各层之间流转），以及跨天清理的规则</td></tr>
+        <tr><td>§3</td><td>字段字典（每个字段的类型、元字段、衰减策略）</td></tr>
+        <tr><td>§4</td><td>增删改查九个操作的精确语义（新增、读取、整理、删除、画像合并）</td></tr>
+        <tr><td>§5</td><td>三类遗忘曲线的定稿（身份类 0 和 0.001，经历类 0.005，时效类到期归零）</td></tr>
+        <tr><td>§8</td><td>存储容量预算（100GB 以内的预算表和控制策略）</td></tr>
+        <tr><td>§9</td><td>检索性能设计（倒排索引（按关键词建查找表）、缓存、懒加载，保证 1 秒内返回）</td></tr>
       </table>
-      <h3>② 7 层结构定稿（核心架构）</h3>
+      <h3>② 7 层结构定稿</h3>
       <div class="layers">
-        <div class="layer"><div class="no">L1</div><div><div class="ttl">当前时刻</div><div class="desc">本次交互原始 moment（会话级瞬时）</div></div><div><span class="badge brand">窗口视图</span></div></div>
-        <div class="layer"><div class="no">L2</div><div><div class="ttl">同场景历史</div><div class="desc">location+activity 相同的近期 moment（layer1 滑出时同场景判定）</div></div><div><span class="badge brand">窗口视图</span></div></div>
-        <div class="layer"><div class="no">L3</div><div><div class="ttl">当日全部</div><div class="desc">当天所有 moment（容量 MAX 1000，超限最旧滑出）</div></div><div><span class="badge brand">窗口视图</span></div></div>
-        <div class="layer"><div class="no">L4</div><div><div class="ttl">近期摘要</div><div class="desc">日级摘要 / 当前任务 / 生活动线（Phase C compress 生成）</div></div><div><span class="badge brand">压缩层</span></div></div>
-        <div class="layer"><div class="no">L5</div><div><div class="ttl">远期摘要</div><div class="desc">周/月级摘要 / 关键事件 / 长期模式</div></div><div><span class="badge brand">压缩层</span></div></div>
-        <div class="layer hot"><div class="no">L6</div><div><div class="ttl">用户画像 ⭐</div><div class="desc">demographics / preferences / frequent_locations / behavior_patterns</div></div><div><span class="badge ok">画像层</span></div></div>
-        <div class="layer"><div class="no">L7</div><div><div class="ttl">分类索引归档</div><div class="desc">time_nodes / activity_events / people / locations 四索引 + moments 主存储</div></div><div><span class="badge brand">索引层</span></div></div>
+        <div class="layer"><div class="no">L1</div><div><div class="ttl">当前时刻</div><div class="desc">本次交互的原始记录，会话级瞬时</div></div><div><span class="badge brand">只存引用</span></div></div>
+        <div class="layer"><div class="no">L2</div><div><div class="ttl">同场景历史</div><div class="desc">地点和活动都相同的近期记录</div></div><div><span class="badge brand">只存引用</span></div></div>
+        <div class="layer"><div class="no">L3</div><div><div class="ttl">当日全部</div><div class="desc">当天的所有记录，容量上限 1000，超了最旧的移出</div></div><div><span class="badge brand">只存引用</span></div></div>
+        <div class="layer"><div class="no">L4</div><div><div class="ttl">近期摘要</div><div class="desc">按天压缩出来的摘要、当前任务、生活动线</div></div><div><span class="badge brand">压缩层</span></div></div>
+        <div class="layer"><div class="no">L5</div><div><div class="ttl">远期摘要</div><div class="desc">按周或月压缩出来的摘要、关键事件、长期模式</div></div><div><span class="badge brand">压缩层</span></div></div>
+        <div class="layer hot"><div class="no">L6</div><div><div class="ttl">用户画像</div><div class="desc">人口统计学、偏好、常去地点、行为习惯</div></div><div><span class="badge ok">画像层</span></div></div>
+        <div class="layer"><div class="no">L7</div><div><div class="ttl">分类索引归档</div><div class="desc">时间、活动、人物、地点四个索引，加上记录的完整主存储</div></div><div><span class="badge brand">索引层</span></div></div>
       </div>
-      <h3>③ 四条核心设计原则（贯穿后续所有实现）</h3>
+      <h3>③ 四条核心设计原则，贯穿后面所有实现</h3>
       <table>
-        <tr><th>原则</th><th>含义</th><th>落点</th></tr>
-        <tr><td>数据真身唯一</td><td>moment 真身只存 <code>layer7.moments</code>，layer1~3 只是「窗口视图」引用</td><td>跨天清空窗口不丢数据</td></tr>
-        <tr><td>画像与摘要解耦</td><td>画像走独立 <code>update_profile()</code>，<code>compress()</code> 禁止写 profile</td><td>防浅覆盖丢历史</td></tr>
-        <tr><td>索引全链路校验</td><td>所有索引键过 <code>_is_valid_index_tag</code> 校验</td><td>防 G7 污染</td></tr>
-        <tr><td>检索同步不含 LLM</td><td>检索链路（layer6→5→4→7）不调用 LLM</td><td>保证 ≤1s 延迟</td></tr>
+        <tr><th>原则</th><th>含义</th><th>带来什么</th></tr>
+        <tr><td>数据只有一份</td><td>每条记录的完整内容只存在 layer7.moments 里，layer1 到 layer3 只保存它的编号引用</td><td>所以跨天清空 layer1 到 layer3 不会丢数据</td></tr>
+        <tr><td>画像和摘要分开</td><td>画像走独立的 update_profile 接口，压缩摘要的操作不碰画像</td><td>避免摘要把画像覆盖掉、丢了历史</td></tr>
+        <tr><td>索引键全部校验</td><td>所有索引键都要经过合法性校验</td><td>防止脏数据污染索引</td></tr>
+        <tr><td>检索不依赖LLM</td><td>检索这条链路上不调用LLM</td><td>保证检索能在 1 秒内返回</td></tr>
       </table>
-      <div class="note">📌 这份说明书是本周所有代码改动的「施工图」，09-15 ~ 09-17 的三天工作就是把 §4/§5 的语义一条条落成代码。</div>
+      <div class="note">📌 后面几天的代码改动，都是照着这份说明书写的——把第四章和第五章的规定一条条实现出来。</div>
     </div>
   </section>
 </div>
@@ -194,12 +197,27 @@ tr:hover td{background:rgba(91,108,255,.06)}
 <!-- ============================== PAGE 3 · 09-15 ============================== -->
 <div class="page" id="p3">
   <section>
-    <h2><span class="dot"></span>09-15 · CRUD 补齐 + 分词策略改造</h2>
+    <h2><span class="dot"></span>09-15 · 补齐 CRUD，改造分词</h2>
     <div class="card">
-      <h3>① <code>update()</code>：从「旧 shim」重写为真正的 moment 字段更新</h3>
-      <p style="font-size:13px">原实现 <code>update()</code> 其实是个空壳（等价于 add），本周重写为完整语义：</p>
+            <h3>① 记忆系统一共有 9 个操作</h3>
+      <p style="font-size:13px">记忆模型对外提供 9 个操作，覆盖一条记录从写入、查找、整理到删除的整个过程：</p>
+      <table>
+        <tr><th>#</th><th>操作</th><th>什么时候触发</th><th>做什么</th></tr>
+        <tr><td>1</td><td><code>add()</code></td><td>每来一条新内容</td><td>把新记录写进 layer1、layer3 和 layer7，同时更新四个索引</td></tr>
+        <tr><td>2</td><td><code>update()</code></td><td>要修改已有记录时</td><td>按字段白名单修改记录内容，人物、地点、活动变化时同步更新索引</td></tr>
+        <tr><td>3</td><td><code>query()</code></td><td>按关键词找记忆</td><td>把查询词分词后匹配，按匹配程度打分，返回最相关的几条</td></tr>
+        <tr><td>4</td><td><code>retrieve()</code></td><td>按条件取记忆</td><td>结合摘要和索引，按人物、地点等条件取记录，取够就停</td></tr>
+        <tr><td>5</td><td><code>compress()</code></td><td>每天或每周整理时</td><td>把整理好的摘要写进 layer4、layer5，不碰画像</td></tr>
+        <tr><td>6</td><td><code>sort()</code></td><td>整理时归类</td><td>把记录归到人物、地点、活动、时间等索引下</td></tr>
+        <tr><td>7</td><td><code>combine()</code></td><td>整理时合并</td><td>把意思相同的索引键合并（比如「老图书馆」和「图书馆」）</td></tr>
+        <tr><td>8</td><td><code>delete()</code></td><td>手动删除</td><td>删除记录和它在索引里的引用，重要数据默认不让删</td></tr>
+        <tr><td>9</td><td><code>highlight()</code></td><td>标记重要内容</td><td>把记录标记为确认正确，之后受删除保护、检索时优先</td></tr>
+      </table>
+      <div class="note">📌 用户画像不在这 9 个操作里，它有单独的入口 <code>update_profile()</code>。原因是画像和摘要要分开管理，避免整理摘要时把画像覆盖掉。</div>
+      <h3>② 这天重点重写了 <code>update()</code>：从占位实现（shim）变成真正能用</h3>
+      <p style="font-size:13px">原来的 update() 只是个占位实现（shim），实际效果和新增一条记录没有区别。这次把它重写成了真正能用的更新功能：</p>
       <pre>def update(self, moment_id, updates) -> bool:
-    # 1. 字段白名单：只允许改 Part1-3 数据，禁止改 id/timestamp/feedback/highlighted
+    # 1. 字段白名单：只允许改数据字段，id、时间戳、反馈、高价值标记这些不让改
     for field, val in updates.items():
         if field not in self.UPDATE_FIELDS or val is None:
             continue
@@ -208,27 +226,27 @@ tr:hover td{background:rgba(91,108,255,.06)}
         else:
             moment[field] = val
         changed = True
-    # 2. 预翻译刷新：更新后重译，保持 normalized 与正文一致
-    # 3. 同步 layer1/2/3 同 id 条目（防 JSON 重载后引用断开）
-    # 4. 索引联动：people/location/activity 变更时同步增删索引
+    # 2. 预翻译刷新：更新后重新翻译，保持 normalized 与正文一致
+    # 3. 同步 layer1/2/3 里同 id 的条目，防止重载后引用断开
+    # 4. 索引联动：人物、地点、活动变更时同步增删索引
     self._sync_indices_for_moment(moment_id, moment, old_people, old_location, old_activity)</pre>
-      <h3>② <code>delete()</code> / <code>highlight()</code>：highlight 保护 + 返回 bool</h3>
-      <pre># delete 新增 highlight 保护：用户确认正确的高价值数据默认拒删
+      <h3>③ <code>delete()</code> 和 <code>highlight()</code>：给重要数据加保护</h3>
+      <pre># 删除时新增保护：被用户确认过正确的重要数据（highlight）默认拒绝删除
 if moment.get("highlighted") and not force:
     print("⛔ 拒绝删除 highlighted moment（force=True 可强制）")
     return False
-# 删除范围：moments 主存储 + 四索引引用 + layer1/2/3 条目
-# total_moments 不减（防 moment_id 复用冲突）</pre>
-      <h3>③ 层间晋升：落地设计说明书 §2.4 的五处差距</h3>
+# 删除范围：主存储 + 四个索引里的引用 + layer1/2/3 里的条目
+# 总计数不减，防止记录 id 被复用造成冲突</pre>
+      <h3>④ 层与层之间的流转：补上设计说明书里缺的五处</h3>
       <table>
-        <tr><th>差距</th><th>落地实现</th></tr>
-        <tr><td>同场景判定</td><td><code>location + activity</code> 都相同 → 进 layer2，否则 → layer3（原先「滑出即进 layer2」无判定）</td></tr>
-        <tr><td>layer2 超限</td><td>最旧滑入 layer3（不丢弃，真身保留在 layer7.moments）</td></tr>
-        <tr><td>MAX_LAYER3</td><td>100 → 1000（当日容量扩大 10 倍）</td></tr>
-        <tr><td>跨天清理</td><td><code>today</code> 变化时清空 layer1/2/3 窗口、重置 session_start</td></tr>
-        <tr><td>窗口去重</td><td>滑入前按 id 去重，防止 add 时已入 layer3 的重复</td></tr>
+        <tr><th>缺什么</th><th>这次怎么补的</th></tr>
+        <tr><td>同场景判定</td><td>地点和活动都相同才进 layer2，否则直接进 layer3（原来是一移出就进 layer2，没有判断）</td></tr>
+        <tr><td>layer2 超限</td><td>最旧的滑进 layer3，不丢弃，完整内容始终保留在主存储里</td></tr>
+        <tr><td>容量上限</td><td>当日容量从 100 提到 1000</td></tr>
+        <tr><td>跨天清理</td><td>日期变了就清空 layer1 到 layer3 里的内容，重置会话起始时间</td></tr>
+        <tr><td>移入时去重</td><td>移入前按编号去重，避免同一条记录重复进入</td></tr>
       </table>
-      <pre># _graduate_to_layer2 核心判定
+      <pre># 同场景判定的核心逻辑
 same_env = (
     bool(moment.get("location"))
     and moment.get("location") == current.get("location")
@@ -237,24 +255,24 @@ same_env = (
 if same_env:
     _push(layer2, moment, 2)   # 同场景
 else:
-    _push(layer3, moment, 3)   # 不同场景直接进当日窗口</pre>
-      <h3>④ 分词策略改造：统一英文分词（09-12 会议新决策）</h3>
+    _push(layer3, moment, 3)   # 不同场景直接进当日记录</pre>
+      <h3>⑤ 分词策略改造：统一用英文分词</h3>
       <div class="flow">
-        <div class="fnode">非英文文本<br><small>中文等</small></div>
+        <div class="fnode">中文等文本<br><small>原始内容</small></div>
         <div class="farrow">→</div>
-        <div class="fnode model">LLM 翻译<br><small>translator.py + 进程内缓存</small></div>
+        <div class="fnode model">LLM翻译<br><small>translator.py + 进程内缓存</small></div>
         <div class="farrow">→</div>
-        <div class="fnode hot">英文 tokenize<br><small>写入时存 normalized</small></div>
+        <div class="fnode hot">英文分词<br><small>写入时存 normalized</small></div>
       </div>
       <table>
         <tr><th>改动</th><th>实现</th></tr>
-        <tr><td><code>tokenize()</code></td><td>纯英文分词（ASCII 字母数字），替换原中文 bigram</td></tr>
-        <tr><td><code>translator.py</code></td><td>新增模块：LLM 翻译 + 进程内缓存（避免重复翻译）</td></tr>
-        <tr><td>预翻译</td><td>add/update 写入时把中文转成英文存 <code>moment["normalized"]</code></td></tr>
-        <tr><td>查询翻译</td><td>query/retrieve 查询词经 <code>_query_tokens</code> 翻译后命中英文</td></tr>
-        <tr><td>降级</td><td>翻译不可用时自动降级原文兜底，不影响主流程</td></tr>
+        <tr><td><code>tokenize()</code></td><td>改成纯英文分词（按空格和单词边界切分），替换原来的中文二元切分</td></tr>
+        <tr><td><code>translator.py</code></td><td>新增翻译模块，带缓存，同一个内容不重复翻译</td></tr>
+        <tr><td>预翻译</td><td>新增和更新时把中文转成英文，存到记录的 normalized 字段</td></tr>
+        <tr><td>查询翻译</td><td>检索时查询词也先翻译成英文，再去命中英文内容</td></tr>
+        <tr><td>翻译失败时</td><td>翻译不可用时自动退回用原文，不影响主流程</td></tr>
       </table>
-      <div class="okbox">✅ 新增 <code>test_crud_graduation.py</code>（39 断言）：覆盖 update 白名单 / 索引联动、delete highlight 保护、层间晋升、跨天清理、预翻译。</div>
+      <div class="okbox">✅ 新增了一个测试文件，专门验证这天的改动：update 的字段白名单和索引联动、delete 的 highlight 保护、层间流转、跨天清理，以及写入时的预翻译，一共 39 项检查，全部通过。</div>
     </div>
   </section>
 </div>
@@ -262,44 +280,44 @@ else:
 <!-- ============================== PAGE 4 · 09-16 ============================== -->
 <div class="page" id="p4">
   <section>
-    <h2><span class="dot"></span>09-16 · 遗忘机制差异化 — 三类衰减曲线</h2>
+    <h2><span class="dot"></span>09-16 · 遗忘机制改成三类，不同类型区别对待</h2>
     <div class="card">
-      <h3>① 从「一刀切」到「三类曲线」</h3>
-      <p style="font-size:13px">原实现是统一 0.5%/天衰减，会议要求「按属性类型差异化」。本周落地三类曲线：</p>
+      <h3>① 遗忘不再对所有信息一视同仁</h3>
+      <p style="font-size:13px">原来的做法是所有属性每天统一衰减 0.5%，会议要求按属性类型区别对待。这天改成了三种衰减方式：</p>
       <table>
-        <tr><th>曲线</th><th>衰减参数</th><th>适用属性</th><th>效果</th></tr>
-        <tr><td><b>stable</b>（身份类）</td><td>永久 0.0 / 长有效 0.001</td><td>name / gender / identity / education</td><td><span class="badge ok">基本不衰减</span></td></tr>
-        <tr><td><b>decaying</b>（经历类）</td><td>渐变 0.005/天</td><td>occupation 等经历状态</td><td><span class="badge warn">随时间渐变</span></td></tr>
-        <tr><td><b>deadline</b>（时效类）</td><td><code>expires_at</code> 阶跃</td><td>优惠券等有时效事件</td><td><span class="badge bad">过期瞬间失效</span></td></tr>
+        <tr><th>类型</th><th>衰减参数</th><th>适用属性</th><th>效果</th></tr>
+        <tr><td><b>身份类（stable）</b></td><td>每天衰减 0，或者极慢的 0.001</td><td>姓名、性别、身份、学历</td><td><span class="badge ok">基本不衰减</span></td></tr>
+        <tr><td><b>经历类（decaying）</b></td><td>每天衰减 0.005</td><td>职业这类会变化的状态</td><td><span class="badge warn">随时间慢慢衰减</span></td></tr>
+        <tr><td><b>时效类（deadline）</b></td><td>一到有效期就归零</td><td>优惠券这类带 expires_at（有效期）的</td><td><span class="badge bad">一到期立刻失效</span></td></tr>
       </table>
       <pre>def effective_confidence(attr, now=None) -> float:
     dt = attr.get("decay_type")
-    if dt == DECAY_DEADLINE:      # 时效类：阶跃
+    if dt == DECAY_DEADLINE:      # 时效类：到期就归零
         return conf if _now_before(attr["expires_at"]) else 0.0
-    elif dt == DECAY_STABLE:      # 身份类：极低衰减
+    elif dt == DECAY_STABLE:      # 身份类：衰减极低
         daily = attr.get("decay_rate", 0.001)
     elif dt == DECAY_DECAYING:    # 经历类：渐变
         daily = attr.get("decay_rate", 0.005)
     days = (now - last_seen).days
-    return conf * (1 - daily) ** days   # eff < 0.3 → stale</pre>
-      <h3>② 判定机制：三层（LLM 标注 → 字段路径兜底 → 语义校正）</h3>
+    return conf * (1 - daily) ** days   # 有效值低于 0.3 就标记为陈旧（stale）</pre>
+      <h3>② 怎么判断用哪一类：三步判断</h3>
       <div class="flow">
-        <div class="fnode">① LLM 标注<br><small>抽取 prompt 输出 decay_type/expires_at</small></div>
+        <div class="fnode">① LLM标注<br><small>抽取时输出 decay_type 和 expires_at</small></div>
         <div class="farrow">→</div>
-        <div class="fnode">② 字段路径兜底<br><small>_default_decay_for_path 按字段名定策略</small></div>
+        <div class="fnode">② 按字段名定<br><small>前面没判断出来，就根据字段名决定</small></div>
         <div class="farrow">→</div>
-        <div class="fnode hot">③ 语义校正<br><small>_finalize_attr 统一收口</small></div>
+        <div class="fnode hot">③ 最后统一校正<br><small>收尾时统一修正一遍</small></div>
       </div>
-      <h3>③ 字段路径默认策略映射</h3>
+      <h3>③ 按字段名的默认策略</h3>
       <table>
-        <tr><th>字段</th><th>默认 decay_type</th></tr>
-        <tr><td>name / gender / identity / education</td><td>stable（永久，硬身份）</td></tr>
-        <tr><td>occupation</td><td>decaying（渐变）</td></tr>
-        <tr><td>preferences / frequent_locations / behavior_patterns</td><td>stable（长有效 0.001）</td></tr>
-        <tr><td>带 expires_at 的任何属性</td><td>deadline（强制阶跃）</td></tr>
+        <tr><th>字段</th><th>默认衰减类型</th></tr>
+        <tr><td>姓名、性别、身份、学历</td><td>身份类（永久不会忘，属于确定的身份信息）</td></tr>
+        <tr><td>职业</td><td>经历类（渐变）</td></tr>
+        <tr><td>偏好、常去地点、行为习惯</td><td>身份类（长有效 0.001）</td></tr>
+        <tr><td>任何带 expires_at（有效期）的属性</td><td>deadline 时效类（强制按到期失效处理）</td></tr>
       </table>
-      <div class="note">🔑 <b>语义校正</b>：<code>_finalize_attr</code> 里带 <code>expires_at</code> 的属性强制标为 deadline；LLM 已标注的 decay_type/decay_rate 保留不覆盖。</div>
-      <div class="okbox">✅ 新增 <code>test_decay_curves.py</code>（24 断言）：覆盖三类曲线分派、字段路径默认策略、expires_at 阶跃、语义校正、旧数据兼容。</div>
+      <div class="note">🔑 <b>校正规则</b>：凡是带了 expires_at 的属性，一律强制标成 deadline；LLM 已经判断过的类型会保留，不被覆盖。</div>
+      <div class="okbox">✅ 新增了一个测试文件，验证三种衰减方式的选择、按字段名的默认策略、到期失效的处理、最后的校正逻辑，以及对旧数据的兼容，一共 24 项检查，全部通过。</div>
     </div>
   </section>
 </div>
@@ -307,56 +325,56 @@ else:
 <!-- ============================== PAGE 5 · 09-17 ============================== -->
 <div class="page" id="p5">
   <section>
-    <h2><span class="dot"></span>09-17 · 数据归类压缩 + 索引体系完整实现</h2>
+    <h2><span class="dot"></span>09-17 · 数据归类压缩，索引体系全部串起来</h2>
     <div class="card">
-      <h3>① <code>compress()</code>：list 精确去重 + 空值保护</h3>
-      <pre># list 去重：json.dumps(sort_keys=True) 精确比较（支持 str 与嵌套 dict）
+      <h3>① <code>compress()</code>（压缩摘要）：去重更精确，空值不再覆盖</h3>
+      <pre># 列表去重：改成 JSON 规范化后精确比较，支持字符串和嵌套字典
 existing = {json.dumps(x, ensure_ascii=False, sort_keys=True) for x in layer[k]}
 for item in v:
     key = json.dumps(item, ensure_ascii=False, sort_keys=True)
     if key not in existing:
         layer[k].append(item); existing.add(key)
 
-# 空值保护：空字符串/None 不覆盖已有值（防 LLM 返回空摘要丢历史）
+# 空值保护：空字符串和 None 不覆盖已有值
 if v is not None and v != "":
     layer[k] = v</pre>
-      <p style="font-size:13px">原先用 <code>str(item)</code> 去重，对 dict 元素顺序不稳定会误判重复；改用 JSON 规范化后精确比较。空摘要不覆盖，防止 LLM 偶发返回空结果冲掉已有摘要。</p>
-      <h3>② <code>sort()</code>：悬挂 moment_id 过滤</h3>
-      <pre># 只写真实存在的 moment_id（防止索引指向已删除的 moment）
-valid_ids = [i for i in ids if i in moments]   # 悬挂引用过滤
+      <p style="font-size:13px">原来用 str(item) 去重，遇到字典元素时字段顺序不稳定，会误判成重复；改成 JSON 规范化后就精确了。另外加了空值保护，LLM偶尔返回空摘要时，不会把已有的摘要冲掉。</p>
+      <h3>② <code>sort()</code>（归类索引）：过滤掉无效引用</h3>
+      <pre># 只写真实存在的记录编号，防止索引指向已经被删掉的记录（这种无效引用叫悬挂引用）
+valid_ids = [i for i in ids if i in moments]   # 过滤悬挂引用
 existing = set(index.get(tag, [])); existing.update(valid_ids)
-index[tag] = list(existing)                     # 同键去重合并</pre>
-      <h3>③ <code>combine()</code>：近义索引键合并 + moments 引用同步</h3>
-      <pre># 索引 → (moments 引用字段, 字段类型[str 单值 / list 列表])
+index[tag] = list(existing)                     # 同一个键下去重合并</pre>
+      <h3>③ <code>combine()</code>（同类合并）：近义词合并，同时同步引用</h3>
+      <pre># 索引到记录字段的映射，地点和活动是单值，人物是列表
 REF_FIELD = {
     "locations":       ("location", "str"),
     "people":          ("people",   "list"),
     "activity_events": ("activity", "str"),
 }
-# 合并 old_key 的 moment_id 集到 canonical，并同步更新 moments 里的引用字段
+# 把旧键的记录集合并到规范键，同时同步更新记录里的引用字段
 if kind == "str":   m[field] = canonical
 if kind == "list":  m[field] = [canonical if x == old_key else x for x in m[field]]</pre>
-      <p style="font-size:13px">比如「老图书馆 → 图书馆」：索引键合并的同时，把每个 moment 的 <code>location</code> 字段也从「老图书馆」改成「图书馆」，保证索引和主存储引用一致。幂等：old_key 不存在或等于 canonical 则跳过。</p>
-      <h3>④ 索引体系 4 维全链路（本周打通的关键）</h3>
+      <p style="font-size:13px">比如「老图书馆」和「图书馆」其实是同一个地方：合并索引键的同时，把每条记录里的地点字段也从「老图书馆」改成「图书馆」，保证索引和主存储的引用一致。这个操作是幂等的（重复执行多次，结果和执行一次相同）。</p>
+      <h3>④ 索引体系四个维度全部串起来</h3>
       <div class="flow">
-        <div class="fnode">add()<br><small>四索引写入</small></div>
+        <div class="fnode">新增<br><small>四个索引写入</small></div>
         <div class="farrow">→</div>
-        <div class="fnode">update()<br><small>索引联动增删</small></div>
+        <div class="fnode">更新<br><small>索引联动增删</small></div>
         <div class="farrow">→</div>
-        <div class="fnode">delete()<br><small>清理引用</small></div>
+        <div class="fnode">删除<br><small>清理引用</small></div>
         <div class="farrow">→</div>
-        <div class="fnode">sort()<br><small>归类写入</small></div>
+        <div class="fnode">归类<br><small>写入索引</small></div>
         <div class="farrow">→</div>
-        <div class="fnode hot">combine()<br><small>近义合并</small></div>
+        <div class="fnode hot">合并<br><small>近义词合并</small></div>
       </div>
       <pre>layer7 = {
   "time_nodes":      {"2026-09-17": ["m_001", ...]},
   "activity_events": {"学习": ["m_001", ...]},
   "people":          {"张三": ["m_001", ...]},
   "locations":       {"图书馆": ["m_001", ...]},
-  "moments":         {"m_001": {...}}   # 主存储，真身唯一
+  "moments":         {"m_001": {...}}   # 主存储，完整内容只存这里
 }</pre>
-      <div class="okbox">✅ 新增 <code>test_compress_sort_combine.py</code>（42 断言）：覆盖 compress 精确去重/空值保护、sort 悬挂过滤、combine 三类引用同步、幂等。</div>
+      <div class="okbox">✅ 新增了一个测试文件，验证 compress 的精确去重和空值保护、sort 的悬挂过滤、combine 的三类引用同步，以及幂等性，一共 42 项检查，全部通过。</div>
     </div>
   </section>
 </div>
@@ -364,38 +382,138 @@ if kind == "list":  m[field] = [canonical if x == old_key else x for x in m[fiel
 <!-- ============================== PAGE 6 · 09-18 ============================== -->
 <div class="page" id="p6">
   <section>
-    <h2><span class="dot"></span>09-18 · 阶段小结 + EgoLife 数据集下载</h2>
+    <h2><span class="dot"></span>09-18 · 阶段小结，开始下载 EgoLife 数据集</h2>
     <div class="card">
-      <h3>① 阶段 B 测试全绿（7 套 263 断言，0 失败）</h3>
+      <h3>① 阶段 B 的测试全部通过</h3>
+      <p>这一阶段的检查写在 7 个测试文件里，一共 263 项，全部通过，没有一项失败。每一项检查对应一处代码行为，跑一遍就能验证代码有没有写错。</p>
       <table>
-        <tr><th>测试脚本</th><th>覆盖内容</th><th>结果</th></tr>
-        <tr><td><code>test_compress_sort_combine.py</code></td><td>compress 精确去重/空值保护、sort 悬挂过滤、combine 引用同步、幂等</td><td><span class="badge ok">42/42</span></td></tr>
-        <tr><td><code>test_crud_graduation.py</code></td><td>update 白名单/索引联动、delete highlight 保护、层间晋升、跨天清理、预翻译</td><td><span class="badge ok">39/39</span></td></tr>
-        <tr><td><code>test_ddl2_regression.py</code></td><td>09-03 缺陷专项回归（D1/D2/D3 + G1/G5/G6/G7）</td><td><span class="badge ok">61/61</span></td></tr>
-        <tr><td><code>test_decay_curves.py</code></td><td>三类衰减曲线分派、字段路径默认策略、expires_at 阶跃、语义校正</td><td><span class="badge ok">24/24</span></td></tr>
-        <tr><td><code>test_profile_extractor.py</code></td><td>画像抽取（骨架字段/低置信剔除/静态动态分存/解析兜底）</td><td><span class="badge ok">42/42</span></td></tr>
-        <tr><td><code>test_profile_storage.py</code></td><td>分层存储（合并语义/职责边界/原子落盘）</td><td><span class="badge ok">28/28</span></td></tr>
-        <tr><td><code>test_retrieval_decay.py</code></td><td>增量更新+检索（英文分词/排序/early-stop/衰减/stale）</td><td><span class="badge ok">27/27</span></td></tr>
+        <tr><th>测试脚本</th><th>验证什么</th><th>结果</th></tr>
+        <tr><td><code>test_compress_sort_combine.py</code></td><td>压缩时的精确去重和空值保护、归类时的悬挂过滤、合并时的引用同步、幂等</td><td><span class="badge ok">42 项全过</span></td></tr>
+        <tr><td><code>test_crud_graduation.py</code></td><td>update 的字段白名单和索引联动、delete 对重要数据（highlight）的保护、层间流转、跨天清理、预翻译</td><td><span class="badge ok">39 项全过</span></td></tr>
+        <tr><td><code>test_ddl2_regression.py</code></td><td>9 月 3 日发现的那些问题的专项复查（重新验证一遍，确认没再出现）</td><td><span class="badge ok">61 项全过</span></td></tr>
+        <tr><td><code>test_decay_curves.py</code></td><td>三类遗忘曲线的分派、按字段名的默认策略、有效期到期失效、校正逻辑</td><td><span class="badge ok">24 项全过</span></td></tr>
+        <tr><td><code>test_profile_extractor.py</code></td><td>画像抽取（骨架字段、可信度太低就剔除、静态动态分开存、解析失败时的备用处理）</td><td><span class="badge ok">42 项全过</span></td></tr>
+        <tr><td><code>test_profile_storage.py</code></td><td>分层存储（多条信息怎么合并、各接口的职责边界、原子落盘（要么完整写入、要么完全不写））</td><td><span class="badge ok">28 项全过</span></td></tr>
+        <tr><td><code>test_retrieval_decay.py</code></td><td>增量更新（只处理变化的部分）和检索（英文分词、排序、early-stop（找够就停）、衰减、stale（太久没用已失效的信息））</td><td><span class="badge ok">27 项全过</span></td></tr>
       </table>
-      <div class="okbox">✅ 较上周（153 断言）新增 110 断言，覆盖 CRUD / 遗忘 / 压缩归类三大新能力。全量回归无失败。</div>
-      <h3>② EgoLife 数据集下载（任务 2 月末验收的测试集）</h3>
+      <div class="okbox">✅ 比上周的 153 项新增了 110 项，覆盖 CRUD、遗忘、归类压缩这三块新能力，全部通过。</div>
+      <h3>② EgoLife 数据集下载（这是月末验收要用的测试集）</h3>
       <table>
         <tr><th>数据</th><th>内容</th><th>状态</th></tr>
-        <tr><td>EgoLifeCap/Transcript</td><td>6 参与者 402 个 .srt，双语 ASR 转写（中文+英文，带时间戳）</td><td><span class="badge ok">完整 ✅</span></td></tr>
-        <tr><td>EgoLifeCap/DenseCaption</td><td>406 个 .srt，第一人称密集场景 caption</td><td><span class="badge ok">完整 ✅</span></td></tr>
-        <tr><td>EgoIT/</td><td>EgoLife_Caption.json（9002 条）+ EgoLife_QA.json（26.8MB）</td><td><span class="badge ok">完整 ✅</span></td></tr>
-        <tr><td>原始视频</td><td>A1_JAKE 完整（6266）+ A2_ALICE 完整（5515）+ A3_TASHA 部分（2646），共 216GB</td><td><span class="badge warn">部分</span></td></tr>
+        <tr><td>ASR 转写（Transcript）</td><td>6 个参与者 402 个字幕文件，中英双语，带时间戳</td><td><span class="badge ok">完整</span></td></tr>
+        <tr><td>DenseCaption</td><td>406 个字幕文件，第一人称的密集 caption</td><td><span class="badge ok">完整</span></td></tr>
+        <tr><td>EgoIT</td><td>EgoLife_Caption.json（9002 条）+ EgoLife_QA.json（26.8MB）</td><td><span class="badge ok">完整</span></td></tr>
+        <tr><td>原始视频</td><td>A1 完整 6266 个、A2 完整 5515 个、A3 部分 2646 个，一共 216GB</td><td><span class="badge warn">部分</span></td></tr>
       </table>
-      <h3>③ 下载过程记录（遇到的问题与解决）</h3>
+      <h3>③ 下载过程中遇到的问题</h3>
       <table>
         <tr><th>阶段</th><th>情况</th></tr>
-        <tr><td>数据结构探索</td><td>摸清 EgoLife 结构：结构化文本（Transcript/DenseCaption/EgoIT，小体积）+ 原始视频（A1~A6 × 7 天，32003 个 mp4，512GB）</td></tr>
-        <tr><td>关键发现</td><td>EgoLifeCap 已内置 ASR 转写 + 密集 caption，9.21 预处理可直接复用文本，无需重新抽帧+ASR</td></tr>
-        <tr><td>下载受阻</td><td>hf 下载被 CodeBuddy 的 safe-delete 机制卡死（拦截缓存临时文件清理，卡在 499/32003）</td></tr>
-        <tr><td>解决</td><td>清理残留临时文件 + <code>env -i</code> 干净环境重启 + <code>--max-workers 16</code> 提并发</td></tr>
-        <tr><td>带宽瓶颈</td><td>实测 HF 直连 ~106KB/s、镜像 ~83KB/s，全量 512GB 需 6+ 天，按需终止（已下 216GB 够抽帧验证）</td></tr>
+        <tr><td>先摸清数据结构</td><td>EgoLife 分两部分：结构化文本（语音转写、场景描述、问答数据，体积小）和原始视频（6 个参与者各 7 天，32003 个文件，512GB）</td></tr>
+        <tr><td>一个关键发现</td><td>数据集自带 ASR 转写和 caption，后面做预处理可以直接用这些现成文字，不用自己抽帧和做 ASR</td></tr>
+        <tr><td>下载卡住</td><td>下载被开发工具的安全删除机制卡住，它拦截了缓存临时文件的清理，进度停在 499 个</td></tr>
+        <tr><td>解决办法</td><td>用系统调用清理掉残留的临时文件，再用干净的环境重启下载，同时提高并发数</td></tr>
+        <tr><td>带宽瓶颈</td><td>实测直连和镜像都只有每秒 100K 左右，全量下完要好几天，于是决定按需停止</td></tr>
       </table>
-      <div class="note">📌 <b>下周（阶段 C）</b>：09-21 起基于已下好的结构化文本构建 EgoLife 测试集（预处理对齐 agent 输入格式 → ground-truth 标注 → 归类准确率评测框架）。</div>
+      <div class="note">📌 这之后就进入阶段 C——把下载好的数据整理成能用来评测的样子。</div>
+    </div>
+  </section>
+</div>
+
+<!-- ============================== PAGE 7 · 09-19 ============================== -->
+<div class="page" id="p7">
+  <section>
+    <h2><span class="dot"></span>09-19 · 视频下载收尾</h2>
+    <div class="card">
+      <h3>① 带宽到底有多慢</h3>
+      <table>
+        <tr><th>下载路径</th><th>实测速度</th></tr>
+        <tr><td>直连下载（单线程）</td><td>每秒约 100K</td></tr>
+        <tr><td>国内镜像</td><td>每秒约 83K</td></tr>
+        <tr><td>16 路并发</td><td>每秒约 466K</td></tr>
+      </table>
+      <p>日志里没有任何报错，下载一直在正常跑，网速就是这么慢。全量 512GB 按这个速度要 6 天以上，不值得等，于是决定停止。</p>
+      <h3>② 停止时保留了什么</h3>
+      <table>
+        <tr><th>参与者</th><th>视频数</th><th>状态</th></tr>
+        <tr><td>A1_JAKE</td><td>6266</td><td><span class="badge ok">完整（一周）</span></td></tr>
+        <tr><td>A2_ALICE</td><td>5515</td><td><span class="badge ok">完整（一周）</span></td></tr>
+        <tr><td>A3_TASHA</td><td>2646</td><td><span class="badge warn">部分</span></td></tr>
+      </table>
+      <div class="okbox">✅ 拿到 2 个参与者完整的一周视频一共 216GB，加上全部 6 个参与者的结构化文本，对任务 2 完全够用。</div>
+      <h3>③ 过程中的一个坑</h3>
+      <p>下载中途被开发工具的安全删除机制挡过一次——它拦截了清理缓存临时文件的操作，导致下载停住。最后用系统调用清理了残留，再用干净环境重启才恢复正常。</p>
+    </div>
+  </section>
+</div>
+
+<!-- ============================== PAGE 8 · 09-20 ============================== -->
+<div class="page" id="p8">
+  <section>
+    <h2><span class="dot"></span>09-20 · 检索分词改成中英混合，查询不再调LLM</h2>
+    <div class="card">
+      <h3>① 发现问题：查询时临时翻译会拖慢速度</h3>
+      <p>之前的分词策略是遇到中文先翻译成英文再分词。写入时的预翻译没问题，但查询词如果是中文，检索时就会临时调一次LLM翻译，可能让检索要花 2 秒以上，达不到检索要在 1 秒内返回的要求。</p>
+      <h3>② 改成中英混合分词</h3>
+      <pre>def tokenize(text):
+    # 中文按单字切，英文按单词切，不再翻译
+    for ch in text.lower():
+        if 是英文字母或数字:
+            拼到当前单词
+        elif 是中文字符:
+            当前单词先入库，中文字单独作为一个词
+        else:
+            当前单词入库（遇到标点或空格）</pre>
+      <p>中文查询词按单字去命中原文，英文查询词按单词去命中写入时预翻译好的英文。写入时的预翻译保留，供英文查询使用。</p>
+      <h3>③ 效果</h3>
+      <table>
+        <tr><th>场景</th><th>是否调用LLM</th></tr>
+        <tr><td>写入中文内容（预翻译）</td><td>调用，但是离线的，不影响检索</td></tr>
+        <tr><td>中文查询词</td><td>不调用，单字直接命中原文</td></tr>
+        <tr><td>英文查询词</td><td>不调用，单词命中预翻译好的英文</td></tr>
+      </table>
+      <div class="okbox">✅ 检索这条链路彻底不调用LLM，速度有了保障，全量测试仍然全过。</div>
+    </div>
+  </section>
+</div>
+
+<!-- ============================== PAGE 9 · 09-21 ============================== -->
+<div class="page" id="p9">
+  <section>
+    <h2><span class="dot"></span>09-21 · 把 EgoLife 数据整理成能用的格式</h2>
+    <div class="card">
+      <h3>① 复用现成文本，省掉抽帧和 ASR</h3>
+      <p>数据集本身就提供了 ASR 转写和 caption，所以预处理直接复用这三样现成文字，不用自己再去做视频抽帧和 ASR：</p>
+      <table>
+        <tr><th>数据源</th><th>内容</th><th>对应字段</th></tr>
+        <tr><td>英文叙事（9002 条）</td><td>每个 30 秒片段一条第一人称叙事</td><td>场景</td></tr>
+        <tr><td>DenseCaption</td><td>逐帧的中文动作</td><td>动作</td></tr>
+        <tr><td>ASR 转写</td><td>双语对话，带说话人</td><td>人物和对话</td></tr>
+      </table>
+      <h3>② 对齐方法</h3>
+      <p>英文叙事是 30 秒一条，而语音转写和场景描述是按整点文件组织的。于是把 30 秒片段向下取整到整点，再按 30 秒一段从转写里截取对应的字幕块，避免把整小时的内容都塞进一条记录。</p>
+      <h3>③ 说话人清洗</h3>
+      <p>从转写里提取说话人时做了两件事：把 pJake 这类连在一起的名字还原成 Jake（归一化，也就是统一成标准写法），并过滤掉老板、女朋友这类称呼词。</p>
+      <div class="okbox">✅ 产出 9002 条结构化记录，对齐记忆模型的输入格式（场景、动作、人物、地点、对话），文件只有 20MB。</div>
+    </div>
+  </section>
+</div>
+
+<!-- ============================== PAGE 10 · 09-22 ============================== -->
+<div class="page" id="p10">
+  <section>
+    <h2><span class="dot"></span>09-22 · 构建测试集，对齐数据库规范</h2>
+    <div class="card">
+      <h3>① 构建测试集</h3>
+      <p>从 9000 多条里按 6 个参与者分组，每组按时间均匀抽取 150 条，得到 900 条主测试集。同时从归类、画像、检索三个方面标注了 ground-truth（人工确认过的标准答案，用来评判结果对不对）：归类覆盖人物、地点、环境、物品、活动、时间六个维度，画像覆盖八个字段，检索整理了 40 个查询词和它们对应的正确答案。</p>
+      <h3>② 对齐导师给的数据库规范</h3>
+      <p>按最新的数据库规范做了一轮对齐，主要是两处扩展：</p>
+      <table>
+        <tr><th>部分</th><th>原结构</th><th>扩展后</th></tr>
+        <tr><td>索引分类</td><td>4 个维度（人物、地点、活动、时间）</td><td>6 个维度（加上环境场景和物品）</td></tr>
+        <tr><td>用户画像</td><td>4 个字段</td><td>8 个字段（加上性格、目标、决策、动机）</td></tr>
+      </table>
+      <p>还按规范定了排序规则：人物、地点、时间按从近到远排，动作、环境、物品按从高频到低频排；画像里行为习惯按频率排，其余按置信度排。第二层的同场景判定也改成按环境场景判断。</p>
+      <div class="okbox">✅ 全部测试 274 项检查全部通过，覆盖了新增的六个索引维度和八个画像字段。</div>
     </div>
   </section>
 </div>
@@ -406,17 +524,21 @@ if kind == "list":  m[field] = [canonical if x == old_key else x for x in m[fiel
 <div class="phint">← → 方向键翻页 · 点击下方按钮跳转</div>
 <div class="pager" id="pager">
   <button class="pbtn nav" onclick="go(-1)" title="上一页">‹</button>
-  <button class="pbtn" onclick="jump(1)">09-12<span class="d">会议重构</span></button>
+  <button class="pbtn" onclick="jump(1)">09-12<span class="d">范围重构</span></button>
   <button class="pbtn" onclick="jump(2)">09-14<span class="d">设计定稿</span></button>
-  <button class="pbtn" onclick="jump(3)">09-15<span class="d">CRUD+分词</span></button>
+  <button class="pbtn" onclick="jump(3)">09-15<span class="d">CRUD</span></button>
   <button class="pbtn" onclick="jump(4)">09-16<span class="d">遗忘机制</span></button>
-  <button class="pbtn" onclick="jump(5)">09-17<span class="d">压缩归类</span></button>
-  <button class="pbtn" onclick="jump(6)">09-18<span class="d">小结+数据</span></button>
+  <button class="pbtn" onclick="jump(5)">09-17<span class="d">归类压缩</span></button>
+  <button class="pbtn" onclick="jump(6)">09-18<span class="d">小结与数据</span></button>
+  <button class="pbtn" onclick="jump(7)">09-19<span class="d">下载收尾</span></button>
+  <button class="pbtn" onclick="jump(8)">09-20<span class="d">分词提速</span></button>
+  <button class="pbtn" onclick="jump(9)">09-21<span class="d">数据整理</span></button>
+  <button class="pbtn" onclick="jump(10)">09-22<span class="d">测试集</span></button>
   <button class="pbtn nav" onclick="go(1)" title="下一页">›</button>
 </div>
 
 <script>
-const N = 6;
+const N = 10;
 let cur = 1;
 function jump(i) { cur = Math.min(Math.max(i, 1), N); render(); }
 function go(d) { jump(cur + d); }
