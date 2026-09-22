@@ -58,8 +58,19 @@
 | layer3 | 当日全部 | 当天所有 moment | 每次交互 | Phase A `add()` |
 | layer4 | 近期摘要 | 日级摘要 / 当前任务 / 生活动线 | 整理时 | Phase C `compress()` |
 | layer5 | 远期摘要 | 周/月级摘要 / 关键事件 / 长期模式 | 整理时 | Phase C `compress()` |
-| layer6 | 用户画像 ⭐ | 静态画像四字段（见 §3.3） | 整理时 | Phase C → `update_profile()` |
-| layer7 | 分类索引归档 | 4 个倒排索引 + moments 主存储 | 每次交互 + 整理时 | `add()` / `sort()` / `combine()` |
+| layer6 | 用户画像 ⭐ | 静态画像（8 字段，见 §3.3） | 整理时 | Phase C → `update_profile()` |
+| layer7 | 分类索引归档 | 6 个倒排索引 + moments 主存储 | 每次交互 + 整理时 | `add()` / `sort()` / `combine()` |
+
+### 2.1.1 层级规范（09-22 导师文档定稿）
+
+1. **层级 1~5 由近到远**：短期（当前）→ 中期（近期）→ 长期（远期）。
+2. **每一层内的记忆按时间远近顺序排列**（检索/渲染时按时间倒序：最近优先）。
+3. **查询按层级先后 1→2→3→4→5 提取**（见 §4.3 读取类）。
+4. **特别标注两类记忆**（`highlight`）：
+   - 用户在 Part4 确认无误的数据；
+   - 重复出现 / 归类合并的相似相同数据（`combine` 合并时自动标记 `highlighted=True`）。
+5. **layer2 归类依据是「环境场景」**：按 Part1 识别的 `environments` 判定同场景（有交集即同场景）；
+   无 `environments` 标注时降级为 `location + activity` 判定（兼容旧数据）。
 
 ### 2.2 逐层定义
 
@@ -234,8 +245,23 @@ moment 到达 ──add()──► layer1 ──溢出──► layer2 ──晋
 | `behavior_patterns.with_ar_system.common_apps` | AttrValue[] | 常用应用 | 稳定-长有效（decay=0.001） |
 | `behavior_patterns.with_ar_system.typical_behaviors` | AttrValue[] | 典型行为 | 稳定-长有效（decay=0.001） |
 | `behavior_patterns.with_agents` | AttrValue[] | 与智能体交互习惯 | 稳定-长有效（decay=0.001） |
+| `personality.traits` | AttrValue[] | **性格特点**（09-22 新增） | 稳定-永久（decay=0） |
+| `goals` | AttrValue[] | **规划目标**（09-22 新增） | 渐变（decay=0.005，目标会变化） |
+| `decisions.patterns` / `decisions.key_factors` | AttrValue[] | **选择决策**模式与影响因素（09-22 新增） | 稳定-长有效（decay=0.001） |
+| `motivations` | AttrValue[] | **动机**（09-22 新增） | 稳定-长有效（decay=0.001） |
 | （新）经历状态类字段 | AttrValue | 上学阶段等阶段类属性 | 渐变（decay=0.005） |
 | （新）时效事件类字段 | AttrValue | 优惠券/会员等 | 截止（expires_at 阶跃） |
+
+**画像排序规则（09-22 规范「用户的自身画像」6 类）**：渲染/检索时按字段语义排序——
+
+| 类别 | 字段 | 排序规则 |
+|---|---|---|
+| 行为习惯 | `behavior_patterns` | 频率从高到低（`observations` 降序） |
+| 性格特点 | `personality` | 确定性从高到低（`confidence` 降序） |
+| 规划目标 | `goals` | 重要性从高到低（`confidence` 代理） |
+| 偏好爱好 | `preferences` | 从强到弱（`confidence` 降序） |
+| 选择决策 | `decisions` | 影响因素从高到低（`confidence` 降序） |
+| 动机 | `motivations` | 从强到弱（`confidence` 降序） |
 
 > 动态状态（`status_inference` 情绪/专注度、`gaze_target`、`observable_behaviors`）**不进 layer6**，
 > 由 moment 在 layer1~4 承载（规格书 L96 本就将它们定义在「用户状态行动」里）。
@@ -266,7 +292,22 @@ moment 到达 ──add()──► layer1 ──溢出──► layer2 ──晋
 | 键 | 类型 | 约束 |
 |---|---|---|
 | `moments` | dict | moment_id → moment dict（主存储） |
-| `people` / `locations` / `activity_events` / `time_nodes` | dict | 索引键 → [moment_id]，键写入前过 `_is_valid_index_tag` 校验 |
+| `people` / `locations` / `time_nodes` | dict | **外在内容（从近到远排序）**：人物 / 空间位置 / 时间节点（日周月年）；索引键 → [moment_id]，键写入前过 `_is_valid_index_tag` 校验 |
+| `activity_events` / `environments` / `objects` | dict | **外在内容（从高频到低频排序）**：动作事件 / 环境场景 / 物品；索引键 → [moment_id] |
+| `metadata.total_moments` | int | 累计 moment 数（ID 生成与整理触发依据） |
+
+**索引维度定义（09-22 规范「存储的外在内容」6 类）**：
+
+| 维度 | 含义 | 排序规则 |
+|---|---|---|
+| `people` | 人物（亲朋好友等） | 从近到远（最近出现优先） |
+| `locations` | 空间位置（家/办公室/学校等） | 从近到远 |
+| `time_nodes` | 时间节点（日/周/月/年） | 从近到远 |
+| `activity_events` | 活动事件（吃喝/学习/工作/生活等） | 从高频到低频 |
+| `environments` | 环境场景（在什么情况下） | 从高频到低频 |
+| `objects` | 物品 | 从高频到低频 |
+
+排序在**检索/渲染时动态计算**（`_sorted_index_tags`），存储保持简单（索引存 moment_id 集合）。
 | `metadata.total_moments` | int | 累计 moment 数（ID 生成与整理触发依据） |
 | `metadata.last_consolidation` | str/None | 最近整理时间（触发条件依据） |
 | `metadata.session_start` / `today` | str | 会话元信息 |

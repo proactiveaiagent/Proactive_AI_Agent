@@ -48,6 +48,23 @@ SAMPLE_PER_PARTICIPANT = 150
 # 已知 6 参与者（ground-truth people 白名单）
 KNOWN_PEOPLE = ["Jake", "Alice", "Tasha", "Lucia", "Katrina", "Shure"]
 
+# 空间位置（大空间）
+LOCATION_VOCAB = [
+    "living room", "kitchen", "bedroom", "bathroom", "dining room",
+    "yard", "garden", "balcony", "office", "meeting room", "basement", "garage",
+]
+# 环境场景（局部场景 / 环境位置）
+ENVIRONMENT_VOCAB = [
+    "table", "window", "stairs", "staircase", "entrance", "door",
+    "corridor", "hallway", "counter", "countertop", "sofa", "couch", "floor",
+]
+# 物品
+OBJECT_VOCAB = [
+    "phone", "cup", "glasses", "puzzle", "computer", "laptop", "bag",
+    "shelf", "fridge", "refrigerator", "sink", "bowl", "bottle", "chair",
+    "closet", "box", "trash", "camera", "headphones",
+]
+
 # 活动类别词典：类别 → 触发关键词（中文，来自 DenseCaption 动作描述）
 ACTIVITY_RULES = [
     ("饮食", ["吃饭", "吃东西", "喝水", "喝了", "餐具", "餐桌", "水果", "做饭", "煮", "吃"]),
@@ -99,15 +116,20 @@ def stratified_sample(moments, per_participant=SAMPLE_PER_PARTICIPANT):
 # ---------------------------------------------------------------------------
 
 def annotate_classification(m):
-    """记忆归类 ground-truth：people / location / activity / time 四维。"""
+    """记忆归类 ground-truth：people / location / environment / object / activity / time 六维。"""
     # people：白名单 ∩ 提取的说话人
     people_gt = [p for p in m["people"] if p in KNOWN_PEOPLE]
 
-    # location：已提取的地点词列表
-    location_gt = m["location"].split("/") if m["location"] else []
+    # 统一文本源：英文叙事 scene + 中文动作 + 密集 caption + 对话
+    text = f"{m['scene']} {m['user_action']} {m['dense_caption']} {m['transcript']}"
+    low = text.lower()
+
+    # location（空间位置：大空间）、environments（环境场景：局部场景）、objects（物品）
+    location_gt = [w for w in LOCATION_VOCAB if w in low]
+    environments_gt = [w for w in ENVIRONMENT_VOCAB if w in low]
+    objects_gt = [w for w in OBJECT_VOCAB if w in low]
 
     # activity：动作关键词 → 类别（取命中次数最多的主活动）
-    text = f"{m['user_action']} {m['dense_caption']} {m['transcript']}"
     hits = Counter()
     for category, keywords in ACTIVITY_RULES:
         for kw in keywords:
@@ -126,6 +148,8 @@ def annotate_classification(m):
         "id": m["id"],
         "people_gt": people_gt,
         "location_gt": location_gt,
+        "environments_gt": environments_gt,
+        "objects_gt": objects_gt,
         "activity_gt": activity_gt,
         "time_gt": time_gt,
     }
@@ -153,26 +177,43 @@ def build_profile_gt(sampled):
 
 
 def build_queries(sampled, min_support=10):
-    """检索评测查询词 + 正例 moment 集合（精确关键词匹配）。"""
-    # 高频 location / activity 作为查询词
+    """检索评测查询词 + 正例 moment 集合（精确关键词匹配），覆盖 6 维索引。"""
     loc_counter = Counter()
+    env_counter = Counter()
+    obj_counter = Counter()
     act_counter = Counter()
     people_counter = Counter()
     for m in sampled:
         gt = m["_gt"]
         for loc in gt["location_gt"]:
             loc_counter[loc] += 1
+        for e in gt["environments_gt"]:
+            env_counter[e] += 1
+        for o in gt["objects_gt"]:
+            obj_counter[o] += 1
         if gt["activity_gt"]:
             act_counter[gt["activity_gt"]] += 1
         for p in gt["people_gt"]:
             people_counter[p] += 1
 
     queries = []
-    # 地点查询
+    # 空间位置查询
     for loc, c in loc_counter.items():
         if c >= min_support:
             positives = [m["id"] for m in sampled if loc in m["_gt"]["location_gt"]]
-            queries.append({"query": loc, "type": "location", "support": c,
+            queries.append({"query": loc, "type": "locations", "support": c,
+                            "positives": positives})
+    # 环境场景查询
+    for e, c in env_counter.items():
+        if c >= min_support:
+            positives = [m["id"] for m in sampled if e in m["_gt"]["environments_gt"]]
+            queries.append({"query": e, "type": "environments", "support": c,
+                            "positives": positives})
+    # 物品查询
+    for o, c in obj_counter.items():
+        if c >= min_support:
+            positives = [m["id"] for m in sampled if o in m["_gt"]["objects_gt"]]
+            queries.append({"query": o, "type": "objects", "support": c,
                             "positives": positives})
     # 人物查询
     for p, c in people_counter.items():
@@ -184,7 +225,7 @@ def build_queries(sampled, min_support=10):
     for act, c in act_counter.items():
         if c >= min_support:
             positives = [m["id"] for m in sampled if m["_gt"]["activity_gt"] == act]
-            queries.append({"query": act, "type": "activity", "support": c,
+            queries.append({"query": act, "type": "activity_events", "support": c,
                             "positives": positives})
     return queries
 
@@ -211,12 +252,19 @@ def main():
         m["_gt"] = annotate_classification(m)
 
     # 统计标注覆盖率
+    n = len(sampled)
     has_people = sum(1 for m in sampled if m["_gt"]["people_gt"])
     has_loc = sum(1 for m in sampled if m["_gt"]["location_gt"])
+    has_env = sum(1 for m in sampled if m["_gt"]["environments_gt"])
+    has_obj = sum(1 for m in sampled if m["_gt"]["objects_gt"])
     has_act = sum(1 for m in sampled if m["_gt"]["activity_gt"])
-    print(f"  people_gt 覆盖率: {has_people}/{len(sampled)}")
-    print(f"  location_gt 覆盖率: {has_loc}/{len(sampled)}")
-    print(f"  activity_gt 覆盖率: {has_act}/{len(sampled)}")
+    has_time = sum(1 for m in sampled if m["_gt"]["time_gt"])
+    print(f"  people_gt       覆盖率: {has_people}/{n}")
+    print(f"  location_gt     覆盖率: {has_loc}/{n}")
+    print(f"  environments_gt 覆盖率: {has_env}/{n}")
+    print(f"  objects_gt      覆盖率: {has_obj}/{n}")
+    print(f"  activity_gt     覆盖率: {has_act}/{n}")
+    print(f"  time_gt         覆盖率: {has_time}/{n}")
 
     # 画像字段 ground-truth（在 _gt 改名之前构建）
     profile_gt = build_profile_gt(sampled)

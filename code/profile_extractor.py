@@ -32,10 +32,12 @@ from typing import Any, Dict, List, Optional, Tuple
 # 字段定义（规格书 Part 2 骨架）
 # ---------------------------------------------------------------------------
 
-STABLE_FIELDS = ["demographics", "preferences", "frequent_locations", "behavior_patterns"]
+STABLE_FIELDS = ["demographics", "preferences", "frequent_locations", "behavior_patterns",
+                 "personality", "goals", "decisions", "motivations"]
 
 # 嵌套 dict 型字段（值是 {子键: AttrValue 或 [AttrValue] 或更深嵌套}）
-DICT_FIELDS = {"demographics", "preferences", "behavior_patterns"}
+DICT_FIELDS = {"demographics", "preferences", "behavior_patterns",
+               "personality", "decisions"}
 
 # 低置信度阈值（对齐 04 文档 2.5：confidence < 0.3 不入库）
 DEFAULT_MIN_CONFIDENCE = 0.3
@@ -62,6 +64,10 @@ _PROMPT_TEMPLATE = """You are a user profiling system. Given the agent's scene/n
     - with_surroundings: [ ... ]  (typical habits interacting with the physical environment)
     - with_ar_system: {{ "common_apps": [...], "typical_behaviors": [...] }}
     - with_agents: [ ... ]  (historical patterns of interacting with AI agents)
+- personality: {{ "traits": [ ... ] }}  (stable character traits, e.g. introverted, punctual)
+- goals: [ ... ]  (planned objectives the user is working toward, e.g. "learn English", "lose weight")
+- decisions: {{ "patterns": [ ... ], "key_factors": [ ... ] }}  (how the user decides, and what influences choices)
+- motivations: [ ... ]  (underlying drives behind behavior, e.g. health, recognition, efficiency)
 
 DO NOT extract transient state (current emotion, attention focus, gaze, current goal/intention) — those are NOT long-term profile and are handled elsewhere.
 
@@ -85,7 +91,11 @@ OUTPUT FORMAT:
     "with_surroundings": [{{"value":"...","confidence":0.6,"evidence":"..."}}],
     "with_ar_system": {{ "common_apps": [{{"value":"...","confidence":0.6,"evidence":"..."}}], "typical_behaviors": [{{"value":"...","confidence":0.6,"evidence":"..."}}] }},
     "with_agents": [{{"value":"...","confidence":0.6,"evidence":"..."}}]
-  }}
+  }},
+  "personality": {{ "traits": [{{"value":"...","confidence":0.7,"evidence":"..."}}] }},
+  "goals": [{{"value":"...","confidence":0.6,"evidence":"..."}}],
+  "decisions": {{ "patterns": [{{"value":"...","confidence":0.5,"evidence":"..."}}], "key_factors": [{{"value":"...","confidence":0.5,"evidence":"..."}}] }},
+  "motivations": [{{"value":"...","confidence":0.6,"evidence":"..."}}]
 }}
 
 USER INTERACTION ANALYSIS:

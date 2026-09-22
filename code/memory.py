@@ -46,9 +46,20 @@ def _today_str() -> str:
 # ---------------------------------------------------------------------------
 
 # 画像字段白名单（与 profile_extractor.STABLE_FIELDS 对齐）
-PROFILE_FIELDS = ("demographics", "preferences", "frequent_locations", "behavior_patterns")
+PROFILE_FIELDS = ("demographics", "preferences", "frequent_locations", "behavior_patterns",
+                  "personality", "goals", "decisions", "motivations")
 # dict 型字段（值是 {子键: ...}，区别于 list 型 frequent_locations）
-PROFILE_DICT_FIELDS = {"demographics", "preferences", "behavior_patterns"}
+# dict 型新字段：personality（性格特点，子键分类）/ decisions（选择决策，子键分类）
+# list 型：frequent_locations / goals（规划目标）/ motivations（动机）
+PROFILE_DICT_FIELDS = {"demographics", "preferences", "behavior_patterns",
+                       "personality", "decisions"}
+
+# layer7 索引维度（规范「存储的外在内容」6 类）
+#   从近到远排序：人物 / 空间位置 / 时间
+INDEX_NEAR_FAR = ("people", "locations", "time_nodes")
+#   从高频到低频排序：动作事件 / 环境场景 / 物品
+INDEX_FREQUENCY = ("activity_events", "environments", "objects")
+LAYER7_INDICES = INDEX_NEAR_FAR + INDEX_FREQUENCY
 
 # 低置信度阈值（对齐 04 文档 2.5：confidence < 0.3 不入库）
 MIN_CONFIDENCE = 0.3
@@ -137,6 +148,11 @@ def _is_valid_index_tag(index_key: str, tag: str) -> bool:
             return False
     if index_key == "activity_events":
         if lowered in {"none", "n/a", "unknown", "无", "暂无", "event_tag"}:
+            return False
+        if len(cleaned) > 80:
+            return False
+    if index_key in ("environments", "objects"):
+        if lowered in {"none", "n/a", "unknown", "无", "暂无"}:
             return False
         if len(cleaned) > 80:
             return False
@@ -556,10 +572,12 @@ def _empty_db() -> Dict:
 
         # --- classified archive ---
         "layer7": {
-            "time_nodes": {},      # {"2024-02-10": [moment_ids]}
-            "activity_events": {}, # {"chinese_new_year": [moment_ids]}
-            "people": {},          # {"姥姥": [moment_ids]}
-            "locations": {},       # {"family_courtyard": [moment_ids]}
+            "people": {},          # 人物（从近到远）
+            "locations": {},       # 空间位置（从近到远）
+            "time_nodes": {},      # 时间节点 日/周/月/年（从近到远）
+            "activity_events": {}, # 活动事件（从高频到低频）
+            "environments": {},    # 环境场景（从高频到低频）
+            "objects": {},         # 物品（从高频到低频）
             "moments": {}          # {moment_id: moment_dict}  — master store
         },
 
@@ -667,6 +685,8 @@ class PersonMemory:
             people: List[str] = None,
             location: str = None,
             activity: str = None,
+            environments: List[str] = None,
+            objects: List[str] = None,
             extra_notes: str = "") -> str:
         """
         Store a complete Part1+2+3 result.
@@ -686,6 +706,10 @@ class PersonMemory:
             moment["people"] = people
         if activity:
             moment["activity"] = activity
+        if environments:
+            moment["environments"] = environments      # 环境场景（规范新增维度）
+        if objects:
+            moment["objects"] = objects                # 物品（规范新增维度）
         if extra_notes:
             moment["notes"] = extra_notes
 
@@ -746,6 +770,16 @@ class PersonMemory:
         if activity and _is_valid_index_tag("activity_events", activity):
             self.memory["layer7"]["activity_events"].setdefault(activity, []).append(moment_id)
 
+        if environments:
+            for e in environments:
+                if _is_valid_index_tag("environments", e):
+                    self.memory["layer7"]["environments"].setdefault(e, []).append(moment_id)
+
+        if objects:
+            for o in objects:
+                if _is_valid_index_tag("objects", o):
+                    self.memory["layer7"]["objects"].setdefault(o, []).append(moment_id)
+
         # ---- metadata ----
         self.memory["metadata"]["total_moments"] += 1
         self.memory["metadata"]["total_encounters"] += 1
@@ -754,8 +788,9 @@ class PersonMemory:
         return moment_id
 
     def _graduate_to_layer2(self, moment: Dict, current: Dict):
-        """layer1 滑出（设计说明书 §2.4）：与当前 moment 同场景
-        （location + activity 相同）→ layer2；否则直接滑入 layer3。
+        """layer1 滑出（设计说明书 §2.4 / 09-22 层级规范）：与当前 moment 同环境场景
+        （environments 有交集）→ layer2；否则直接滑入 layer3。
+        无 environments 时降级为 location+activity 判定。
         layer2 超限时最旧滑入 layer3（不丢弃，真身保留在 layer7.moments）。
         窗口内 moment 唯一（滑入前按 id 去重，防止 add 时已入 layer3 的重复）。
         """
@@ -764,11 +799,19 @@ class PersonMemory:
             if not any(x.get("id") == m.get("id") for x in target):
                 target.append(m)
 
-        same_env = (
-            bool(moment.get("location"))
-            and moment.get("location") == current.get("location")
-            and moment.get("activity") == current.get("activity")
-        )
+        # 规范（09-22 层级定义）：layer2 归类依据是「环境场景」
+        # —— Part1 识别的环境场景相同即同场景。环境场景有交集 → layer2。
+        cur_envs = set(current.get("environments") or [])
+        moment_envs = set(moment.get("environments") or [])
+        if cur_envs and moment_envs:
+            same_env = bool(cur_envs & moment_envs)
+        else:
+            # 降级：无环境场景标注（旧数据/未传）时用 location+activity 判定
+            same_env = (
+                bool(moment.get("location"))
+                and moment.get("location") == current.get("location")
+                and moment.get("activity") == current.get("activity")
+            )
         if same_env:
             _push(self.memory["layer2"], moment, 2)
             if len(self.memory["layer2"]) > self.MAX_LAYER2:
@@ -921,6 +964,25 @@ class PersonMemory:
         scored.sort(key=lambda x: x[0], reverse=True)
         return [m for _, m in scored[:top_k]]
 
+    def _sorted_index_tags(self, index_key: str) -> list:
+        """按规范（09-22 分类排序规则）返回 layer7 索引的 tag 列表。
+
+        - 从近到远（people / locations / time_nodes）：最近出现过的 tag 在前
+        - 从高频到低频（activity_events / environments / objects）：moment 数最多的 tag 在前
+        """
+        index = self.memory["layer7"].get(index_key, {})
+        if not index:
+            return []
+        moments = self.memory["layer7"]["moments"]
+
+        if index_key in INDEX_NEAR_FAR:
+            def latest(tag: str) -> str:
+                ids = index.get(tag, [])
+                ts = [moments[i].get("timestamp", "") for i in ids if i in moments]
+                return max(ts) if ts else ""
+            return sorted(index.keys(), key=latest, reverse=True)
+        return sorted(index.keys(), key=lambda t: len(index.get(t, [])), reverse=True)
+
     # ------------------------------------------------------------------
     # Operation 4 : RETRIEVE  (called by Part2 / consolidation)
     # ------------------------------------------------------------------
@@ -1033,7 +1095,7 @@ class PersonMemory:
         同键 moment_id 集合去重合并。
         """
         moments = self.memory["layer7"]["moments"]
-        for index_key in ["people", "locations", "activity_events", "time_nodes"]:
+        for index_key in LAYER7_INDICES:
             if index_key not in sort_analysis:
                 continue
             for tag, ids in sort_analysis[index_key].items():
@@ -1068,6 +1130,8 @@ class PersonMemory:
             "locations": ("location", "str"),
             "people": ("people", "list"),
             "activity_events": ("activity", "str"),
+            "environments": ("environments", "list"),
+            "objects": ("objects", "list"),
         }
         for index_key, mapping in canonical_map.items():
             if index_key not in self.memory["layer7"] or not isinstance(mapping, dict):
@@ -1083,6 +1147,12 @@ class PersonMemory:
                 existing = set(index.get(canonical, []))
                 existing.update(ids)
                 index[canonical] = list(existing)
+                # 规范（09-22 highlight）：重复出现 / 归类合并的相似相同数据自动标记
+                if len(existing) > len(ids):
+                    for mid in ids:
+                        m = self.memory["layer7"]["moments"].get(mid)
+                        if m:
+                            m["highlighted"] = True
                 # 同步更新 moments 主存储引用字段
                 if ref:
                     field, kind = ref
@@ -1124,7 +1194,7 @@ class PersonMemory:
 
         del self.memory["layer7"]["moments"][moment_id]
         # Remove from indices
-        for index_key in ["people", "locations", "activity_events", "time_nodes"]:
+        for index_key in LAYER7_INDICES:
             for tag, ids in self.memory["layer7"][index_key].items():
                 if moment_id in ids:
                     ids.remove(moment_id)
@@ -1215,11 +1285,13 @@ class PersonMemory:
     # ------------------------------------------------------------------
 
     UPDATE_FIELDS = ("scene", "user_action", "needs", "solutions",
-                     "people", "location", "activity", "notes")
+                     "people", "location", "activity", "notes",
+                     "environments", "objects")
 
     def _sync_indices_for_moment(self, moment_id: str, moment: Dict,
-                                 old_people, old_location, old_activity):
-        """moment 的 people/location/activity 变更时联动 layer7 索引
+                                 old_people, old_location, old_activity,
+                                 old_environments=None, old_objects=None):
+        """moment 的 people/location/activity/environments/objects 变更时联动 layer7 索引
         （设计说明书 §4.2 update 语义：新键过校验，旧键清理空引用）。
         """
         def sync(key: str, old_val, new_val):
@@ -1243,6 +1315,8 @@ class PersonMemory:
         sync("people", old_people, moment.get("people"))
         sync("locations", old_location, moment.get("location"))
         sync("activity_events", old_activity, moment.get("activity"))
+        sync("environments", old_environments, moment.get("environments"))
+        sync("objects", old_objects, moment.get("objects"))
 
     def update(self, moment_id: str, updates: Dict) -> bool:
         """改正指定 moment 的 Part1-3 数据（设计说明书 §4.2 定稿语义）。
@@ -1261,6 +1335,8 @@ class PersonMemory:
         old_people = moment.get("people") or []
         old_location = moment.get("location")
         old_activity = moment.get("activity")
+        old_environments = moment.get("environments") or []
+        old_objects = moment.get("objects") or []
 
         changed = False
         for field, val in updates.items():
@@ -1296,7 +1372,8 @@ class PersonMemory:
 
         # 索引联动
         self._sync_indices_for_moment(
-            moment_id, moment, old_people, old_location, old_activity)
+            moment_id, moment, old_people, old_location, old_activity,
+            old_environments, old_objects)
 
         self._save()
         return True
