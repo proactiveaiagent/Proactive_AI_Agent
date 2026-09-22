@@ -497,17 +497,30 @@ def _has_profile_content(profile: Dict) -> bool:
     return any(count(profile.get(f)) > 0 for f in PROFILE_FIELDS)
 
 
-def _collect_attrs(node, out: list):
-    """递归收集非 stale 的 AttrValue 为 'value(conf)' 字符串（供画像注入 prompt）。"""
+def _collect_attrs(node, out: list, sort_key: str = "confidence"):
+    """递归收集非 stale 的 AttrValue 为 'value(conf)' 字符串（供画像注入 prompt）。
+
+    规范（09-22 画像排序）：list 型节点按字段语义排序后再收集——
+    - sort_key="frequency"（行为习惯 behavior_patterns）：按 observations 频率从高到低
+    - sort_key="confidence"（默认，性格/目标/偏好/决策/动机）：按 confidence 从高到低
+      （分别对应确定性↓ / 重要性↓ / 强弱↓ / 影响因素↓）
+    """
     if isinstance(node, dict) and "value" in node:
         if not node.get("stale"):
             out.append(f"{node['value']}({node.get('confidence', 0):.2f})")
     elif isinstance(node, list):
-        for x in node:
-            _collect_attrs(x, out)
+        items = [x for x in node]
+        if sort_key == "frequency":
+            items.sort(key=lambda x: x.get("observations", 1) if isinstance(x, dict) else 0,
+                       reverse=True)
+        else:
+            items.sort(key=lambda x: x.get("confidence", 0) if isinstance(x, dict) else 0,
+                       reverse=True)
+        for x in items:
+            _collect_attrs(x, out, sort_key)
     elif isinstance(node, dict):
         for v in node.values():
-            _collect_attrs(v, out)
+            _collect_attrs(v, out, sort_key)
 
 
 # ---------------------------------------------------------------------------
@@ -964,6 +977,13 @@ class PersonMemory:
         scored.sort(key=lambda x: x[0], reverse=True)
         return [m for _, m in scored[:top_k]]
 
+    def _sorted_layer_moments(self, layer_key: str) -> list:
+        """规范（09-22 层级）：层内记忆按时间远近顺序排列，返回最近优先（时间倒序）的列表。"""
+        items = self.memory.get(layer_key, [])
+        if not isinstance(items, list):
+            return []
+        return sorted(items, key=lambda m: m.get("timestamp", ""), reverse=True)
+
     def _sorted_index_tags(self, index_key: str) -> list:
         """按规范（09-22 分类排序规则）返回 layer7 索引的 tag 列表。
 
@@ -1240,7 +1260,9 @@ class PersonMemory:
         profile_parts = []
         for field in PROFILE_FIELDS:
             field_attrs = []
-            _collect_attrs(profile.get(field), field_attrs)
+            # 规范排序：行为习惯按频率↓，其余按 confidence（确定性/重要性/强弱/影响因素）↓
+            sort_key = "frequency" if field == "behavior_patterns" else "confidence"
+            _collect_attrs(profile.get(field), field_attrs, sort_key)
             if field_attrs:
                 profile_parts.append(f"{field}:[{'; '.join(field_attrs)}]")
         if profile_parts:
