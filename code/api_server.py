@@ -24,7 +24,7 @@ from typing import List
 import torch
 from fastapi import FastAPI, File, UploadFile, Form, Request
 from fastapi.responses import JSONResponse
-from transformers import AutoModelForVision2Seq, AutoProcessor
+from transformers import AutoModelForImageTextToText, AutoProcessor
 from PIL import Image
 import uvicorn
 
@@ -52,11 +52,14 @@ async def lifespan(app: FastAPI):
 
     # ── Qwen3-VL ────────────────────────────────────────────────────────────
     print("🚀 Loading Qwen3-VL model...")
-    model_path = "/hpc2hdd/home/jyinap/Proactive_Agent/models/Qwen3-VL-4B-Instruct"
+    model_path = os.environ.get(
+        "QWEN_MODEL_PATH",
+        "/data/cxr25/zhx/HF_HOME/qwen/Qwen3-VL-8B-Instruct",
+    )
 
-    qwen_model = AutoModelForVision2Seq.from_pretrained(
+    qwen_model = AutoModelForImageTextToText.from_pretrained(
         model_path,
-        torch_dtype=torch.bfloat16,   # ← fixed: was `dtype`
+        torch_dtype=torch.bfloat16,
         device_map="auto",
         trust_remote_code=True
     )
@@ -70,12 +73,19 @@ async def lifespan(app: FastAPI):
     print("🚀 Loading Whisper model...")
     from faster_whisper import WhisperModel
 
-    whisper_size = os.environ.get("WHISPER_MODEL_SIZE", "medium")
     w_device = "cuda" if torch.cuda.is_available() else "cpu"
     compute_type = "float16" if w_device == "cuda" else "float32"
 
-    whisper_model = WhisperModel(whisper_size, device=w_device, compute_type=compute_type)
-    print(f"✅ Whisper ({whisper_size}) ready on {w_device} ({compute_type})")
+    # 优先用本地模型目录（含 model.bin），不触发 HF 下载（避免临时目录清理失败）；
+    # 否则回退到 WHISPER_MODEL_SIZE（模型名，走 HF 下载）。
+    whisper_model_path = os.environ.get("WHISPER_MODEL_PATH", "")
+    if whisper_model_path and os.path.isdir(whisper_model_path):
+        whisper_model = WhisperModel(whisper_model_path, device=w_device, compute_type=compute_type)
+        print(f"✅ Whisper ready from local path {whisper_model_path}")
+    else:
+        whisper_size = os.environ.get("WHISPER_MODEL_SIZE", "tiny")
+        whisper_model = WhisperModel(whisper_size, device=w_device, compute_type=compute_type)
+        print(f"✅ Whisper ({whisper_size}) ready on {w_device} ({compute_type})")
 
     yield  # server runs here
 
@@ -450,4 +460,6 @@ async def health():
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    # 端口可用环境变量 PORT 覆盖（8000 常被其他服务占用，改用 8001）
+    port = int(os.environ.get("PORT", "8000"))
+    uvicorn.run(app, host="0.0.0.0", port=port)
