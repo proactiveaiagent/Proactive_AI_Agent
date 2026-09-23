@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>7 层记忆模型 · 可视化</title>
+<style>
+:root{--bg:#f5f6fb;--card:#fff;--ink:#1f2430;--muted:#6b7189;--brand:#5b6cff;--brand2:#a855f7;--ok:#0ca678;--warn:#e8930c;--border:#e3e6f0;--code:#eef0f8}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--ink);line-height:1.6}
+.hero{background:linear-gradient(135deg,#e9edff,#dfe6ff 55%,#e9dfff);padding:24px 28px;border-bottom:1px solid var(--border)}
+.hero h1{font-size:22px;font-weight:800}
+.hero .sub{font-size:13px;color:#4a5068;margin-top:4px}
+.tabs{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap}
+.tab{padding:7px 16px;border-radius:9px;border:1px solid var(--border);background:var(--card);cursor:pointer;font-size:13px;font-weight:700;color:#3a4058}
+.tab.on{background:linear-gradient(135deg,var(--brand),var(--brand2));color:#fff;border-color:transparent}
+.wrap{max-width:1240px;margin:0 auto;padding:20px 22px 60px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin-bottom:16px}
+.card h2{font-size:15px;font-weight:800;margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.dot{width:9px;height:9px;border-radius:50%;background:linear-gradient(135deg,var(--brand),var(--brand2))}
+.toolbar{display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap}
+input[type=range]{flex:1;min-width:200px;accent-color:var(--brand)}
+.btn{padding:6px 14px;border-radius:8px;border:1px solid var(--border);background:var(--card);cursor:pointer;font-size:13px;font-weight:600}
+.btn:hover{border-color:var(--brand)}
+.step-info{font-size:13px;color:#3a4058;min-width:260px}
+.step-info b{color:var(--brand)}
+.layers{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:12px}
+.layer{background:var(--card2);border:1px solid var(--border);border-radius:11px;padding:12px 14px}
+.layer .hd{display:flex;align-items:center;gap:9px;margin-bottom:6px}
+.no{width:34px;height:34px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:12px;color:#fff;background:linear-gradient(135deg,var(--brand),var(--brand2));flex:none}
+.layer.hot .no{background:linear-gradient(135deg,#059669,#10b981)}
+.ttl{font-weight:700;font-size:13.5px}
+.cnt{margin-left:auto;font-size:20px;font-weight:800;color:var(--brand)}
+.desc{font-size:11.5px;color:var(--muted);margin-bottom:6px}
+.body{font-size:12px;color:#3a4058;background:#fff;border-radius:7px;padding:8px 10px;max-height:120px;overflow-y:auto;border:1px solid var(--border)}
+.body .empty{color:#9aa0c3;font-style:italic}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:860px){.grid2{grid-template-columns:1fr}}
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th{background:var(--code);color:#3a4058;text-align:left;padding:6px 10px;font-weight:600}
+td{padding:6px 10px;border-top:1px solid var(--border)}
+.badge{display:inline-block;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:700}
+.badge.ok{background:rgba(12,166,120,.12);color:var(--ok)}
+.badge.brand{background:rgba(91,108,255,.12);color:var(--brand)}
+.badge.warn{background:rgba(232,147,12,.12);color:var(--warn)}
+.tag{display:inline-block;background:var(--code);border:1px solid var(--border);border-radius:6px;padding:2px 8px;margin:2px 4px 2px 0;font-size:11.5px}
+.log{max-height:280px;overflow-y:auto;font-size:12.5px}
+.log .row{padding:6px 10px;border-top:1px solid var(--border);display:flex;gap:10px}
+.log .row:first-child{border-top:none}
+.log .idx{color:#9aa0c3;min-width:28px}
+.log .act{min-width:90px;font-weight:700}
+.log .act.add{color:var(--ok)}.log .act.query{color:var(--brand)}
+.log .act.update{color:var(--warn)}.log .act.delete{color:#e5484d}
+.log .act.highlight{color:var(--brand2)}.log .act.sort{color:var(--brand)}
+.log .act.combine{color:var(--brand2)}.log .act.compress{color:var(--ok)}
+.note{font-size:12px;color:var(--muted);margin-top:8px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-bottom:12px}
+.kpi{background:var(--card2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;text-align:center}
+.kpi .num{font-size:20px;font-weight:800;color:var(--brand)}
+.kpi .lbl{font-size:11px;color:var(--muted);margin-top:2px}
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <h1>🧠 7 层记忆模型 · 可视化</h1>
+  <div class="sub">EgoLife 数据集跑通结果 · 短期记忆场景 / 长期记忆场景</div>
+  <div class="tabs" id="tabs"></div>
+</div>
+
+<div class="wrap">
+
+  <div class="card">
+    <h2><span class="dot"></span>时间轴回放</h2>
+    <div class="toolbar">
+      <button class="btn" id="playBtn">▶ 播放</button>
+      <input type="range" id="slider" min="0" max="0" value="0">
+      <div class="step-info" id="stepInfo">加载中…</div>
+    </div>
+    <div id="kpis" class="kpis"></div>
+    <div class="note">拖动滑块或点击播放，观察记忆随时间的演化（各层数量、索引维度、画像字段的变化）。</div>
+  </div>
+
+  <div class="card">
+    <h2><span class="dot"></span>Layer 1~7 各层状态</h2>
+    <div class="layers" id="layers"></div>
+  </div>
+
+  <div class="grid2">
+    <div class="card">
+      <h2><span class="dot"></span>Layer 7 · 六维索引</h2>
+      <table id="idxTable"></table>
+    </div>
+    <div class="card">
+      <h2><span class="dot"></span>Layer 6 · 用户画像</h2>
+      <div id="profile"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2><span class="dot"></span>操作日志</h2>
+    <div class="log" id="log"></div>
+  </div>
+
+</div>
+
+<script>
+const API = location.origin;
+let scenarios = [], curKey = null, snaps = [], cur = 0, timer = null, memory = null;
+
+const LAYER_META = [
+  {k:'layer1', no:'L1', ttl:'当前时刻', desc:'本次交互的原始记录（会话级）'},
+  {k:'layer2', no:'L2', ttl:'同场景历史', desc:'环境场景相同的近期记录'},
+  {k:'layer3', no:'L3', ttl:'当日全部', desc:'当天的所有记录（上限 1000）'},
+  {k:'layer4', no:'L4', ttl:'近期摘要', desc:'按天压缩的摘要与当前任务'},
+  {k:'layer5', no:'L5', ttl:'远期摘要', desc:'按周/月的关键事件与长期模式'},
+  {k:'layer6', no:'L6', ttl:'用户画像', desc:'人口统计学 / 偏好 / 常去地点 / 行为习惯', hot:true},
+  {k:'layer7', no:'L7', ttl:'索引归档', desc:'六维索引 + 记录主存储（完整内容）'},
+];
+
+async function init(){
+  scenarios = await (await fetch(API+'/api/scenarios')).json();
+  renderTabs();
+  if(!scenarios.length) return;
+  const ready = scenarios.find(s=>s.available) || scenarios[0];
+  select(ready.key);
+}
+
+function renderTabs(){
+  const el = document.getElementById('tabs');
+  el.innerHTML = scenarios.map(s=>
+    `<div class="tab ${s.key===curKey?'on':''}" onclick="select('${s.key}')">${s.name}${s.available?'':'（未生成）'}</div>`
+  ).join('');
+}
+
+async function select(key){
+  curKey = key;
+  renderTabs();
+  const r = await fetch(API+'/api/snapshot?scenario='+key);
+  if(!r.ok){ document.getElementById('stepInfo').textContent='快照未生成，请先运行 run_scenarios.py'; return; }
+  const data = await r.json();
+  snaps = data.snapshots || [];
+  document.getElementById('slider').max = Math.max(0, snaps.length-1);
+  cur = snaps.length-1;
+  document.getElementById('slider').value = cur;
+
+  const mr = await fetch(API+'/api/memory?scenario='+key);
+  memory = mr.ok ? await mr.json() : null;
+
+  renderLog();
+  render();
+}
+
+function renderLog(){
+  const el = document.getElementById('log');
+  el.innerHTML = snaps.map((s,i)=>
+    `<div class="row"><span class="idx">${i}</span>`+
+    `<span class="act ${s.action||''}">${s.action||'-'}</span>`+
+    `<span>${s.label}</span></div>`
+  ).join('');
+}
+
+function render(){
+  const s = snaps[cur];
+  if(!s) return;
+  document.getElementById('stepInfo').innerHTML =
+    `<b>${s.label}</b>${s.action?' · '+s.action:''}`;
+
+  // KPI
+  const idxTotal = Object.values(s.indices||{}).reduce((a,b)=>a+b,0);
+  document.getElementById('kpis').innerHTML = [
+    ['各层记录', (s.layers.layer1+s.layers.layer2+s.layers.layer3)],
+    ['主存储', s.layer7_moments],
+    ['索引键', idxTotal],
+    ['总写入', s.total_moments],
+  ].map(([l,n])=>`<div class="kpi"><div class="num">${n}</div><div class="lbl">${l}</div></div>`).join('');
+
+  // 各层
+  document.getElementById('layers').innerHTML = LAYER_META.map(m=>{
+    let cnt, body='';
+    if(m.k==='layer1') cnt = s.layers.layer1;
+    else if(m.k==='layer2') cnt = s.layers.layer2;
+    else if(m.k==='layer3') cnt = s.layers.layer3;
+    else if(m.k==='layer4'){ cnt='—'; body = s.layer4_summary || ''; }
+    else if(m.k==='layer5'){ cnt='—'; body = s.layer5_summary || ''; }
+    else if(m.k==='layer6'){ cnt = Object.keys(s.profile_fields||{}).length;
+      body = Object.entries(s.profile_fields||{}).map(([k,v])=>`${k}: ${v}`).join('，'); }
+    else { cnt = s.layer7_moments; body = Object.entries(s.indices||{}).map(([k,v])=>`${k}: ${v}`).join('，'); }
+    return `<div class="layer ${m.hot?'hot':''}">
+      <div class="hd"><span class="no">${m.no}</span><span class="ttl">${m.ttl}</span><span class="cnt">${cnt}</span></div>
+      <div class="desc">${m.desc}</div>
+      <div class="body">${body?esc(body):'<span class="empty">（暂无内容）</span>'}</div>
+    </div>`;
+  }).join('');
+
+  // 索引表
+  const rows = Object.entries(s.index_top||{}).map(([dim,items])=>{
+    const tags = items.map(([t,c])=>`<span class="tag">${esc(t)} <b>${c}</b></span>`).join('') || '<span class="empty">—</span>';
+    return `<tr><td><b>${dim}</b><br><span style="color:#6b7189">共 ${(s.indices||{})[dim]||0} 个键</span></td><td>${tags}</td></tr>`;
+  }).join('');
+  document.getElementById('idxTable').innerHTML =
+    `<tr><th>维度</th><th>Top 键（出现次数）</th></tr>` + (rows||'<tr><td colspan="2">暂无索引</td></tr>');
+
+  // 画像
+  document.getElementById('profile').innerHTML = memory ? renderProfile() :
+    Object.entries(s.profile_fields||{}).map(([k,v])=>`<span class="tag">${k} <b>${v}</b></span>`).join('') || '<span class="empty">暂无画像</span>';
+}
+
+function renderProfile(){
+  const p = (memory.layer6||{}).profile || {};
+  const out = [];
+  for(const [k,v] of Object.entries(p)){
+    if(Array.isArray(v)){
+      out.push(`<div style="margin-bottom:8px"><b>${k}</b><br>`+
+        v.map(x=>`<span class="tag">${esc(typeof x==='string'?x:(x.value||JSON.stringify(x)))}</span>`).join('')+
+        `</div>`);
+    } else if(v && typeof v==='object'){
+      out.push(`<div style="margin-bottom:8px"><b>${k}</b><br>`+
+        Object.entries(v).map(([kk,vv])=>`<span class="tag">${kk}: ${esc(String(typeof vv==='object'?(vv.value||''):vv))}</span>`).join('')+
+        `</div>`);
+    }
+  }
+  return out.join('') || '<span class="empty">暂无画像</span>';
+}
+
+function esc(s){ return String(s==null?'':s).replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c])); }
+
+document.getElementById('slider').addEventListener('input', e=>{
+  cur = +e.target.value; render();
+});
+document.getElementById('playBtn').addEventListener('click', ()=>{
+  if(timer){ clearInterval(timer); timer=null; document.getElementById('playBtn').textContent='▶ 播放'; return; }
+  cur = 0; document.getElementById('slider').value = 0; render();
+  document.getElementById('playBtn').textContent='⏸ 暂停';
+  timer = setInterval(()=>{
+    if(cur >= snaps.length-1){ clearInterval(timer); timer=null; document.getElementById('playBtn').textContent='▶ 播放'; return; }
+    cur++; document.getElementById('slider').value = cur; render();
+  }, 600);
+});
+
+init();
+</script>
+</body>
+</html>
