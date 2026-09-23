@@ -103,7 +103,7 @@
 |---|---|
 | 存储内容 | 当日最近的 moment 窗口 |
 | 写入时机 | 每次 add 同步追加；layer2 滑出 |
-| 窗口容量 | 1000 条（初定，EgoLife 实测后校准；当前代码为 100） |
+| 窗口容量 | 1000 条（`MAX_LAYER3`；Layer 7 永久归档不受此窗口上限影响） |
 | 跨天清理 | 新一天首次 add 时清空窗口（数据仍在 layer7.moments，见 §2.4） |
 | 压缩 | 不依赖 layer3：Phase C 从 layer7.moments 生成 layer4/5/6 |
 
@@ -147,6 +147,8 @@
 | `locations` | 地点名 | [moment_id] | 地点名 |
 | `activity_events` | 活动类型 | [moment_id] | 活动类型 |
 | `time_nodes` | 日期 | [moment_id] | 日期 |
+| `environments` | 环境场景 | [moment_id] | 环境标签 |
+| `objects` | 物品 | [moment_id] | 物品标签 |
 
 写入时机：每次交互（`add()` 同步更新）+ 整理时（`sort()` / `combine()`）。
 索引键写入前必须过校验（防污染，见 §4.4）；加载时自动清洗存量污染。
@@ -506,6 +508,14 @@ def effective_confidence(attr, now=None):
 ```
 
 **硬约束**：①→④ 同步链路**不含任何 LLM 调用**（画像抽取/摘要生成走 Phase C 异步）。
+
+**实时查询与 Agent 上下文是两个用途不同的入口（09-23 对齐）**：
+
+- `PersonMemory.query_hierarchical()` / `DaytimeProcessor.query()`：查询相关记忆时按 Layer 1→2→3→4→5 逐层取结果，短期层优先，取够 `top_k` 即停；Layer 1~3 返回 moment，Layer 4/5 摘要作为结果项。同步查询不调用 LLM。
+- `get_context_for_analysis()`：为 Agent 需求分析准备个性化背景，按 Layer 6→5→4→相关 Layer 7 事实组装。该顺序继续遵循本节既有规格。
+- `query()` / `retrieve()`：直接查 Layer 7 永久归档，服务归档检索和 Phase C 整理，不等同于当前场景的 Layer 1→5 查询。
+
+`PersonMemory.add(..., timestamp=ISO)` 保留事件时间，`time_nodes` 使用事件日期；省略 timestamp 则使用服务器当前时间。`NightlyProcessor` 在日间写入结束后读取指定日期的 Layer 7 全量 moments（而非已截断的窗口），分块总结、索引修复与画像更新。详见 `code/nighttime_processor.py` 和 `docs/task2-operations.md`。
 
 ### 6.2 分词策略（09-20 修订：中英混合分词，零 LLM）
 

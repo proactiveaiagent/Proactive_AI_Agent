@@ -58,6 +58,66 @@ td{padding:6px 10px;border-top:1px solid var(--border)}
 .kpi{background:var(--card2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;text-align:center}
 .kpi .num{font-size:20px;font-weight:800;color:var(--brand)}
 .kpi .lbl{font-size:11px;color:var(--muted);margin-top:2px}
+/* 模式切换 */
+.modes{display:flex;gap:8px;margin-top:12px}
+.mode{padding:6px 16px;border-radius:8px;border:1px solid var(--border);background:#fff;cursor:pointer;font-size:13px;font-weight:700;color:#3a4058}
+.mode.on{background:linear-gradient(135deg,#111827,#374151);color:#fff;border-color:transparent}
+/* 交互执行 */
+.btn.primary{background:linear-gradient(135deg,var(--brand),var(--brand2));color:#fff;border-color:transparent;font-size:14px;padding:8px 22px}
+.btn.primary:disabled{opacity:.45;cursor:not-allowed}
+.btn.running{background:rgba(91,108,255,.1);color:var(--brand);border-color:var(--brand)}
+.pbar{height:8px;background:var(--code);border-radius:999px;overflow:hidden;margin:10px 0 4px}
+.pbar>div{height:100%;background:linear-gradient(90deg,var(--brand),var(--brand2));border-radius:999px;transition:width .3s}
+.stepbox{border:1px dashed var(--brand);border-radius:11px;padding:14px 16px;background:rgba(91,108,255,.04);margin-bottom:12px}
+.stepbox .st-title{font-size:15px;font-weight:800;margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.minput{background:#fff;border:1px solid var(--border);border-radius:9px;padding:8px 12px;margin-bottom:8px}
+.minput .mhead{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:4px;align-items:center}
+.minput .mact{font-size:12.5px;color:#3a4058}
+.minput .playbtn{margin-left:auto;flex:none;padding:3px 12px;border-radius:7px;border:1px solid var(--brand);background:rgba(91,108,255,.08);color:var(--brand);cursor:pointer;font-size:12px;font-weight:700}
+.minput .playbtn:hover{background:var(--brand);color:#fff}
+.minput.novid{opacity:.62}
+.videowrap{margin-bottom:12px}
+.videowrap video{width:100%;max-height:440px;border-radius:10px;background:#000;border:1px solid var(--border)}
+.vinfo{font-size:12px;color:var(--muted);margin-top:5px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.kbadge{display:inline-block;padding:2px 10px;border-radius:999px;font-size:11.5px;font-weight:800;color:#fff;background:linear-gradient(135deg,var(--brand),var(--brand2))}
+.kbadge.add,.kbadge.add_batch{background:linear-gradient(135deg,#059669,#10b981)}
+.kbadge.query{background:linear-gradient(135deg,#2563eb,#3b82f6)}
+.kbadge.update{background:linear-gradient(135deg,#d97706,#f59e0b)}
+.kbadge.delete{background:linear-gradient(135deg,#dc2626,#ef4444)}
+.kbadge.highlight{background:linear-gradient(135deg,#9333ea,#a855f7)}
+.lastres{margin-top:10px;padding:9px 12px;border-radius:8px;background:rgba(12,166,120,.09);color:var(--ok);font-size:13px;font-weight:600;display:none}
+/* 完整记忆内容 */.fullmem{display:none;margin-top:8px}.fullmem.open{display:block}
+/* 内嵌视频 */
+.clipvid{width:100%;max-width:320px;aspect-ratio:16/9;border-radius:8px;background:#000;display:block;margin:4px 0}
+.mrec .clipvid{max-width:260px}
+.vmeta{font-size:11.5px;color:var(--muted);margin-bottom:2px}
+/* Qwen 感知产出 vs Golden 对照 */
+.percbox{border:1px solid var(--border);border-radius:10px;padding:12px 14px;background:#fafbff;margin-top:10px}
+.percbox h4{margin:0 0 8px;font-size:13.5px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.srctag{font-size:11px;font-weight:700;padding:2px 9px;border-radius:999px;background:#eef2ff;color:var(--brand)}
+.srctag.live{background:linear-gradient(135deg,#f59e0b,#fbbf24);color:#fff}
+.srctag.cache{background:#e5e7eb;color:#4b5563}
+.srctag.err{background:rgba(229,72,77,.14);color:#e5484d}
+.perc-row{font-size:12.5px;margin-bottom:3px;line-height:1.5}
+.perc-row b{display:inline-block;min-width:70px;color:var(--muted);font-weight:700}
+.cmp{margin-top:9px;border-top:1px dashed var(--border);padding-top:8px}
+.cmp-dim{font-size:12px;margin-bottom:6px;display:flex;align-items:center;gap:5px;flex-wrap:wrap}
+.cmp-dim .dn{font-weight:800;color:#3a4058;min-width:86px}
+.tag.hit{background:rgba(12,166,120,.14);color:var(--ok)}
+.tag.miss{background:rgba(229,72,77,.12);color:#e5484d}
+.tag.extra{background:#f3f4f6;color:#6b7280}
+.prec-sum{font-size:12.5px;color:#3a4058;margin-bottom:8px;font-weight:600}
+.prec-raw{margin-top:8px;font-size:11.5px;color:#4b5563;background:#fff;border:1px solid var(--border);border-radius:8px;padding:8px 10px;white-space:pre-wrap;max-height:180px;overflow:auto}
+.qstat{font-size:12px;color:var(--muted);margin-left:auto}
+.qstat b{color:var(--ok)}
+.fulltoggle{cursor:pointer;user-select:none}.fulltoggle:hover{color:var(--brand)}
+.mrec{background:#fff;border:1px solid var(--border);border-radius:8px;padding:6px 10px;margin-bottom:5px;font-size:12.5px}
+.mrec .mid{font-weight:800;color:var(--brand)}.mrec .mscene{color:#374151}
+.mrec .maction{color:#4b5563}.mrec .mtag{display:inline-block;background:#eef;border-radius:4px;padding:1px 6px;margin:1px 2px;font-size:11px}
+.mrec.hi{border-color:#f59e0b;background:linear-gradient(90deg,#fffbeb,#fff)}.mrec.stale{opacity:.5}
+.mrec .mid{font-weight:800;color:var(--brand)}
+.sublayer{font-size:12px;color:var(--muted);margin:6px 0 4px;font-weight:700}
+.sublayer .scount{color:var(--brand);margin-left:6px}
 </style>
 </head>
 <body>
@@ -66,24 +126,65 @@ td{padding:6px 10px;border-top:1px solid var(--border)}
   <h1>🧠 7 层记忆模型 · 可视化</h1>
   <div class="sub">EgoLife 数据集跑通结果 · 短期记忆场景 / 长期记忆场景</div>
   <div class="tabs" id="tabs"></div>
+  <div class="modes">
+    <div class="mode on" id="modeReplay" onclick="setMode('replay')">📊 结果回放</div>
+    <div class="mode" id="modeInt" onclick="setMode('interactive')">🎮 交互执行（逐步运行）</div>
+  </div>
 </div>
 
 <div class="wrap">
 
-  <div class="card">
-    <h2><span class="dot"></span>时间轴回放</h2>
+  <!-- 播放器置顶常驻：从步骤卡片或记忆条目点「看视频」都能立刻看到画面 -->
+  <div class="card" id="replayCard">
+    <h2><span class="dot"></span><span id="replayTitle">时间轴回放</span></h2>
     <div class="toolbar">
       <button class="btn" id="playBtn">▶ 播放</button>
       <input type="range" id="slider" min="0" max="0" value="0">
       <div class="step-info" id="stepInfo">加载中…</div>
     </div>
     <div id="kpis" class="kpis"></div>
-    <div class="note">拖动滑块或点击播放，观察记忆随时间的演化（各层数量、索引维度、画像字段的变化）。</div>
+    <div class="note" id="replayNote">拖动滑块或点击播放，观察记忆随时间的演化（各层数量、索引维度、画像字段的变化）。</div>
+  </div>
+
+  <div id="interactivePane" style="display:none">
+    <div class="card">
+      <h2><span class="dot"></span>交互执行 · <span id="intName">—</span></h2>
+      <div class="toolbar">
+        <button class="btn" onclick="newSession('short_term')">🔄 新建 · 短期场景</button>
+        <button class="btn" onclick="newSession('long_term')">🔄 新建 · 长期场景</button>
+        <div class="step-info" id="intProgress">未开始</div>
+      </div>
+      <div class="pbar"><div id="intBar" style="width:0%"></div></div>
+      <div class="note" id="intDesc"></div>
+      <div class="toolbar" style="margin-top:10px">
+        <button class="btn" id="prewarmBtn" onclick="prewarm()">🔥 预热 Qwen 缓存</button>
+        <div class="qstat" id="qstat">—</div>
+      </div>
+      <div class="note" id="prewarmNote"></div>
+    </div>
+
+    <div class="card" id="stepCard">
+      <h2><span class="dot"></span>⏭ 当前待执行步骤</h2>
+      <div id="stepDetail"><div class="note">点击上方「新建」按钮开始一个会话。</div></div>
+      <div class="toolbar" style="margin-top:12px">
+        <button class="btn primary" id="runStepBtn" onclick="runStep(false)" disabled>▶ 运行此步</button>
+        <button class="btn" id="liveBtn" onclick="runStep(true)" disabled>⚡ 实时推理此步</button>
+        <button class="btn" id="autoBtn" onclick="toggleAuto()" disabled>⏩ 自动连续运行</button>
+      </div>
+      <div class="lastres" id="lastRes"></div>
+      <div id="percBox"></div>
+    </div>
   </div>
 
   <div class="card">
     <h2><span class="dot"></span>Layer 1~7 各层状态</h2>
     <div class="layers" id="layers"></div>
+  </div>
+
+  <div class="card">
+    <h2><span class="dot"></span>📋 完整记忆内容 <span class="fulltoggle" id="fullToggle" onclick="toggleFull()">[▼ 展开]</span></h2>
+    <div class="note" style="margin-bottom:8px">每步执行后，此处展示各层实际记忆条目（scene / action / location / people 等），不再只是统计数字。</div>
+    <div class="fullmem" id="fullMem"></div>
   </div>
 
   <div class="grid2">
@@ -107,6 +208,7 @@ td{padding:6px 10px;border-top:1px solid var(--border)}
 <script>
 const API = location.origin;
 let scenarios = [], curKey = null, snaps = [], cur = 0, timer = null, memory = null;
+let replayLoaded = false;
 
 const LAYER_META = [
   {k:'layer1', no:'L1', ttl:'当前时刻', desc:'本次交互的原始记录（会话级）'},
@@ -121,9 +223,15 @@ const LAYER_META = [
 async function init(){
   scenarios = await (await fetch(API+'/api/scenarios')).json();
   renderTabs();
-  if(!scenarios.length) return;
+  // 回放数据惰性加载：首次进入页面不拉取大 JSON，切到回放模式/点场景标签时才加载
+  document.getElementById('stepInfo').textContent = '回放数据未加载 · 点击上方场景标签或切换模式加载';
+}
+
+async function ensureReplay(){
+  if(replayLoaded || !scenarios.length) return;
+  replayLoaded = true;
   const ready = scenarios.find(s=>s.available) || scenarios[0];
-  select(ready.key);
+  await select(ready.key);
 }
 
 function renderTabs(){
@@ -151,12 +259,76 @@ async function select(key){
   render();
 }
 
+function fmtMomentMini(x, withVideo){
+  if(!x) return '';
+  const cls = (x.highlight?'hi ':'') + (x.stale?'stale ':'');
+  const parts = [];
+  if(x.scene) parts.push(`<span class="mscene">🎬 ${esc(x.scene)}</span>`);
+  if(x.user_action) parts.push(`<span class="maction">⚡ ${esc(x.user_action)}</span>`);
+  if(x.location) parts.push(`<span class="mtag">📍 ${esc(x.location)}</span>`);
+  if(x.activity) parts.push(`<span class="mtag">🏷 ${esc(x.activity)}</span>`);
+  if(x.people && x.people.length) parts.push(x.people.map(p=>`<span class="mtag">👤 ${esc(p)}</span>`).join(''));
+  if(x.video && x.video.clock) parts.push(`<span class="mtag">🕐 ${esc(x.video.clock)}</span>`);
+  else if(x.timestamp) parts.push(`<span class="mtag" style="color:#9ca3af">🕐 ${esc(x.timestamp.slice(0,19))}</span>`);
+  const vid = (withVideo && x.video) ? videoTag(x.video) : '';
+  return `<div class="mrec ${cls}"><span class="mid">${esc((x.id||'').slice(-14))}</span> ${parts.join(' ')}${vid}</div>`;
+}
+
+function renderProfileFromFull(p){
+  const out = [];
+  for(const [k,v] of Object.entries(p)){
+    if(Array.isArray(v)) out.push(`<div><b>${esc(k)}</b>: ${v.map(x=>`<span class="mtag">${esc(typeof x==='string'?x:(x.value||JSON.stringify(x)))}</span>`).join('')}</div>`);
+    else if(v && typeof v==='object') out.push(`<div><b>${esc(k)}</b>: ${Object.entries(v).map(([kk,vv])=>`<span class="mtag">${esc(kk)}: ${esc(String(vv.value||''))}</span>`).join('')}</div>`);
+    else if(v) out.push(`<div><b>${esc(k)}</b>: ${esc(String(v))}</div>`);
+  }
+  return out.join('') || '<span class="empty">（暂无画像）</span>';
+}
+
+function renderFullMemory(full){
+  if(!full){ document.getElementById('fullMem').innerHTML='<div class="note">暂无完整记忆数据</div>'; return; }
+  let html = '';
+  // Layer 1/2/3
+  for(const [name, label] of [['layer1','L1 当前时刻'],['layer2','L2 同场景历史'],['layer3','L3 当日全部']]){
+    const items = full[name]||[];
+    html += `<div class="sublayer">${label} <span class="scount">${items.length} 条</span></div>`;
+    html += items.map(x=>fmtMomentMini(x,true)).join('') || '<div class="note">（空）</div>';
+  }
+  // Layer 4/5
+  html += `<div class="sublayer">L4 近期摘要</div>`;
+  html += `<div class="mrec">${esc((full.layer4&&full.layer4.summary||'').slice(0,300)||'（暂无）')}</div>`;
+  html += `<div class="sublayer">L5 远期摘要</div>`;
+  html += `<div class="mrec">${esc((full.layer5&&full.layer5.summary||'').slice(0,300)||'（暂无）')}</div>`;
+  // Layer 6
+  html += `<div class="sublayer">L6 用户画像</div>`;
+  html += renderProfileFromFull((full.layer6&&full.layer6.profile)||{});
+  // Layer 7 索引
+  html += `<div class="sublayer">L7 六维索引</div>`;
+  for(const [dim, tags] of Object.entries(full.indices||{})){
+    const tagStr = Object.entries(tags).slice(0,10).map(([t,ids])=>`<span class="mtag">${esc(t)} <b>${Array.isArray(ids)?ids.length:0}</b></span>`).join('');
+    html += `<div style="margin:4px 0"><b>${esc(dim)}</b>: ${tagStr||'<span class="empty">—</span>'}</div>`;
+  }
+  // Layer 7 moments
+  html += `<div class="sublayer">L7 主存储 <span class="scount">共 ${full.layer7_total} 条</span></div>`;
+  html += (full.layer7_moments||[]).map(x=>fmtMomentMini(x,true)).join('');
+  document.getElementById('fullMem').innerHTML = html;
+  bindClips();
+}
+
+function toggleFull(){
+  const el=document.getElementById('fullMem');
+  const tog=document.getElementById('fullToggle');
+  const open = el.classList.toggle('open');
+  tog.textContent = open?'[▲ 收起]':'[▼ 展开]';
+  if(open && snaps[cur] && snaps[cur].full) renderFullMemory(snaps[cur].full);
+}
+
 function renderLog(){
   const el = document.getElementById('log');
+  const msgs = (mode==='interactive' && intState) ? intState.log.map(l=>l.msg) : null;
   el.innerHTML = snaps.map((s,i)=>
     `<div class="row"><span class="idx">${i}</span>`+
     `<span class="act ${s.action||''}">${s.action||'-'}</span>`+
-    `<span>${s.label}</span></div>`
+    `<span>${s.label}${msgs&&msgs[i]?' — '+esc(msgs[i]):''}</span></div>`
   ).join('');
 }
 
@@ -176,20 +348,33 @@ function render(){
   ].map(([l,n])=>`<div class="kpi"><div class="num">${n}</div><div class="lbl">${l}</div></div>`).join('');
 
   // 各层
+  const full = s.full || null;
   document.getElementById('layers').innerHTML = LAYER_META.map(m=>{
     let cnt, body='';
-    if(m.k==='layer1') cnt = s.layers.layer1;
-    else if(m.k==='layer2') cnt = s.layers.layer2;
-    else if(m.k==='layer3') cnt = s.layers.layer3;
-    else if(m.k==='layer4'){ cnt='—'; body = s.layer4_summary || ''; }
-    else if(m.k==='layer5'){ cnt='—'; body = s.layer5_summary || ''; }
+    if(m.k==='layer1'){ cnt = s.layers.layer1;
+      if(full) body = full.layer1.map(x=>fmtMomentMini(x)).join('') || '<span class="empty">（空）</span>'; }
+    else if(m.k==='layer2'){ cnt = s.layers.layer2;
+      if(full) body = full.layer2.map(x=>fmtMomentMini(x)).join('') || '<span class="empty">（空）</span>'; }
+    else if(m.k==='layer3'){ cnt = s.layers.layer3;
+      if(full) body = full.layer3.map(x=>fmtMomentMini(x)).join('') || '<span class="empty">（空）</span>'; }
+    else if(m.k==='layer4'){ cnt='—';
+      body = full ? esc((full.layer4.summary||'').slice(0,200)) : (s.layer4_summary||'');
+      if(!body) body = '<span class="empty">（暂无）</span>'; }
+    else if(m.k==='layer5'){ cnt='—';
+      body = full ? esc((full.layer5.summary||'').slice(0,200)) : (s.layer5_summary||'');
+      if(!body) body = '<span class="empty">（暂无）</span>'; }
     else if(m.k==='layer6'){ cnt = Object.keys(s.profile_fields||{}).length;
-      body = Object.entries(s.profile_fields||{}).map(([k,v])=>`${k}: ${v}`).join('，'); }
-    else { cnt = s.layer7_moments; body = Object.entries(s.indices||{}).map(([k,v])=>`${k}: ${v}`).join('，'); }
+      if(full && full.layer6.profile) body = renderProfileFromFull(full.layer6.profile);
+      else body = Object.entries(s.profile_fields||{}).map(([k,v])=>`${k}: ${v}`).join('，'); }
+    else { cnt = s.layer7_moments;
+      if(full && full.layer7_moments){
+        body = `<div class="sublayer">主存储（${full.layer7_total} 条，展示前 ${full.layer7_moments.length} 条）</div>`
+          + full.layer7_moments.map(x=>fmtMomentMini(x)).join('');
+      } else { body = Object.entries(s.indices||{}).map(([k,v])=>`${k}: ${v}`).join('，'); } }
     return `<div class="layer ${m.hot?'hot':''}">
       <div class="hd"><span class="no">${m.no}</span><span class="ttl">${m.ttl}</span><span class="cnt">${cnt}</span></div>
       <div class="desc">${m.desc}</div>
-      <div class="body">${body?esc(body):'<span class="empty">（暂无内容）</span>'}</div>
+      <div class="body">${body||'<span class="empty">（暂无内容）</span>'}</div>
     </div>`;
   }).join('');
 
@@ -204,6 +389,11 @@ function render(){
   // 画像
   document.getElementById('profile').innerHTML = memory ? renderProfile() :
     Object.entries(s.profile_fields||{}).map(([k,v])=>`<span class="tag">${k} <b>${v}</b></span>`).join('') || '<span class="empty">暂无画像</span>';
+
+  // 完整记忆面板（已展开则同步更新）
+  if(document.getElementById('fullMem').classList.contains('open') && s.full){
+    renderFullMemory(s.full);
+  }
 }
 
 function renderProfile(){
@@ -224,6 +414,306 @@ function renderProfile(){
 }
 
 function esc(s){ return String(s==null?'':s).replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c])); }
+
+// ===== 交互执行模式：人看视频/时间点 → 手工点击运行 → 走下一步 =====
+let mode='replay', intState=null, autoTimer=null, autoBusy=false;
+let curStep=null, inputsExpanded=false, curInputs=null;
+
+const KIND_CN={add:'写入片段',add_batch:'批量写入',query:'检索',update:'更新字段',
+  highlight:'标记重点',delete:'删除',sort:'归类',combine:'合并',compress:'压缩',
+  update_profile:'画像更新',init:'初始'};
+
+function setMode(m){
+  mode=m;
+  document.getElementById('modeReplay').classList.toggle('on',m==='replay');
+  document.getElementById('modeInt').classList.toggle('on',m==='interactive');
+  document.getElementById('interactivePane').style.display = m==='interactive'?'':'none';
+  document.getElementById('tabs').style.display = m==='interactive'?'none':'';
+  document.getElementById('replayTitle').textContent = m==='interactive'?'步骤时间轴（已执行步骤）':'时间轴回放';
+  document.getElementById('replayNote').textContent = m==='interactive'
+    ? '每执行一步自动更新到最新快照；拖动滑块可回看之前每一步的记忆状态。'
+    : '拖动滑块或点击播放，观察记忆随时间的演化（各层数量、索引维度、画像字段的变化）。';
+  if(m==='interactive' && !intState){
+    const s = scenarios.find(x=>x.available) || scenarios[0];
+    newSession(s ? s.key : 'short_term');
+  }
+  if(m==='interactive'){
+    // 交互模式默认展开完整记忆：批量写入的多段视频可直接在记忆条目上播放
+    const fm=document.getElementById('fullMem'), tg=document.getElementById('fullToggle');
+    if(!fm.classList.contains('open')){ fm.classList.add('open'); if(tg) tg.textContent='[▲ 收起]'; }
+  }
+  if(m==='replay') ensureReplay();
+}
+
+async function newSession(key){
+  stopAuto();
+  const btn=document.getElementById('runStepBtn');
+  btn.disabled=true; btn.textContent='⏳ 创建会话中…';
+  const r=await fetch(API+'/api/interactive/new?scenario='+key);
+  intState=await r.json();
+  if(intState.error){
+    document.getElementById('stepDetail').innerHTML='<div class="note" style="color:#e5484d">'+esc(intState.error)+'</div>';
+    btn.textContent='▶ 运行此步'; return;
+  }
+  memory=null;
+  renderInt();
+}
+
+async function runStep(force){
+  if(!intState||intState.finished) return;
+  const btn=document.getElementById('runStepBtn');
+  const live=document.getElementById('liveBtn');
+  btn.disabled=true; if(live) live.disabled=true;
+  btn.textContent = force?'⏳ Qwen 推理中…（约 5-8 秒）':'⏳ 执行中…';
+  autoBusy=true;
+  try{
+    const r=await fetch(API+'/api/interactive/step'+(force?'?force=1':''));
+    const st=await r.json();
+    if(st.error){ alert(st.error); return; }
+    intState=st;
+    renderInt();
+  }finally{
+    autoBusy=false;
+    updateRunBtn();
+  }
+}
+
+async function prewarm(){
+  const sc = intState ? intState.scenario : 'short_term';
+  const b=document.getElementById('prewarmBtn');
+  b.disabled=true; b.textContent='🔥 预热中…';
+  await fetch(API+'/api/interactive/prewarm?scenario='+sc);
+  pollPrewarm();
+}
+
+function pollPrewarm(){
+  const t=setInterval(async ()=>{
+    const r=await fetch(API+'/api/interactive/prewarm_status');
+    const p=await r.json();
+    const note=document.getElementById('prewarmNote');
+    const b=document.getElementById('prewarmBtn');
+    if(p.running){
+      note.textContent=`预热中 ${p.done}/${p.total} 条（每条约 5 秒），完成后执行步骤即可秒开`;
+    }else{
+      clearInterval(t);
+      b.disabled=false; b.textContent='🔥 预热 Qwen 缓存';
+      note.textContent = p.error ? ('预热出错：'+p.error)
+        : `预热完成：${p.done}/${p.total} 条已缓存`;
+      updateQstat();
+    }
+  },1000);
+}
+
+function updateQstat(){
+  const el=document.getElementById('qstat');
+  if(!el||!intState||!intState.qwen) return;
+  const q=intState.qwen;
+  el.innerHTML = q.ok
+    ? `Qwen3-VL <b>在线</b> · ${q.gpu||''} · 已缓存 <b>${q.cached}</b> 条`
+    : '<span style="color:#e5484d">Qwen 服务未就绪</span>';
+}
+
+// ===== Qwen 感知产出 vs Golden 对照 =====
+function renderPerception(p){
+  const box=document.getElementById('percBox');
+  if(!p){ box.innerHTML=''; return; }
+
+  if(p.kind==='batch'){
+    const items=(p.items||[]).filter(i=>i&&i.qwen);
+    const agg={};
+    for(const it of items){
+      for(const [dim,e] of Object.entries(it.eval||{})){
+        if(!e.golden||!e.golden.length) continue;
+        agg[dim]=agg[dim]||{hit:0,tot:0};
+        agg[dim].hit+=e.hit.length; agg[dim].tot+=e.golden.length;
+      }
+    }
+    let html=`<div class="percbox"><h4>🤖 Qwen3-VL 批量感知
+      <span class="srctag cache">${p.ok}/${p.n} 条成功</span></h4>`;
+    const parts=Object.entries(agg).map(([d,a])=>
+      `${d} ${a.hit}/${a.tot}${a.tot?` (${Math.round(100*a.hit/a.tot)}%)`:''}`);
+    html+=`<div class="prec-sum">Golden 对照（合计命中）：${parts.join(' · ')||'该批次 golden 标注为空'}</div>`;
+    const live=items.filter(i=>i.source==='qwen').length;
+    if(live) html+=`<div class="prec-sum" style="color:#f59e0b">其中 ${live} 条为本次实时推理，其余来自缓存</div>`;
+    for(const it of items.slice(0,3)) html+=percRow(it);
+    if(items.length>3) html+=`<div class="note">… 其余 ${items.length-3} 条已写入记忆</div>`;
+    html+='</div>';
+    box.innerHTML=html;
+    return;
+  }
+
+  // single
+  let html='<div class="percbox">';
+  if(p.error){
+    html+=`<h4>🤖 Qwen3-VL 感知 <span class="srctag err">失败</span></h4>
+      <div class="prec-sum" style="color:#e5484d">${esc(p.error)}</div></div>`;
+    box.innerHTML=html; return;
+  }
+  html+=percRow(p)+'</div>';
+  box.innerHTML=html;
+}
+
+function percRow(p){
+  const q=p.qwen||{};
+  const live = p.source==='qwen';
+  let h=`<h4>🤖 Qwen3-VL 感知产出
+    <span class="srctag ${live?'live':'cache'}">${live?'实时推理':'缓存'} · ${p.elapsed_ms!=null?p.elapsed_ms+'ms':'—'}</span>
+    <span class="srctag cache">${p.num_frames||0} 帧</span></h4>`;
+  h+=`<div class="perc-row"><b>Scene</b>${esc(q.scene||'—')}</div>`;
+  h+=`<div class="perc-row"><b>Action</b>${esc(q.user_action||'—')}</div>`;
+  h+=`<div class="perc-row"><b>People</b>${esc((q.people||[]).join('、')||'—')}</div>`;
+  h+=`<div class="perc-row"><b>Activity</b>${esc(q.activity||'—')}</div>`;
+  h+=`<div class="perc-row"><b>Objects</b>${esc((q.objects||[]).join('、')||'—')}</div>`;
+
+  // Golden 对照
+  const ev=p.eval||{};
+  let any=false;
+  let c='<div class="cmp">';
+  for(const [dim,e] of Object.entries(ev)){
+    if(!e.golden||!e.golden.length) continue;
+    any=true;
+    const pct = e.golden.length?Math.round(100*e.hit.length/e.golden.length):0;
+    c+=`<div class="cmp-dim"><span class="dn">${dim} ${pct}%</span>`;
+    for(const g of e.golden) c+=`<span class="tag ${e.hit.includes(g)?'hit':'miss'}">${esc(g)}${e.hit.includes(g)?' ✓':' ✗'}</span>`;
+    for(const x of (e.extra||[]).slice(0,4)) c+=`<span class="tag extra">${esc(x)}（多）</span>`;
+    c+='</div>';
+  }
+  c+='</div>';
+  if(any) h+=c;
+  else h+='<div class="cmp"><div class="cmp-dim">该条 golden 标注为空，无法对照</div></div>';
+  h+=`<details style="margin-top:8px"><summary style="cursor:pointer;font-size:12px;color:var(--muted)">查看 Qwen 原始输出</summary>
+    <div class="prec-raw">${esc(p.raw||'')}</div></details>`;
+  return h;
+}
+
+function toggleAuto(){
+  if(autoTimer){ stopAuto(); updateRunBtn(); return; }
+  if(!intState||intState.finished) return;
+  document.getElementById('autoBtn').textContent='⏹ 停止自动';
+  autoTimer=setInterval(async ()=>{
+    if(autoBusy) return;
+    if(!intState||intState.finished){ stopAuto(); updateRunBtn(); return; }
+    await runStep();
+  },350);
+}
+function stopAuto(){
+  if(autoTimer){ clearInterval(autoTimer); autoTimer=null; }
+  const b=document.getElementById('autoBtn');
+  if(b) b.textContent='⏩ 自动连续运行';
+}
+
+function updateRunBtn(){
+  const btn=document.getElementById('runStepBtn');
+  const live=document.getElementById('liveBtn');
+  const ok = intState && !intState.finished;
+  btn.disabled=!ok;
+  btn.textContent = ok?'▶ 运行此步':'✅ 全部完成';
+  if(live) live.disabled=!ok;
+  const ab=document.getElementById('autoBtn');
+  if(ab) ab.disabled=!ok;
+}
+
+function renderInt(){
+  const st=intState;
+  document.getElementById('intName').textContent=st.name;
+  document.getElementById('intDesc').textContent=st.desc+(st.participant?(' · 参与者 '+st.participant):'');
+  document.getElementById('intProgress').innerHTML = st.finished
+    ? '✅ 已执行 <b>'+st.total+'</b> / '+st.total+' 步'
+    : '已执行 <b>'+st.pos+'</b> / '+st.total+' 步';
+  document.getElementById('intBar').style.width=(st.total?100*st.pos/st.total:0)+'%';
+
+  curStep = st.finished ? null : st.current;
+  inputsExpanded = false;
+  renderStepCard();
+
+  const lr=document.getElementById('lastRes');
+  if(st.last_result){ lr.style.display='block'; lr.textContent='✅ '+st.last_result; }
+  else lr.style.display='none';
+
+  // 展示本步 Qwen 的感知产出与 golden 对照
+  const lastLog = (st.log && st.log.length) ? st.log[st.log.length-1] : null;
+  renderPerception(lastLog ? lastLog.perception : null);
+  updateQstat();
+
+  // 接入通用渲染：snaps = 已执行步骤的快照序列
+  snaps = st.log.map(l=>l.snapshot);
+  cur = snaps.length-1;
+  document.getElementById('slider').max=Math.max(0,snaps.length-1);
+  document.getElementById('slider').value=cur;
+  renderLog();
+  render();
+  updateRunBtn();
+}
+
+function renderInputs(inputs, expand){
+  if(!inputs||!inputs.length) return '';
+  curInputs=inputs;
+  const shown = expand ? inputs : inputs.slice(0,6);
+  let html=shown.map(m=>'<div class="minput '+(m.video_url?'':'novid')+'"><div class="mhead">'
+    +'<span class="tag">📹 '+esc(m.video||m.id)+'</span>'
+    +'<span class="tag">🕐 '+(m.clock||(m.hour?m.hour+':00':''))
+      +(m.start_time!=null?(' · 片内 '+m.start_time+'s ~ '+m.end_time+'s'):'')+'</span>'
+    +(m.people&&m.people.length?'<span class="tag">👥 '+esc(m.people.join('、'))+'</span>':'')
+    +(m.location?'<span class="tag">📍 '+esc(m.location)+'</span>':'')
+    +(m.video_url?'':'<span class="tag" style="color:#e8930c">视频未下载</span>')
+    +'</div><div class="mact">'+esc(m.action)+'</div>'
+    +videoTag(m)+'</div>').join('');
+  if(!expand && inputs.length>6) html+='<div class="note">… 以及其余 '+(inputs.length-6)+' 条（共 '+inputs.length+' 条），点击「运行此步」全部写入。</div>';
+  return html;
+}
+
+function renderStepCard(){
+  const sd=document.getElementById('stepDetail');
+  if(!curStep){
+    sd.innerHTML='<div class="note">🎉 所有步骤执行完毕。点击「新建」重新开始，或拖动下方时间轴回看每一步。</div>';
+    return;
+  }
+  const c=curStep;
+  let html='<div class="stepbox"><div class="st-title">'
+    +'<span class="kbadge '+c.kind+'">'+(KIND_CN[c.kind]||c.kind)+'</span>'
+    +esc(c.title)+'</div>';
+  const d=c.detail||{};
+  if(d.query) html+='<div class="note" style="margin-bottom:6px">检索词：<b>'+esc(d.query)+'</b>（top '+d.top_k+'）</div>';
+  if(d.field) html+='<div class="note" style="margin-bottom:6px">更新 <b>'+esc(d.id)+'</b> 的 <b>'+esc(d.field)+'</b> → <b>'+esc(String(d.new_value))+'</b></div>';
+  if(d.note) html+='<div class="note" style="margin-bottom:6px">'+esc(d.note)+'</div>';
+  html+=renderInputs(c.inputs, inputsExpanded);
+  if(c.inputs&&c.inputs.length>6){
+    html+='<div style="text-align:center;margin-top:4px"><button class="btn" onclick="toggleInputs()">'
+      +(inputsExpanded?'▲ 收起':'▼ 展开全部 '+c.inputs.length+' 条（可逐条看视频）')+'</button></div>';
+  }
+  html+='</div>';
+  sd.innerHTML=html;
+  bindClips();
+}
+
+function toggleInputs(){
+  inputsExpanded=!inputsExpanded;
+  renderStepCard();
+}
+
+// ===== 视频内嵌播放：每个条目直接带 <video>，片段区间自动循环 =====
+function videoTag(m){
+  if(!m||!m.video_url) return '';
+  return '<video class="clipvid" controls preload="none" playsinline'
+    + ' src="'+esc(m.video_url)+'"'
+    + ' data-cs="'+(m.clip_start||0)+'"'
+    + ' data-ce="'+(m.clip_end!=null?m.clip_end:'')+'"></video>';
+}
+
+// 渲染后统一绑定片段循环逻辑（preload=none，点播放才加载，不拖慢页面）
+function bindClips(){
+  document.querySelectorAll('video.clipvid').forEach(v=>{
+    if(v._bound) return;
+    v._bound=true;
+    v._cs=parseFloat(v.dataset.cs)||0;
+    v._ce=v.dataset.ce!==''&&v.dataset.ce!=null?parseFloat(v.dataset.ce):null;
+    v.onloadedmetadata=()=>{
+      if(v._ce!=null && v.duration && v._ce>v.duration) v._ce=v.duration-0.05;
+      v.currentTime=v._cs;
+    };
+    v.ontimeupdate=()=>{ if(v._ce!=null && v.currentTime>=v._ce) v.currentTime=v._cs; };
+  });
+}
 
 document.getElementById('slider').addEventListener('input', e=>{
   cur = +e.target.value; render();

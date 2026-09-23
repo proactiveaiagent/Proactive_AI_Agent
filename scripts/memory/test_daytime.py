@@ -14,6 +14,7 @@ test_daytime.py — 白天实时处理模块测试（09-24 阶段 D）
 import shutil
 import sys
 import tempfile
+from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -60,14 +61,20 @@ def main():
         sid = day.start_scene("morning_kitchen")
         check(bool(sid), "start_scene 返回场景 id", f"sid={sid}")
 
+        event_time = datetime.now().replace(hour=11, minute=9, second=30, microsecond=0)
         mid1 = day.ingest(scene="我在厨房切菜", user_action="切菜",
-                          location="厨房", activity="做饭")
+                          location="厨房", activity="做饭",
+                          timestamp=event_time.isoformat())
         check(bool(mid1), "ingest 返回 moment_id", f"mid={mid1}")
         check(len(mem.memory["layer1"]) >= 1, "写入后 Layer1 有内容",
               f"layer1={len(mem.memory['layer1'])}")
         check(len(mem.memory["layer3"]) >= 1, "写入后 Layer3（当日）有内容",
               f"layer3={len(mem.memory['layer3'])}")
         check(mid1 in mem.memory["layer7"]["moments"], "Layer7 主存储保存了完整内容")
+        stored = mem.memory["layer7"]["moments"][mid1]
+        check(stored.get("timestamp") == event_time.isoformat(), "事件时间保存在归档记忆")
+        check(mid1 in mem.memory["layer7"]["time_nodes"].get(event_time.date().isoformat(), []),
+              "时间索引按事件日期建立")
 
         # 再写两条，累积当日记忆
         for i in range(2):

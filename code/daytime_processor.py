@@ -112,7 +112,8 @@ class DaytimeProcessor:
                activity: str = None,
                environments: List[str] = None,
                objects: List[str] = None,
-               extra_notes: str = "") -> str:
+               extra_notes: str = "",
+               timestamp: str = None) -> str:
         """
         实时写入一条记忆。
 
@@ -132,6 +133,7 @@ class DaytimeProcessor:
                 environments=environments,
                 objects=objects,
                 extra_notes=extra_notes,
+                timestamp=timestamp,
             )
         self.stats["ingested"] += 1
 
@@ -154,20 +156,42 @@ class DaytimeProcessor:
     # ------------------------------------------------------------------
 
     def query(self, text: str, top_k: int = 5) -> List[Dict]:
-        """
-        实时检索。走 memory.query()，链路不调用 LLM（09-20 中英混合分词），
-        保证白天实时场景下的响应速度。
-        """
+        """按 Layer1→5 逐层检索；同步链路不调用 LLM。"""
         self.stats["queries"] += 1
-        return self.mem.query(text, top_k=top_k)
+        hits = self.mem.query_hierarchical(text, top_k=top_k)
+        return [item["moment"] for item in hits]
 
-    def context(self, top_k: int = 5) -> List[Dict]:
-        """取当前场景上下文：Layer1（当前）→ Layer2（同场景）→ Layer3（当日）优先。"""
-        l1 = list(self.mem.memory.get("layer1", []))
-        l2 = list(self.mem.memory.get("layer2", []))
-        l3 = list(self.mem.memory.get("layer3", []))
-        return (l1 + l2 + l3)[:top_k]
+    def context(self, top_k: int = 5, query_text: str = None) -> List[Dict]:
+        """按 Layer1→5 优先级提供上下文；支持查询词相关性检索。"""
+        if top_k <= 0:
+            return []
+        if query_text:
+            hits = self.mem.query_hierarchical(query_text, top_k=top_k)
+            return [item["moment"] for item in hits]
 
+        results, seen = [], set()
+        for layer_no in (1, 2, 3):
+            layer_key = f"layer{layer_no}"
+            for moment in self.mem._sorted_layer_moments(layer_key):
+                moment_id = moment.get("id")
+                if moment_id and moment_id in seen:
+                    continue
+                if moment_id:
+                    seen.add(moment_id)
+                results.append(moment)
+                if len(results) >= top_k:
+                    return results
+        for layer_no in (4, 5):
+            layer = self.mem.memory.get(f"layer{layer_no}", {})
+            if layer.get("summary"):
+                results.append({
+                    "id": f"layer{layer_no}_summary",
+                    "layer": layer_no,
+                    **layer,
+                })
+                if len(results) >= top_k:
+                    return results
+        return results
     # ------------------------------------------------------------------
     # 后台离线翻译
     # ------------------------------------------------------------------

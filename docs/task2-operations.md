@@ -1,0 +1,142 @@
+# Task 2 服务器操作手册
+
+适用仓库：`/data/cxr25/zhx/Proactive_AI_Agent`（`zhx_dev`）
+Python：`/data/cxr25/zhx/Proactive_AI_Agent/zhx/miniforge3/envs/agent/bin/python`
+推理 API：`http://127.0.0.1:8000`（Qwen3-VL + Whisper；模型默认读取 `/data/cxr25/zhx/HF_HOME/qwen/Qwen3-VL-8B-Instruct`）
+
+以下命令在 `cxr25` 上执行。先连接并进入仓库：
+
+```bash
+ssh cxr25
+cd /data/cxr25/zhx/Proactive_AI_Agent
+PY=/data/cxr25/zhx/Proactive_AI_Agent/zhx/miniforge3/envs/agent/bin/python
+```
+
+## 1. 启动和检查推理服务
+
+如果 `/health` 已返回 `model_loaded: true`，复用现有服务。否则启动：
+
+```bash
+nohup env PORT=8000 "$PY" code/api_server.py > /tmp/cxr25-qwen-api.log 2>&1 &
+curl --retry 30 --retry-delay 2 --retry-connrefused -s http://127.0.0.1:8000/health
+```
+
+日志：`tail -f /tmp/cxr25-qwen-api.log`。`PORT` 可换成空闲端口；评测器和夜间整理器需同步传入 `--api-url`。
+
+## 2. 创建记忆和 CRUD 操作
+
+`PersonMemory` 将记忆写入 `memory_dir/memory.json`。生产用户数据请给每位用户指定独立、持久的目录；测试代码使用临时目录或 `data/egolife/runs/`，不要改写测试集或仓库内的 `code/memory/memory.json`。
+
+```python
+import sys
+sys.path.insert(0, "code")
+from memory import PersonMemory
+
+mem = PersonMemory(memory_dir="/data/cxr25/zhx/Proactive_AI_Agent/data/egolife/runs/manual_memory")
+mid = mem.add(
+    scene="Preparing lunch in the kitchen",
+    user_action="Chopping vegetables",
+    needs=[], solutions=[],
+    people=["Alex"], location="kitchen", activity="cooking",
+    environments=["home kitchen"], objects=["knife", "vegetables"],
+)
+
+# 查找：Layer 1 → 2 → 3 → 4 → 5，优先新近层；同步查询不调用模型。
+hits = mem.query_hierarchical("cooking kitchen", top_k=5)
+
+# 改正事实；支持 people/location/activity/environments/objects 等白名单字段。
+mem.update(mid, {"location": "home kitchen"})
+
+# 用户确认正确；highlight 条目受到普通 delete 保护。
+mem.highlight(mid)
+mem.delete(mid, reason="user correction")  # highlighted 时返回 False
+# 只有明确需要强删时才传 force=True。
+# mem.delete(mid, reason="user requested removal", force=True)
+```
+
+完整方法和参数以 `code/memory.py` 的 `PersonMemory` 为准。反馈确认可调用 `update_feedback(mid, confirmed=True, corrections={...})`；画像只通过 `update_profile()` 写入，不要直接编辑 `layer6.profile`。
+
+## 3. 分层查看与备份
+
+记忆文件是 JSON。可用下列脚本查看每层数量、索引和画像，不打印完整个人内容：
+
+```bash
+"$PY" - <<'PY'
+import json
+p = "data/egolife/runs/manual_memory/memory.json"
+d = json.load(open(p, encoding="utf-8"))
+for layer in range(1, 6):
+    value = d[f"layer{layer}"]
+    count = len(value) if isinstance(value, list) else bool(value.get("summary"))
+    print(f"layer{layer}: {count}")
+print("layer6 profile fields:", list(d["layer6"].get("profile", {})))
+print("layer7 moments:", len(d["layer7"].get("moments", {})))
+for key in ("people", "locations", "time_nodes", "activity_events", "environments", "objects"):
+    print(f"layer7.{key}: {len(d['layer7'].get(key, {}))} index keys")
+PY
+```
+
+变更或升级前备份：
+
+```bash
+cp -a data/egolife/runs/manual_memory/memory.json \
+  "data/egolife/runs/manual_memory/memory.$(date +%Y%m%d_%H%M%S).json.bak"
+```
+
+## 4. 白天写入与夜间整理
+
+实时流程由 `code/daytime_processor.py` 的 `DaytimeProcessor` 管理场景；`ingest()` 写入 Layer 1/3/7 和索引，`query()` 走 Layer 1→5。传入可解析的 ISO `timestamp` 时，事件时间保存在 moment，日期索引使用事件日期；省略时取服务器当前时间。场景结束调用 `end_scene()` 清空 Layer 1/2 窗口，Layer 3/7 档案保留。
+
+完成当日写入后运行夜间整理：
+
+```bash
+"$PY" scripts/memory/run_nightly.py \
+  --memory-dir data/egolife/runs/manual_memory \
+  --api-url http://127.0.0.1:8000
+```
+
+处理指定日期：追加 `--day YYYY-MM-DD`。对相同源数据重复运行会按 digest 跳过；确需重跑时追加 `--force`。整理会生成 Layer 4/5 摘要、验证画像候选并通过 `update_profile()` 写入 Layer 6，修复 Layer 7 六维索引。原始 Layer 7 moments 保留供溯源。
+
+## 5. 测试集评测
+
+```bash
+# 两套数据；默认复用 Qwen 结果缓存，未缓存的片段调用本机服务
+"$PY" scripts/memory/evaluate_qwen.py --scenario both
+
+# 只评估短期集，或限制每个场景的样本数
+"$PY" scripts/memory/evaluate_qwen.py --scenario short_term
+"$PY" scripts/memory/evaluate_qwen.py --scenario both --limit 20
+
+# 忽略缓存、重新调用模型
+"$PY" scripts/memory/evaluate_qwen.py --scenario short_term --force
+```
+
+JSON 报告默认写入 `data/egolife/runs/qwen_eval_*.json`，包括按维度汇总的 precision / recall / F1、失败样本和延迟。`time_index_check` 是输入文件时间标签与 moment ID 的一致性检查，不是视觉模型准确率。
+
+定向测试入口：`scripts/memory/test_daytime.py`、`test_hierarchical_retrieval.py`、`test_nighttime.py`、`test_day_night_integration.py`。测试只操作临时目录。
+
+## 6. 查看可视化与逐步执行
+
+服务器终端启动：
+
+```bash
+"$PY" scripts/memory/viz_server.py 8765
+```
+
+从开发机建立 SSH 隧道：
+
+```bash
+ssh -N -L 8765:127.0.0.1:8765 cxr25
+```
+
+然后打开 `http://127.0.0.1:8765`。页面可查看已保存快照，也可新建短期或长期交互会话，逐步让 Qwen 感知视频、执行记忆读写并查看快照。`/api/interactive/prewarm?scenario=short_term|long_term` 可预热视频感知缓存，进度见 `/api/interactive/prewarm_status`。
+
+可视化服务目前是无认证的内部开发工具，应通过 SSH 隧道或可信网络访问。
+
+## 7. 检索接口的用途
+
+- `query_hierarchical()` / `DaytimeProcessor.query()`：面向当前交互，按 Layer 1→5 顺序检索，较近层优先。
+- `get_context_for_analysis()`：面向 `VRAssistant` 场景分析，按规格书组装稳定画像（Layer 6）→ 长期摘要（Layer 5）→ 近期摘要（Layer 4）→ 相关 Layer 7 事实。
+- `query()` / `retrieve()`：Layer 7 归档的全文关键词或人物/地点/活动查找。
+
+这些入口承载不同上下文任务。增加新调用方时，应按调用目的选接口，不要把 Layer 7 全库 dump 到实时 prompt。

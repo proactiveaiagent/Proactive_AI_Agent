@@ -704,7 +704,8 @@ class PersonMemory:
             activity: str = None,
             environments: List[str] = None,
             objects: List[str] = None,
-            extra_notes: str = "") -> str:
+            extra_notes: str = "",
+            timestamp: str = None) -> str:
         """
         Store a complete Part1+2+3 result.
         Returns the moment_id so Part4 can reference it later.
@@ -713,6 +714,8 @@ class PersonMemory:
         Layers 4-6 are updated only during consolidation (not here).
         """
         moment = _empty_moment()
+        event_time = datetime.fromisoformat(timestamp) if timestamp else datetime.now()
+        moment["timestamp"] = event_time.isoformat()
         moment["scene"] = scene
         moment["user_action"] = user_action
         moment["needs"] = needs
@@ -773,8 +776,8 @@ class PersonMemory:
         self.memory["layer7"]["moments"][moment_id] = moment
 
         # ---- Layer 7 indices ----
-        today = _today_str()
-        self.memory["layer7"]["time_nodes"].setdefault(today, []).append(moment_id)
+        event_day = event_time.date().isoformat()
+        self.memory["layer7"]["time_nodes"].setdefault(event_day, []).append(moment_id)
 
         if people:
             for p in people:
@@ -981,6 +984,54 @@ class PersonMemory:
         scored.sort(key=lambda x: x[0], reverse=True)
         return [m for _, m in scored[:top_k]]
 
+    def query_hierarchical(self, query_text: str, top_k: int = 5) -> List[Dict]:
+        """按 Layer 1→5 顺序检索，某层取够 top_k 后提前停止。
+
+        Layer1~3 返回命中的 moment；Layer4~5 将摘要视作一条结果。
+        返回项包含 layer / score / moment。该接口只读内存，不调用 LLM，
+        Layer7 主存储仍由 query() / retrieve() 提供检索入口。
+        """
+        if top_k <= 0:
+            return []
+        tokens = set(self._query_tokens(query_text))
+        if not tokens:
+            return []
+
+        results = []
+        seen_ids = set()
+        for layer_no in range(1, 6):
+            if layer_no <= 3:
+                layer_key = f"layer{layer_no}"
+                scored = []
+                for moment in self._sorted_layer_moments(layer_key):
+                    if moment.get("stale"):
+                        continue
+                    moment_id = moment.get("id")
+                    text = json.dumps(moment, ensure_ascii=False).lower()
+                    score = sum(1 for token in tokens if token in text)
+                    if score:
+                        scored.append((score, moment))
+                # Preserve the layer's newest-first ordering for equal scores.
+                scored.sort(key=lambda pair: pair[0], reverse=True)
+                for score, moment in scored:
+                    moment_id = moment.get("id")
+                    if moment_id and moment_id in seen_ids:
+                        continue
+                    if moment_id:
+                        seen_ids.add(moment_id)
+                    results.append({"layer": layer_no, "score": score, "moment": moment})
+                    if len(results) >= top_k:
+                        break
+            else:
+                layer = self.memory.get(f"layer{layer_no}", {})
+                searchable = json.dumps(layer, ensure_ascii=False).lower()
+                score = sum(1 for token in tokens if token in searchable)
+                if score:
+                    moment = {"id": f"layer{layer_no}_summary", "layer": layer_no, **layer}
+                    results.append({"layer": layer_no, "score": score, "moment": moment})
+            if len(results) >= top_k:
+                return results[:top_k]
+        return results[:top_k]
     def _sorted_layer_moments(self, layer_key: str) -> list:
         """规范（09-22 层级）：层内记忆按时间远近顺序排列，返回最近优先（时间倒序）的列表。"""
         items = self.memory.get(layer_key, [])
