@@ -8,10 +8,27 @@
 
 ## 标注流程
 
-1. 至少两位标注者分别复制空白模板，独立查看视频片段，并可参考对应语音转写。不要查看 Qwen 输出、旧 ground_truth、自动生成的 scene 或 dense caption。
+1. 任务负责人先运行 python3 scripts/memory/prepare_category_reviewers.py，生成 data/egolife/testset/long_term/review_packets/reviewer_1.csv 和 reviewer_2.csv。两个包覆盖相同的 725 个片段，但行序各自随机；均不含旧自动标签或 Qwen 预测。分别发给两位标注者，双方完成前不要互看结果。
 2. 每个字段填 JSON 数组。字段空白表示尚未标注；复核完成且确实没有可信标签时填 []。填写 annotation_status=reviewed、reviewer_id 与 confidence（high / medium / low）。
 3. 对类别字段和实体存在分歧的样本，由第三位标注者或任务负责人查看原片并写入 adjudicated 版本。保留两份原始标注和裁决记录，不覆盖原始文件。
-4. 视频打不开、片段缺失、内容不足以判断时，在 reviewer_notes 说明原因；不要把不可判定强行记成负例。最终评测报告单独披露排除样本和原因。
+4. 视频打不开、片段缺失、内容不足以判断时，在 reviewer_notes 说明原因，并使用工作台“标记不可判定”将 annotation_status 设为 excluded；不要把不可判定强行记成负例。最终评测报告单独披露排除样本和原因。
+
+## 在线评审工作台
+
+视频总量约 11.1 GiB，因此评审者无需下载整包。工作台只绑定服务器回环地址，通过 SSH 隧道在线播放；每次保存都会原子写回对应评审 CSV。
+
+在 cxr25 上分别启动两个评审服务（各用一个终端）：
+
+    cd /data/cxr25/zhx/Proactive_AI_Agent
+    python3 scripts/memory/category_review_server.py --packet data/egolife/testset/long_term/review_packets/reviewer_1.csv --reviewer-id reviewer_1 --port 8765
+
+第二位标注者使用 reviewer_2.csv、reviewer_id reviewer_2 和端口 8766。服务仅监听 127.0.0.1。
+
+每位标注者在自己的电脑上建立 SSH 隧道并打开浏览器：
+
+    ssh -N -L 8765:127.0.0.1:8765 cxr25
+
+随后访问 http://127.0.0.1:8765；第二位对应使用 8766。工作台支持逐片段播放、转写查看、草稿保存、跳转待标样本和完成状态统计。完成标注需填写恰好一个主活动标签，完成后点击“保存并标为 reviewed”。两名标注者都提交完整 CSV 后，负责人再按下方流程逐条处理分歧并生成 adjudicated.csv。不要让两人共用同一个评审包。
 
 ## 字段定义
 
