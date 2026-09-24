@@ -27,6 +27,6 @@
 
 ## 评测与验收口径
 
-先由裁决后的人工标签建立 aliases.json，把同义表达映射到唯一规范标签；禁止使用模糊子串匹配。对 people、locations、environments、objects 报告逐片段 exact-set accuracy 和 micro precision/recall/F1；对 activity_events 报告 top-1 accuracy 与混淆矩阵。逐维列出结果，并保留总体汇总，不能只报告一个总体平均值掩盖弱项。
+复制 docs/task2-category-aliases.template.json 为 category_review_aliases.json，并为裁决集中的每个 human label 和 Qwen prediction 建立精确的“观测别名 → 规范标签”映射；规范标签本身也要有显式自映射。评测器拒绝任何未映射标签，不会把未知标签原样兜底为规范标签。默认使用完整的 725 样本模板；子集试跑必须显式传 --allow-partial，报告会保持 complete=false。只有模板中的 725 个 sample_id 全部出现、状态均为 reviewed 且没有 pending/excluded 时，报告才会标记 complete=true。命令示例：python3 scripts/memory/evaluate_category_review.py --annotations adjudicated.csv --qwen-report data/egolife/runs/long_term_eval_20260923.json --aliases category_review_aliases.json --output data/egolife/runs/category_review.json。评测逐维输出集合准确率、micro P/R/F1 或活动 top-1 准确率及混淆矩阵；不得使用模糊子串匹配。对 people、locations、environments、objects 报告逐片段 exact-set accuracy 和 micro precision/recall/F1；对 activity_events 报告 top-1 accuracy 与混淆矩阵。逐维列出结果，并保留总体汇总，不能只报告一个总体平均值掩盖弱项。
 
 原始项目标准写的是“≥95%，无明显类别混淆”，但未明确 95% 是每个维度、宏平均还是总体。正式宣称通过前，需由验收负责人确认主指标口径；同时报告逐维结果和混淆矩阵，说明误差类别。模型输出需先用同一套规范标签映射，再与裁决集比较。人工复核集完成之前，验收状态保持“尚未证实”。
