@@ -118,6 +118,63 @@ td{padding:6px 10px;border-top:1px solid var(--border)}
 .mrec .mid{font-weight:800;color:var(--brand)}
 .sublayer{font-size:12px;color:var(--muted);margin:6px 0 4px;font-weight:700}
 .sublayer .scount{color:var(--brand);margin-left:6px}
+
+:root{--bg:#f3f6fb;--card:#fff;--ink:#172033;--muted:#63718a;--brand:#3b5ccc;--brand2:#6e74df;--border:#dfe6f1;--code:#eef2f8}
+body{background:radial-gradient(1000px 380px at 50% -120px,#e7edff 0,transparent 72%),var(--bg);color:var(--ink)}
+.hero{padding:22px clamp(18px,4vw,52px);background:rgba(255,255,255,.86);backdrop-filter:blur(12px);border-bottom:1px solid var(--border)}
+.hero h1{font-size:24px;letter-spacing:-.4px}
+.hero .sub{font-size:13px;color:#62708a}
+.wrap{max-width:1380px;padding:22px clamp(14px,3vw,36px) 64px}
+.card{border-radius:16px;border-color:#e3e9f2;box-shadow:0 8px 24px rgba(28,45,82,.045);padding:20px 22px}
+.flow-card{padding:22px 24px;margin-bottom:16px}
+.flow-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:16px}
+.flow-heading h2{margin:0;font-size:18px}
+.flow-heading p{font-size:12.5px;color:var(--muted);margin-top:4px}
+.flow-current{background:#eef2ff;color:#344fb0;border:1px solid #dce4ff;border-radius:999px;padding:6px 11px;font-size:12px;font-weight:700;white-space:nowrap}
+.flow-track{display:grid;grid-template-columns:minmax(0,1fr) 76px minmax(0,1fr) 76px minmax(0,1fr);align-items:stretch;gap:10px}
+.flow-stage{background:#f8faff;border:1px solid #e4eaf4;border-radius:14px;padding:16px;transition:transform .2s,border-color .2s,box-shadow .2s;min-width:0}
+.flow-stage.active{background:linear-gradient(145deg,#f0f4ff,#fbfcff);border-color:#8096ed;box-shadow:0 8px 20px rgba(59,92,204,.12);transform:translateY(-2px)}
+.flow-stage-head{display:flex;align-items:center;gap:11px}
+.flow-no{width:34px;height:34px;display:grid;place-items:center;border-radius:10px;background:#e7edff;color:#3555c3;font-size:12px;font-weight:900;flex:none}
+.flow-stage h3{font-size:15px;line-height:1.25}
+.flow-stage h3 small{display:block;color:#64718a;font-size:11px;font-weight:700;margin-top:3px}
+.flow-stage>p{font-size:12px;color:#65718a;min-height:38px;margin:12px 0 10px}
+.flow-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}
+.flow-metric{padding:9px 8px;border:1px solid #e5eaf3;background:#fff;border-radius:10px;min-width:0}
+.flow-metric b{display:block;font-size:17px;color:#263b79;line-height:1.2;overflow-wrap:anywhere}
+.flow-metric span{display:block;font-size:10px;color:#68758d;margin-top:4px}
+.flow-arrow{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;color:#697891;font-size:10px;font-weight:700;line-height:1.4}
+.flow-arrow i{font-style:normal;font-size:28px;color:#8394c3;line-height:1.1}
+.flow-foot{border-top:1px solid #edf0f5;margin-top:14px;padding-top:10px;color:#68758d;font-size:11.5px}
+.kpis{grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.kpi{border-radius:12px;background:linear-gradient(180deg,#f9fbff,#f3f6fc);padding:12px}
+.kpi .num{font-size:19px}
+.layer-details{border:1px solid #e4eaf3;border-radius:14px;background:#fff;padding:0 16px;margin:0 0 16px;box-shadow:0 5px 16px rgba(28,45,82,.03)}
+.layer-details>summary{list-style:none;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:15px 2px;color:#273858;font-weight:800}
+.layer-details>summary::-webkit-details-marker{display:none}
+.layer-details>summary:after{content:"＋";color:var(--brand);font-size:18px}
+.layer-details[open]>summary:after{content:"−"}
+.layer-details>summary small{color:var(--muted);font-weight:500;font-size:11px}
+.layer-details .layers{padding:2px 0 16px}
+.layer{background:#f8faff;border-radius:13px}
+.layer .body{line-height:1.55}
+.video-shell{margin:8px 0 5px}
+.video-placeholder{display:flex;align-items:center;gap:12px;min-height:74px;padding:12px 14px;border-radius:11px;background:linear-gradient(130deg,#17233b,#293e68);color:#fff}
+.video-placeholder[hidden]{display:none}
+.video-placeholder .preview-icon{width:36px;height:36px;border-radius:50%;display:grid;place-items:center;background:rgba(255,255,255,.16);font-size:14px;flex:none}
+.video-placeholder strong{display:block;font-size:12px}
+.video-placeholder small{display:block;color:#c4d0e9;font-size:11px;margin-top:2px}
+.video-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:7px}
+.video-actions .btn{font-size:11.5px;padding:4px 10px}
+.video-actions .preview-load{background:#eef2ff;color:#344fb0;border-color:#dce4ff}
+.video-actions .preview-load:disabled{opacity:.55;cursor:wait}
+.video-actions .original-load{color:#68758d;background:#fff}
+.video-status{min-height:16px;color:#63718a;font-size:11px;margin-top:4px}
+.video-shell .clipvid{width:100%;max-width:360px;max-height:260px;aspect-ratio:16/9;object-fit:contain;border-radius:11px;background:#101725;border:1px solid #dfe6f1}
+.video-shell .clipvid[hidden]{display:none}
+@media(max-width:1020px){.flow-track{grid-template-columns:1fr;gap:8px}.flow-arrow{flex-direction:row;gap:8px;min-height:24px}.flow-arrow i{transform:rotate(90deg);font-size:21px}.flow-stage>p{min-height:0}.flow-metrics{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:620px){.flow-heading{display:block}.flow-current{display:inline-block;margin-top:10px}.flow-card{padding:17px}.flow-metrics{gap:5px}.flow-metric{padding:8px 6px}.flow-metric b{font-size:15px}.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.layer-details>summary small{display:none}}
+
 </style>
 </head>
 <body>
@@ -176,10 +233,49 @@ td{padding:6px 10px;border-top:1px solid var(--border)}
     </div>
   </div>
 
-  <div class="card">
-    <h2><span class="dot"></span>Layer 1~7 各层状态</h2>
+  <section class="card flow-card" id="memoryFlowCard">
+    <div class="flow-heading">
+      <div><h2>记忆怎样流动</h2><p>沿着“事件进入 → 汇总与画像 → 分类索引”阅读；拖动上方时间轴可观察每一步变化。</p></div>
+      <span class="flow-current" id="flowStep">等待快照</span>
+    </div>
+    <div class="flow-track">
+      <article class="flow-stage" data-stage="episode">
+        <div class="flow-stage-head"><span class="flow-no">01</span><h3>短期情节记忆<small>先记下发生了什么 · L1—L3</small></h3></div>
+        <p>当前事件进入工作记忆，再按场景与日期组织，支持即时上下文和当天回顾。</p>
+        <div class="flow-metrics">
+          <div class="flow-metric"><b id="flowL1">0</b><span>L1 · 当前事件</span></div>
+          <div class="flow-metric"><b id="flowL2">0</b><span>L2 · 同场景</span></div>
+          <div class="flow-metric"><b id="flowL3">0</b><span>L3 · 当日记忆</span></div>
+        </div>
+      </article>
+      <div class="flow-arrow"><span>场景结束<br>夜间归纳</span><i>→</i></div>
+      <article class="flow-stage" data-stage="refine">
+        <div class="flow-stage-head"><span class="flow-no">02</span><h3>压缩与画像<small>从事件提炼长期信息 · L4—L6</small></h3></div>
+        <p>把一天的记录压缩成近期/远期摘要，并逐步更新稳定偏好与行为模式。</p>
+        <div class="flow-metrics">
+          <div class="flow-metric"><b id="flowL4">0</b><span>L4 · 近期摘要字数</span></div>
+          <div class="flow-metric"><b id="flowL5">0</b><span>L5 · 远期摘要字数</span></div>
+          <div class="flow-metric"><b id="flowL6">0</b><span>L6 · 画像字段</span></div>
+        </div>
+      </article>
+      <div class="flow-arrow"><span>建立检索入口<br>保留原始事实</span><i>→</i></div>
+      <article class="flow-stage" data-stage="archive">
+        <div class="flow-stage-head"><span class="flow-no">03</span><h3>索引与归档<small>让事实可检索、可追溯 · L7</small></h3></div>
+        <p>原始记忆留在主存储，通过人物、地点、时间、活动、环境、物品六维索引定位。</p>
+        <div class="flow-metrics">
+          <div class="flow-metric"><b id="flowL7">0</b><span>L7 · 主存储记录</span></div>
+          <div class="flow-metric"><b id="flowIndex">0</b><span>六维索引键</span></div>
+          <div class="flow-metric"><b id="flowDims">6</b><span>索引维度</span></div>
+        </div>
+      </article>
+    </div>
+    <div class="flow-foot">短期层承接即时上下文；夜间整理将记录压缩并更新画像；Layer 7 保留可追溯事实并提供分类检索。</div>
+  </section>
+
+  <details class="layer-details">
+    <summary><span>展开 Layer 1—7 逐层详情</span><small>计数、摘要、画像内容与主存储记录</small></summary>
     <div class="layers" id="layers"></div>
-  </div>
+  </details>
 
   <div class="card">
     <h2><span class="dot"></span>📋 完整记忆内容 <span class="fulltoggle" id="fullToggle" onclick="toggleFull()">[▼ 展开]</span></h2>
@@ -223,8 +319,15 @@ const LAYER_META = [
 async function init(){
   scenarios = await (await fetch(API+'/api/scenarios')).json();
   renderTabs();
-  // 回放数据惰性加载：首次进入页面不拉取大 JSON，切到回放模式/点场景标签时才加载
-  document.getElementById('stepInfo').textContent = '回放数据未加载 · 点击上方场景标签或切换模式加载';
+  const preferred = scenarios.find(s=>s.key==='long_term' && s.available)
+    || scenarios.find(s=>s.available) || scenarios[0];
+  if(preferred && preferred.available){
+    document.getElementById('stepInfo').textContent = '正在加载 '+preferred.name+'…';
+    await select(preferred.key);
+    replayLoaded = true;
+  }else{
+    document.getElementById('stepInfo').textContent = '尚无可回放快照，请先运行 run_scenarios.py';
+  }
 }
 
 async function ensureReplay(){
@@ -332,20 +435,48 @@ function renderLog(){
   ).join('');
 }
 
+function renderFlow(s){
+  const layers=s.layers||{};
+  const set=(id,value)=>{const el=document.getElementById(id);if(el)el.textContent=value;};
+  const idxTotal=Object.values(s.indices||{}).reduce((a,b)=>a+(Number(b)||0),0);
+  set('flowL1',layers.layer1||0);
+  set('flowL2',layers.layer2||0);
+  set('flowL3',layers.layer3||0);
+  set('flowL4',(s.layer4_summary||'').length);
+  set('flowL5',(s.layer5_summary||'').length);
+  set('flowL6',Object.keys(s.profile_fields||{}).length);
+  set('flowL7',s.layer7_moments||0);
+  set('flowIndex',idxTotal);
+  const action=s.action||'init';
+  const stage=['update_profile','compress','combine'].includes(action)?'refine'
+    :['sort','query','highlight','delete'].includes(action)?'archive':'episode';
+  document.querySelectorAll('.flow-stage').forEach(el=>el.classList.toggle('active',el.dataset.stage===stage));
+  const actionName=KIND_CN[action]||(action==='init'?'初始状态':action);
+  set('flowStep',(cur+1)+' / '+snaps.length+' · '+actionName);
+}
+
 function render(){
   const s = snaps[cur];
   if(!s) return;
   document.getElementById('stepInfo').innerHTML =
     `<b>${s.label}</b>${s.action?' · '+s.action:''}`;
 
-  // KPI
-  const idxTotal = Object.values(s.indices||{}).reduce((a,b)=>a+b,0);
+  // 用相邻快照的差值说明这一步改变了什么。
+  const prev=cur>0?snaps[cur-1]:null;
+  const idxTotal=Object.values(s.indices||{}).reduce((a,b)=>a+(Number(b)||0),0);
+  const prevIdx=prev?Object.values(prev.indices||{}).reduce((a,b)=>a+(Number(b)||0),0):0;
+  const totalEpisodes=(s.layers.layer1||0)+(s.layers.layer2||0)+(s.layers.layer3||0);
+  const prevEpisodes=prev?(prev.layers.layer1||0)+(prev.layers.layer2||0)+(prev.layers.layer3||0):0;
+  const profileCount=Object.keys(s.profile_fields||{}).length;
+  const prevProfile=prev?Object.keys(prev.profile_fields||{}).length:0;
+  const delta=(now,before)=>prev?((now-before)>0?'+'+(now-before):String(now-before)):'基准';
   document.getElementById('kpis').innerHTML = [
-    ['各层记录', (s.layers.layer1+s.layers.layer2+s.layers.layer3)],
-    ['主存储', s.layer7_moments],
-    ['索引键', idxTotal],
-    ['总写入', s.total_moments],
-  ].map(([l,n])=>`<div class="kpi"><div class="num">${n}</div><div class="lbl">${l}</div></div>`).join('');
+    ['时间轴步骤', (cur+1)+' / '+snaps.length],
+    ['短期记录变化', delta(totalEpisodes,prevEpisodes)],
+    ['画像字段变化', delta(profileCount,prevProfile)],
+    ['索引键变化', delta(idxTotal,prevIdx)],
+  ].map(([l,n])=>'<div class="kpi"><div class="num">'+esc(n)+'</div><div class="lbl">'+l+'</div></div>').join('');
+  renderFlow(s);
 
   // 各层
   const full = s.full || null;
@@ -402,11 +533,17 @@ function renderProfile(){
   for(const [k,v] of Object.entries(p)){
     if(Array.isArray(v)){
       out.push(`<div style="margin-bottom:8px"><b>${k}</b><br>`+
-        v.map(x=>`<span class="tag">${esc(typeof x==='string'?x:(x.value||JSON.stringify(x)))}</span>`).join('')+
+        v.filter(x=>x!=null).map(x=>{
+          const label=x&&typeof x==='object'?(x.value??JSON.stringify(x)):x;
+          return `<span class="tag">${esc(label)}</span>`;
+        }).join('')+
         `</div>`);
     } else if(v && typeof v==='object'){
       out.push(`<div style="margin-bottom:8px"><b>${k}</b><br>`+
-        Object.entries(v).map(([kk,vv])=>`<span class="tag">${kk}: ${esc(String(typeof vv==='object'?(vv.value||''):vv))}</span>`).join('')+
+        Object.entries(v).filter(([,vv])=>vv!=null).map(([kk,vv])=>{
+          const label=vv&&typeof vv==='object'?(vv.value??JSON.stringify(vv)):vv;
+          return `<span class="tag">${esc(kk)}: ${esc(label)}</span>`;
+        }).join('')+
         `</div>`);
     }
   }
@@ -694,24 +831,84 @@ function toggleInputs(){
 // ===== 视频内嵌播放：每个条目直接带 <video>，片段区间自动循环 =====
 function videoTag(m){
   if(!m||!m.video_url) return '';
-  return '<video class="clipvid" controls preload="none" playsinline'
-    + ' src="'+esc(m.video_url)+'"'
-    + ' data-cs="'+(m.clip_start||0)+'"'
-    + ' data-ce="'+(m.clip_end!=null?m.clip_end:'')+'"></video>';
+  const previewParams=new URLSearchParams({quality:'preview'});
+  if(m.clip_start!=null&&m.clip_end!=null){
+    previewParams.set('start',m.clip_start);
+    previewParams.set('end',m.clip_end);
+  }
+  const previewUrl=m.video_url+(m.video_url.includes('?')?'&':'?')+previewParams.toString();
+  return '<div class="video-shell">'+
+    '<div class="video-placeholder"><span class="preview-icon">▶</span>'+
+    '<div><strong>视频尚未加载</strong><small>只生成当前片段的轻量预览，减少隧道传输量</small></div></div>'+
+    '<div class="video-actions">'+
+    '<button type="button" class="btn preview-load">⚡ 快速预览</button>'+
+    '<button type="button" class="btn original-load">原始画质</button></div>'+
+    '<video class="clipvid" controls preload="none" playsinline hidden'+
+    ' data-original-url="'+esc(m.video_url)+'" data-preview-url="'+esc(previewUrl)+'"'+
+    ' data-cs="'+(m.clip_start||0)+'" data-ce="'+(m.clip_end!=null?m.clip_end:'')+'"></video>'+
+    '<div class="video-status" aria-live="polite">首次预览会在服务器生成并缓存，原视频可随时切换。</div></div>';
 }
 
-// 渲染后统一绑定片段循环逻辑（preload=none，点播放才加载，不拖慢页面）
 function bindClips(){
-  document.querySelectorAll('video.clipvid').forEach(v=>{
-    if(v._bound) return;
-    v._bound=true;
+  document.querySelectorAll('.video-shell').forEach(shell=>{
+    if(shell.dataset.bound) return;
+    shell.dataset.bound='1';
+    const v=shell.querySelector('video');
+    const status=shell.querySelector('.video-status');
+    const placeholder=shell.querySelector('.video-placeholder');
+    const fast=shell.querySelector('.preview-load');
+    const original=shell.querySelector('.original-load');
     v._cs=parseFloat(v.dataset.cs)||0;
     v._ce=v.dataset.ce!==''&&v.dataset.ce!=null?parseFloat(v.dataset.ce):null;
+    v._originalCs=v._cs;
+    v._originalCe=v._ce;
     v.onloadedmetadata=()=>{
-      if(v._ce!=null && v.duration && v._ce>v.duration) v._ce=v.duration-0.05;
-      v.currentTime=v._cs;
+      if(v._ce!=null&&v.duration&&v._ce>v.duration) v._ce=Math.max(0,v.duration-.05);
+      const start=Math.min(v._cs,Math.max(0,(v.duration||v._cs)-.05));
+      if(Math.abs(v.currentTime-start)>.25) v.currentTime=start;
     };
-    v.ontimeupdate=()=>{ if(v._ce!=null && v.currentTime>=v._ce) v.currentTime=v._cs; };
+    v.ontimeupdate=()=>{if(v._ce!=null&&v.currentTime>=v._ce) v.currentTime=v._cs;};
+    v.onloadeddata=()=>{status.textContent=v.dataset.usingOriginal==='1'?'原始视频已就绪':'低清预览已就绪（服务器已缓存）';};
+    v.onerror=()=>{placeholder.hidden=false;status.textContent='视频加载失败；可重试快速预览，或切换原始画质。';fast.disabled=false;};
+    async function load(useOriginal){
+      fast.disabled=true;
+      placeholder.hidden=true;
+      fast.textContent=useOriginal?'⏳ 加载原片…':'⏳ 准备快速预览…';
+      status.textContent=useOriginal?'正在通过 SSH 隧道读取原始视频…':'正在准备低清预览；首次生成会稍等，之后直接读取缓存…';
+      try{
+        if(!useOriginal){
+          const statusUrl=new URL(v.dataset.originalUrl,location.href);
+          statusUrl.pathname='/api/video_preview/status';
+          if(v._originalCe!=null){
+            statusUrl.searchParams.set('start',v._originalCs);
+            statusUrl.searchParams.set('end',v._originalCe);
+          }
+          while(true){
+            const r=await fetch(statusUrl.toString(),{cache:'no-store'});
+            if(!r.ok) throw new Error('预览服务返回 '+r.status);
+            const state=await r.json();
+            if(state.state==='ready') break;
+            if(state.state==='error') throw new Error(state.message||'预览生成失败');
+            status.textContent=state.state==='queued'?'预览任务排队中…':'服务器正在生成轻量预览，页面可继续使用…';
+            await new Promise(resolve=>setTimeout(resolve,700));
+          }
+        }
+        v.dataset.usingOriginal=useOriginal?'1':'0';
+        v._cs=useOriginal?v._originalCs:0;
+        v._ce=useOriginal?v._originalCe:null;
+        v.src=useOriginal?v.dataset.originalUrl:v.dataset.previewUrl;
+        v.hidden=false;
+        v.load();
+        fast.textContent=useOriginal?'⚡ 快速预览':'✓ 预览已缓存';
+      }catch(err){
+        placeholder.hidden=false;
+        status.textContent='快速预览暂不可用：'+err.message+'。可以切换原始画质。';
+        fast.disabled=false;
+        fast.textContent='↻ 重试预览';
+      }
+    }
+    fast.addEventListener('click',()=>load(false));
+    original.addEventListener('click',()=>load(true));
   });
 }
 

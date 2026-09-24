@@ -17,8 +17,12 @@ viz_server.py — 7 层记忆模型可视化网站后端
     然后浏览器打开 http://localhost:8765
 """
 
+import hashlib
+import math
 import json
 import re
+import shutil
+import subprocess
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -29,11 +33,15 @@ ROOT = Path(__file__).resolve().parents[2]
 RUNS = ROOT / "data" / "egolife" / "runs"
 VIZ_DIR = Path(__file__).resolve().parent / "viz"
 VIDEO_ROOT = (ROOT / "data" / "egolife").resolve()
+PREVIEW_ROOT = RUNS / "viz_video_cache"
 
 # 交互式步进执行会话（单线程 HTTPServer，全局单例即可）
 SESSION = None
 # Qwen 缓存预热任务状态
 PREWARM = {"running": False, "done": 0, "total": 0, "error": None, "scenario": None}
+PREVIEW_JOBS = {}
+PREVIEW_LOCK = threading.Lock()
+PREVIEW_SEMAPHORE = threading.BoundedSemaphore(2)
 
 try:
     from interactive_runner import InteractiveSession
@@ -66,6 +74,72 @@ def load_json(path):
         return None
     with open(path, encoding="utf-8") as f:
         return json.load(f)
+
+
+def _preview_clip(qs):
+    try:
+        start = float((qs.get("start") or [""])[0])
+        end = float((qs.get("end") or [""])[0])
+    except (TypeError, ValueError):
+        return None, None
+    if not math.isfinite(start) or not math.isfinite(end) or start < 0 or end <= start:
+        return None, None
+    return start, min(end, start + 180.0)
+
+
+def _preview_cache_path(source, start=None, end=None):
+    stat = source.stat()
+    rel = source.relative_to(VIDEO_ROOT).as_posix()
+    clip = "full" if start is None or end is None else f"{start:.3f}:{end:.3f}"
+    key = hashlib.sha256(
+        f"{rel}|{stat.st_size}|{stat.st_mtime_ns}|{clip}".encode("utf-8")
+    ).hexdigest()
+    return PREVIEW_ROOT / f"{key}.mp4", key
+
+
+def _build_preview(source, target, key, start=None, end=None):
+    temp = target.with_name(f"{target.stem}.{threading.get_ident()}.tmp.mp4")
+    try:
+        PREVIEW_ROOT.mkdir(parents=True, exist_ok=True)
+        ffmpeg = shutil.which("ffmpeg")
+        if not ffmpeg:
+            raise RuntimeError("服务器没有安装 ffmpeg")
+        with PREVIEW_SEMAPHORE:
+            with PREVIEW_LOCK:
+                PREVIEW_JOBS[key] = {"state": "building"}
+            cmd = [ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-y"]
+            if start is not None and end is not None:
+                cmd.extend(["-ss", f"{start:.3f}"])
+            cmd.extend(["-i", str(source)])
+            if start is not None and end is not None:
+                cmd.extend(["-t", f"{end - start:.3f}"])
+            cmd.extend([
+                "-vf", "scale=640:640:force_original_aspect_ratio=decrease:force_divisible_by=2",
+                "-map", "0:v:0", "-map", "0:a?",
+                "-c:v", "libx264", "-preset", "ultrafast", "-crf", "30",
+                "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "64k",
+                "-movflags", "+faststart", "-threads", "2", str(temp),
+            ])
+            result = subprocess.run(
+                cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                timeout=240, check=False,
+            )
+            if result.returncode:
+                detail = (result.stderr or b"").decode("utf-8", "replace")[-500:]
+                raise RuntimeError(detail or f"ffmpeg exited {result.returncode}")
+        if not temp.is_file() or temp.stat().st_size == 0:
+            raise RuntimeError("ffmpeg 未生成有效预览文件")
+        temp.replace(target)
+        with PREVIEW_LOCK:
+            PREVIEW_JOBS[key] = {"state": "ready"}
+    except Exception as exc:
+        with PREVIEW_LOCK:
+            PREVIEW_JOBS[key] = {"state": "error", "message": str(exc)[:300]}
+    finally:
+        try:
+            temp.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -105,6 +179,28 @@ class Handler(BaseHTTPRequestHandler):
             return None
         return p if p.exists() else None
 
+    def _preview_status(self):
+        qs = parse_qs(urlparse(self.path).query)
+        source = self._safe_video((qs.get("p") or [""])[0])
+        if not source or not source.is_file():
+            return self._send(404, {"state": "error", "message": "video not found"})
+        start, end = _preview_clip(qs)
+        target, key = _preview_cache_path(source, start, end)
+        if target.is_file():
+            return self._send(200, {"state": "ready", "bytes": target.stat().st_size})
+        if not shutil.which("ffmpeg"):
+            return self._send(200, {"state": "error", "message": "服务器没有安装 ffmpeg"})
+        with PREVIEW_LOCK:
+            job = PREVIEW_JOBS.get(key)
+            if job is None or job.get("state") == "error":
+                PREVIEW_JOBS[key] = {"state": "queued"}
+                threading.Thread(
+                    target=_build_preview,
+                    args=(source, target, key, start, end), daemon=True,
+                ).start()
+                job = PREVIEW_JOBS[key]
+        return self._send(200, dict(job))
+
     def _stream_video(self, head_only=False):
         qs = parse_qs(urlparse(self.path).query)
         p = self._safe_video((qs.get("p") or [""])[0])
@@ -114,6 +210,13 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(b'{"error": "video not found"}')
             return
+        quality = (qs.get("quality") or ["original"])[0]
+        if quality == "preview":
+            preview_start, preview_end = _preview_clip(qs)
+            preview, _ = _preview_cache_path(p, preview_start, preview_end)
+            if not preview.is_file():
+                return self._send(425, {"error": "preview is not ready"})
+            p = preview
         size = p.stat().st_size
         rng = self.headers.get("Range")
         start, end = 0, size - 1
@@ -135,6 +238,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "video/mp4")
         self.send_header("Content-Length", str(length))
         self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Cache-Control", "private, max-age=86400")
         if code == 206:
             self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
         self.end_headers()
@@ -165,6 +269,9 @@ class Handler(BaseHTTPRequestHandler):
             if idx.exists():
                 return self._send_file(idx, "text/html; charset=utf-8")
             return self._send(404, {"error": "index.html not found"})
+
+        if url.path == "/api/video_preview/status":
+            return self._preview_status()
 
         if url.path == "/api/video":
             return self._stream_video()
