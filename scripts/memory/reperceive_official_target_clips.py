@@ -131,7 +131,7 @@ def main():
             "baseline_cache": str(args.source_cache.resolve()),
             "output_cache": str(args.output_cache.resolve()),
             "target_ids_sha256": hashlib.sha256("\n".join(target_ids).encode()).hexdigest(),
-            "refresh_scope": "Officially labelled short-term and multi-day QA target clips are refreshed; all distractor memories are held at baseline fields.",
+            "refresh_scope": "Officially labelled short-term and multi-day QA target clips are attempted; all distractor memories are held at baseline fields.",
             "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         }
         manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -176,6 +176,17 @@ def main():
     real_save()
     failures_path = args.output_cache.with_name(args.output_cache.stem + "_failures.json")
     failures_path.write_text(json.dumps(failures, ensure_ascii=False, indent=2), encoding="utf-8")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    refreshed = sum((perceiver.cache.get(item) or {}).get("prompt_version") == PROMPT_VERSION
+                    for item in target_ids)
+    manifest.update({
+        "last_attempt_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "refreshed_target_clips": refreshed,
+        "target_clip_total": len(target_ids),
+        "failed_target_ids": [item["id"] for item in failures],
+        "refresh_status": "complete" if refreshed == len(target_ids) and not failures else "partial",
+    })
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps({
         "finished_this_run": True,
         "cache": str(args.output_cache),
