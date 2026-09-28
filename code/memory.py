@@ -416,6 +416,7 @@ def _rank_memory_docs(query_text: str, documents: list) -> list:
         "time_occasion": 0.7,
         "extra_notes": 0.6,
         "normalized": 0.5,
+        "source_evidence": float(os.environ.get("MEMORY_SOURCE_EVIDENCE_WEIGHT", "1.4")),
     }
     metadata = {
         "id", "timestamp", "created_at", "updated_at", "last_used",
@@ -667,6 +668,7 @@ def _empty_moment() -> Dict:
         # Part 1
         "scene": "",          # external environment description
         "user_action": "",    # user's own behaviour / action
+        "source_evidence": "",  # speaker-labelled transcript facts supporting the event
         # Part 2
         "needs": [],          # [{"need": str, "confidence": float}]
         # Part 3
@@ -838,7 +840,8 @@ class PersonMemory:
             environments: List[str] = None,
             objects: List[str] = None,
             extra_notes: str = "",
-            timestamp: str = None) -> str:
+            timestamp: str = None,
+            source_evidence: str = "") -> str:
         """
         Store a complete Part1+2+3 result.
         Returns the moment_id so Part4 can reference it later.
@@ -851,6 +854,8 @@ class PersonMemory:
         moment["timestamp"] = event_time.isoformat()
         moment["scene"] = scene
         moment["user_action"] = user_action
+        if source_evidence:
+            moment["source_evidence"] = source_evidence
         moment["needs"] = needs
         moment["solutions"] = solutions
         if location:
@@ -874,7 +879,7 @@ class PersonMemory:
             normalized = {}
             for field, raw in (("scene", scene), ("user_action", user_action),
                                ("location", location), ("activity", activity),
-                               ("notes", extra_notes)):
+                               ("notes", extra_notes), ("source_evidence", source_evidence)):
                 if raw and _contains_cjk(str(raw)):
                     try:
                         normalized[field] = self.translate_fn(str(raw))
@@ -1183,7 +1188,8 @@ class PersonMemory:
     def retrieve(self, people: List[str] = None, location: str = None,
                  activity: str = None, layer: int = None, top_k: int = 5,
                  query_text: str = None, include_summaries: bool = True,
-                 exclude_ids: set = None) -> str:
+                 exclude_ids: set = None,
+                 include_source_evidence: bool = False) -> str:
         """按标签和当前查询检索 L7，并返回完整的 Part1–4 事实。"""
         if top_k <= 0:
             return "No relevant memory found."
@@ -1248,6 +1254,9 @@ class PersonMemory:
                 ("活动", moment.get("activity")),
                 ("反馈修正", feedback_text),
             ]
+            if include_source_evidence and moment.get("source_evidence"):
+                evidence = str(moment["source_evidence"]).replace(chr(10), " ").strip()
+                line += f" | Transcript evidence: {evidence[:1200]}"
             for label, value in fields:
                 if value:
                     line += f" | {label}: {str(value).replace(chr(10), ' ').strip()[:180]}"
@@ -1592,14 +1601,14 @@ class PersonMemory:
     # ------------------------------------------------------------------
 
     UPDATE_FIELDS = ("scene", "user_action", "needs", "solutions",
-                     "people", "location", "activity", "notes",
+                     "people", "location", "activity", "notes", "source_evidence",
                      "environments", "objects")
 
     def _validated_updates(self, updates: Dict) -> Dict:
         """按记忆 schema 筛选可更新字段和值类型。"""
         if not isinstance(updates, dict):
             return {}
-        string_fields = {"scene", "user_action", "location", "activity", "notes"}
+        string_fields = {"scene", "user_action", "location", "activity", "notes", "source_evidence"}
         list_fields = {"people", "environments", "objects", "needs", "solutions"}
         clean = {}
         for field, value in updates.items():
@@ -1686,7 +1695,7 @@ class PersonMemory:
             return False
 
         # 清除可能过期的英文缓存；改写中文时再生成对应 normalized 值。
-        searchable_fields = {"scene", "user_action", "location", "activity", "notes"}
+        searchable_fields = {"scene", "user_action", "location", "activity", "notes", "source_evidence"}
         if searchable_fields.intersection(changed_fields):
             normalized = dict(moment.get("normalized") or {})
             for field in searchable_fields.intersection(changed_fields):

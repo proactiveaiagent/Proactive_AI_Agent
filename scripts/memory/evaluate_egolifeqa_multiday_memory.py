@@ -237,6 +237,7 @@ def main():
                     people=people, location=location, activity=activity,
                     environments=environments, objects=objects, extra_notes=notes,
                     timestamp=iso_timestamp(clip["day"], clip["stamp"]),
+                    source_evidence=str(f.get("source_evidence") or ""),
                 )
                 id_map[mid] = clip["sample_id"]
                 add_index += 1
@@ -271,10 +272,12 @@ def main():
         "excluded": dict(excluded),
         "target_reference_coverage": dict(refs),
         "memory_cache_file": str(CACHE_PATH),
+        "transcript_evidence_clip_count": sum(
+            bool(c["fields"].get("source_evidence")) for c in clips),
         "memory_cached_clips_by_day": {f"DAY{k}": v for k, v in sorted(cache_counts.items())},
         "memory_cached_clips_total": len(clips),
         "method": {
-            "memory_source": "Actual cached Qwen3-VL perception outputs only; no captions or answers are inserted as memories.",
+            "memory_source": "Cached Qwen3-VL perception fields; exact-ID speaker-labelled source transcript evidence is included when present. Official answers, choices, and dense captions are never inserted as memories.",
             "causal_cutoff": "A 30-second clip is available only after its full interval ends at or before the question timestamp. All earlier days are eligible.",
             "target_mapping": "Official target_time points are mapped to the cached 30-second source clip containing each timestamp; malformed/missing timestamps are counted separately.",
             "metrics_scope": "Evidence retrieval Hit/Recall/MRR only; this run does not score answer generation or a fully populated seven-day Qwen memory.",

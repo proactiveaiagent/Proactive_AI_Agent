@@ -113,7 +113,8 @@ class DaytimeProcessor:
                environments: List[str] = None,
                objects: List[str] = None,
                extra_notes: str = "",
-               timestamp: str = None) -> str:
+               timestamp: str = None,
+               source_evidence: str = "") -> str:
         """
         实时写入一条记忆。
 
@@ -134,6 +135,7 @@ class DaytimeProcessor:
                 objects=objects,
                 extra_notes=extra_notes,
                 timestamp=timestamp,
+                source_evidence=source_evidence,
             )
         self.stats["ingested"] += 1
 
@@ -142,7 +144,8 @@ class DaytimeProcessor:
             payload = {}
             for field, raw in (("scene", scene), ("user_action", user_action),
                                ("location", location), ("activity", activity),
-                               ("notes", extra_notes)):
+                               ("notes", extra_notes),
+                               ("source_evidence", source_evidence)):
                 if raw and _contains_cjk(str(raw)):
                     payload[field] = str(raw)
             if payload:

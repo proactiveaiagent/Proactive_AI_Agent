@@ -13,6 +13,7 @@ sys.path.insert(0, str(ROOT / "code"))
 sys.path.insert(0, str(ROOT / "scripts/memory"))
 from memory import PersonMemory, LAYER7_INDICES
 from run_scenarios import snapshot, build_canonical_map
+from qwen_perceive import extract_english_transcript
 
 TEST = ROOT / "data/egolife/testset"
 RUNS = ROOT / "data/egolife/runs"
@@ -47,6 +48,8 @@ def add_qwen_moment(mem, row, cache):
         objects=fields.get("objects") if isinstance(fields.get("objects"), list) else None,
         extra_notes=str(fields.get("time_occasion") or ""),
         timestamp=timestamp_from_id(sample_id),
+        source_evidence=str(fields.get("source_evidence") or
+                            extract_english_transcript(row.get("transcript") or "")),
     )
     return mid
 

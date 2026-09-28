@@ -21,7 +21,57 @@ DEFAULT_QA = ROOT / "data/egolife/testset/long_term/egolifeqa_official_a1_jake.j
 DEFAULT_RETRIEVAL = RUNS / "egolifeqa_memory_retrieval_qwen_20260927_144433.json"
 
 
-def compact_memory(fields):
+_QUERY_STOPWORDS = {
+    "who", "what", "when", "where", "why", "which", "how", "does", "did",
+    "do", "is", "are", "was", "were", "the", "a", "an", "to", "of", "in",
+    "on", "at", "for", "from", "with", "and", "or", "we", "i", "you", "they",
+    "it", "this", "that", "then", "before", "after", "already", "just", "now",
+}
+_WORD_RE = re.compile(r"[a-z][a-z'-]{1,}", re.I)
+
+
+def _word_forms(word):
+    word = word.lower().strip("'-")
+    forms = {word}
+    for suffix in ("ing", "ed", "es", "s"):
+        if word.endswith(suffix) and len(word) - len(suffix) >= 3:
+            forms.add(word[:-len(suffix)])
+    return forms
+
+
+def _query_matched_evidence(evidence, question, max_segments=3, max_chars=600):
+    query_words = {
+        form for word in _WORD_RE.findall(question or "")
+        if word.lower() not in _QUERY_STOPWORDS
+        for form in _word_forms(word)
+    }
+    if not query_words:
+        return ""
+    segments = re.split(r"\s+;\s+", str(evidence or "").strip())
+    scored = []
+    for index, segment in enumerate(segments):
+        words = {
+            form for word in _WORD_RE.findall(segment)
+            for form in _word_forms(word)
+        }
+        overlap = len(query_words & words)
+        if overlap:
+            scored.append((overlap, index, segment.strip()))
+    scored.sort(key=lambda row: (-row[0], row[1]))
+    selected = []
+    length = 0
+    for _, _, segment in scored[:max_segments]:
+        remaining = max_chars - length - (3 if selected else 0)
+        if remaining <= 0:
+            break
+        segment = segment[:remaining].rstrip()
+        if segment:
+            selected.append(segment)
+            length += len(segment)
+    return " | ".join(selected)
+
+
+def compact_memory(fields, question="", evidence_mode="relevant"):
     labels = {
         "scene": "Scene", "user_action": "Action", "people": "People",
         "location": "Location", "activity": "Activity", "environments": "Environment",
@@ -35,6 +85,15 @@ def compact_memory(fields):
             value = ", ".join(str(x) for x in value if x)
         if value:
             parts.append(f"{label}: {value}")
+    evidence = str(fields.get("source_evidence") or "")
+    if evidence_mode == "all":
+        evidence = evidence[:2000]
+    elif evidence_mode == "relevant":
+        evidence = _query_matched_evidence(evidence, question)
+    else:
+        evidence = ""
+    if evidence:
+        parts.append(f"Transcript evidence: {evidence}")
     return "\n".join(parts)
 
 
@@ -134,6 +193,8 @@ def main():
     parser.add_argument("--output", type=Path, default=None)
     parser.add_argument("--resume", type=Path, default=None, help="Resume an interrupted report file")
     parser.add_argument("--limit", type=int, default=0, help="Optional small run; 0 means all eligible questions")
+    parser.add_argument("--evidence-mode", choices=("relevant", "top1-relevant", "all", "none"), default="none",
+                        help="How source transcript evidence is passed to the answer model")
     parser.add_argument("--timeout", type=int, default=300)
     args = parser.parse_args()
 
@@ -151,6 +212,10 @@ def main():
         report = json.loads(output.read_text(encoding="utf-8"))
         if report.get("retrieval_report") != str(args.retrieval_report):
             raise SystemExit("Resume file was created from a different retrieval report")
+        if report.get("cache") != str(args.cache):
+            raise SystemExit("Resume file was created from a different memory cache")
+        if report.get("method", {}).get("transcript_evidence_mode", "none") != args.evidence_mode:
+            raise SystemExit("Resume file was created with a different transcript evidence mode")
         done = {str(row.get("id")) for row in report.get("details", [])}
     else:
         output = args.output or RUNS / f"egolifeqa_answer_accuracy_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
@@ -160,6 +225,7 @@ def main():
             "benchmark": "official EgoLifeQA A1_JAKE",
             "method": {
                 "memory_source": "Qwen memory cache; top-5 results from the causal retrieval benchmark",
+                "transcript_evidence_mode": args.evidence_mode,
                 "answer_model": "Qwen3-VL-8B-Instruct via /consolidate",
                 "scoring": "Forced-choice exact match against the official A/B/C/D answer; a unique exact option-text response is normalized to its letter, while malformed or missing choices count as incorrect.",
                 "blindness": "Official answer and target evidence are not included in the generation prompt",
@@ -188,9 +254,12 @@ def main():
             report.setdefault("errors", []).append({"id": qid, "error": "official question ID missing"})
             continue
         memories = []
-        for sample_id in item.get("retrieved_ids", [])[:5]:
+        for rank, sample_id in enumerate(item.get("retrieved_ids", [])[:5]):
             fields = (cache.get(sample_id) or {}).get("fields") or {}
-            body = compact_memory(fields)
+            evidence_mode = args.evidence_mode
+            if evidence_mode == "top1-relevant":
+                evidence_mode = "relevant" if rank == 0 else "none"
+            body = compact_memory(fields, item.get("query", ""), evidence_mode)
             if body:
                 memories.append(body)
         choices = {letter: source.get("choice_" + letter.lower(), "") for letter in "ABCD"}

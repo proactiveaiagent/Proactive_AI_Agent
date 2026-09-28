@@ -211,6 +211,7 @@ moment 到达 ──add()──► layer1 ──溢出──► layer2 ──晋
 | `timestamp` | str(ISO) | 记录时间 | |
 | `scene` | str | 外部环境描述（Part1） | |
 | `user_action` | str | 用户行为（Part1） | |
+| `source_evidence` | str | 与本片段 ID 精确匹配的英文、带说话人标签转写证据 | 独立于摘要；缺少精确来源时留空；默认不拼入回答上下文 |
 | `needs` | list | 需求 `[{"need": str, "confidence": float}]`（Part2） | |
 | `solutions` | list | 方案 `[{"need": str, "solution": str}]`（Part3） | |
 | `feedback` | dict | `{confirmed, corrections, user_rating}`（Part4，后填） | 不阻塞 Part1-3 |
@@ -341,7 +342,7 @@ moment 到达 ──add()──► layer1 ──溢出──► layer2 ──晋
 
 ### 4.2 写入类
 
-**add(scene, user_action, needs, solutions, people, location, activity, extra_notes) → moment_id**
+**add(scene, user_action, needs, solutions, people, location, activity, extra_notes, source_evidence) → moment_id**
 1. 生成 moment_id（`_new_moment_id`，时间戳 + 累计序号）；
 2. 写 layer1（当前窗口）；
 3. layer1 溢出 → `_graduate_to_layer2` 晋升 layer2（同 scene 聚合）；
@@ -358,7 +359,7 @@ layer7.moments 对应 moment 的 `feedback` 字段；corrections 中允许的字
 - **语义**：改正指定 moment 的 Part1-3 数据（与 `update_feedback` 的分工：update 改数据，
   update_feedback 改反馈）。
 - **允许字段白名单**：`scene` / `user_action` / `needs` / `solutions` / `people` / `location` /
-  `activity` / `notes`；禁止改 `id` / `timestamp` / `feedback` / `highlighted` / `layer`（越权字段忽略）。
+  `activity` / `notes` / `source_evidence`；禁止改 `id` / `timestamp` / `feedback` / `highlighted` / `layer`（越权字段忽略）。
 - **同步**：修改 layer7.moments 主存储后，同步 layer1/2/3 中同 id 条目（JSON 落盘重载后引用断开，
   需防御同步）。
 - **索引联动**：若 `people` / `location` / `activity` 变更，同步增删 layer7 对应索引的 moment_id

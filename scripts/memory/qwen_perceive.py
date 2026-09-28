@@ -28,7 +28,7 @@ CACHE_FILE = RUNS / "qwen_cache.json"
 
 DEFAULT_API = "http://localhost:8000"
 DEFAULT_FRAMES = 4
-PROMPT_VERSION = "memory-v2-2026-09-28"
+PROMPT_VERSION = "memory-v3-fact-preserving-2026-09-28"
 
 
 # ---------------------------------------------------------------------------
@@ -38,31 +38,54 @@ PROMPT_VERSION = "memory-v2-2026-09-28"
 
 def build_prompt(transcript: str, n_frames: int) -> str:
     ts = transcript.strip() if transcript and transcript.strip() else \
-        "[No audio transcript — infer from visual only]"
-    return f"""Create a concise, factual episodic memory from {n_frames} ordered first-person video frames and this transcript:
+        "[No audio transcript - infer from visual only]"
+    return f"""Create an accurate, searchable episodic memory from {n_frames} ordered first-person video frames and this transcript:
 
 {ts}
 
-Return exactly these English fields, one line each. Translate speech into natural English; never copy source-language text. Keep names in Latin script.
-Scene: one sentence stating the main event and key fact
-Location: broad or specific place supported by the frames; use a broad label if the exact room or store is uncertain
+Return exactly these English fields, one concise line per field:
+Scene: one sentence for the main event and its specific outcome when supported
+Location: one broad place supported by the frames; do not guess an exact room
 Time/Occasion: only supported time or occasion
-People: only named speakers or people clearly identified in the frames; never use generic labels such as visitors, group, others, or people. Use None if no one can be identified
-User Action: concrete camera-wearer actions in order; do not assign another person's action to the camera wearer
-Activity: the main activity. If speech explains the event, preserve the named person, action, object, and key fact instead of reducing it to generic conversation
-Objects: only tangible items clearly visible or explicitly handled/discussed; prefer the few important items. Do not guess furniture, devices, or objects from a room type
-Environment: concise physical setting supported by frames only. Do not guess room names, lighting, clutter, or multiple rooms; use a broad description when uncertain
-Interaction Details: key supported who-did-what-to-whom/object facts, transfers, state changes, or specific spoken facts
+People: names explicitly used as transcript speaker labels or clearly identified by name; never list unnamed people, clothing, "others", or generic groups
+User Action: concrete camera-wearer actions only; never attribute another person's action to the camera wearer
+Activity: the specific main activity and purpose, not a generic label such as "discussion"
+Objects: at most five important tangible items clearly visible or explicitly named in the transcript
+Environment: one short physical setting supported by frames; omit guesses and background detail
+Interaction Details: one concise line of semicolon-separated facts. Preserve meaningful who-said/did-what claims, plans, questions and replies, decisions, transfers, named options, quantities, reasons, negation, preferences, and event order. Attach every claim to the exact speaker label in the transcript. Do not merge nearby speakers' statements or quantities. Preserve each named item in an explicit list; do not replace a concrete list with "various options" or a broad topic. If the speaker or detail is unclear, say unclear instead of guessing.
 
-Attribute speech using transcript speaker labels. Separate explicit transcript facts from visual inference. If uncertain, say so briefly in English instead of guessing. Keep the answer under 150 words. Add no extra text."""
+Translate speech into natural English. Use a provided English translation where available; never copy source-language text. Separate transcript facts from visual inference. Do not infer actions from a person's presence. Keep routine visual details concise. Target at most 220 words, but preserve a clearly enumerated list even if it needs more space. Add no extra text."""
+
+_FIELD_LINE_RE = re.compile(
+    r"^\s*(?:[-*]\s*)?(Scene|Location|Time/Occasion|People|User Action|"
+    r"Activity|Objects|Environment|Interaction Details)\s*:\s*(.*)$",
+    re.I,
+)
+
 
 def _field(text: str, label: str) -> str:
-    """抽取 '- Label: value' 形式的字段值。"""
-    for line in text.split("\n"):
-        ll = line.lower().strip().lstrip("-").strip()
-        if ll.startswith(label.lower() + ":"):
-            return line.split(":", 1)[-1].strip()
-    return ""
+    """Extract a field value, including continuation and bullet lines."""
+    target = label.casefold()
+    active = False
+    parts = []
+    for line in str(text or "").splitlines():
+        match = _FIELD_LINE_RE.match(line)
+        if match:
+            if active:
+                break
+            if match.group(1).casefold() == target:
+                active = True
+                value = match.group(2).strip()
+                if value:
+                    parts.append(value)
+            continue
+        if active:
+            value = line.strip()
+            if value.startswith(("- ", "* ")):
+                value = value[2:].strip()
+            if value:
+                parts.append(value)
+    return " ".join(parts)
 
 
 def _split_list(raw: str, person: bool = False):
@@ -88,7 +111,48 @@ def _split_list(raw: str, person: bool = False):
         out.append(p)
     return out
 
-def parse_analysis(text: str) -> dict:
+_TRANSCRIPT_SPEAKERS = (
+    "Camera wearer", "Speaker 1", "Speaker 2", "Consumer",
+    "Jake", "Alice", "Tasha", "Lucia", "Katrina", "Shure", "Unknown", "Me",
+    "Shure's GF", "Shuna", "Nina", "Violet", "Jack", "Nicous", "Sister", "Others",
+)
+_TRANSCRIPT_SPEAKER_RE = re.compile(
+    r"(?<![A-Za-z0-9_])(" +
+    "|".join(re.escape(x) for x in sorted(_TRANSCRIPT_SPEAKERS, key=len, reverse=True)) +
+    r")\s*:",
+    re.I,
+)
+
+
+def extract_english_transcript(transcript: str, max_chars: int = 4000) -> str:
+    """Keep speaker-labelled English source evidence without copying CJK text."""
+    raw = str(transcript or "").strip()
+    if not raw:
+        return ""
+    speakers = list(_TRANSCRIPT_SPEAKER_RE.finditer(raw))
+    if not speakers:
+        return ""
+    facts = []
+    previous_signature = None
+    for index, match in enumerate(speakers):
+        end = speakers[index + 1].start() if index + 1 < len(speakers) else len(raw)
+        segment = re.sub(r"\s+", " ", raw[match.end():end]).strip(" ,;")
+        if not segment or _contains_cjk(segment):
+            continue
+        signature = (match.group(1).casefold(),
+                     re.sub(r"[^a-z0-9]+", "", segment.casefold()))
+        if signature == previous_signature:
+            continue
+        previous_signature = signature
+        fact = f"{match.group(1)}: {segment}"
+        proposed = " ; ".join(facts + [fact])
+        if len(proposed) > max_chars:
+            break
+        facts.append(fact)
+    return " ; ".join(facts)
+
+
+def parse_analysis(text: str, transcript: str = "") -> dict:
     """Qwen 输出 → 结构化记忆条目（对齐 memory.add 的参数）。"""
     location = _field(text, "Location")
     people = _split_list(_field(text, "People"), person=True)
@@ -104,6 +168,7 @@ def parse_analysis(text: str) -> dict:
         # Store the event narrative separately from the location so search can find facts.
         "scene": _field(text, "Scene") or location,
         "user_action": action,
+        "source_evidence": extract_english_transcript(transcript),
         "people": people,
         "location": location or None,
         "activity": activity or None,
@@ -229,6 +294,11 @@ class QwenPerceiver:
         mid = m.get("id", "")
         if not force and mid in self.cache:
             hit = dict(self.cache[mid])
+            cached_fields = dict(hit.get("fields") or {})
+            if not cached_fields.get("source_evidence"):
+                cached_fields["source_evidence"] = extract_english_transcript(
+                    m.get("transcript", ""))
+            hit["fields"] = cached_fields
             fields_text = json.dumps(hit.get("fields") or {}, ensure_ascii=False)
             if not _contains_cjk(fields_text) and not _contains_cjk(hit.get("raw", "")):
                 hit["source"] = "cache"
@@ -275,7 +345,7 @@ class QwenPerceiver:
 
         elapsed = int((time.time() - t0) * 1000)
         out = {
-            "fields": parse_analysis(raw),
+            "fields": parse_analysis(raw, m.get("transcript", "")),
             "raw": raw,
             "elapsed_ms": elapsed,
             "num_frames": len(bufs) if bufs else 0,

@@ -351,6 +351,7 @@ class InteractiveSession:
             objects=f["objects"],
             extra_notes=(f.get("time_occasion") or "")[:200],
             timestamp=(time.strftime("%Y-%m-%d") + "T" + (_clock_from_id(m.get("id", "")) or time.strftime("%H:%M:%S"))),
+            source_evidence=f.get("source_evidence") or "",
         )
         self.id_map[m["id"]] = mid
         self._qwen_fields[m["id"]] = f

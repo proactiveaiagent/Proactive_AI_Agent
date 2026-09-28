@@ -26,6 +26,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "code"))
 from memory import PersonMemory, LAYER7_INDICES      # noqa: E402
+from qwen_perceive import extract_english_transcript  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 TESTSET = ROOT / "data" / "egolife" / "testset"
@@ -155,6 +156,7 @@ def add_moment(mem, m):
         environments=gt.get("environments_gt") or None,
         objects=gt.get("objects_gt") or None,
         extra_notes=(m.get("transcript") or "")[:200],
+        source_evidence=extract_english_transcript(m.get("transcript") or ""),
     )
 
 
