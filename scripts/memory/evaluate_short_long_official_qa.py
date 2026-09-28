@@ -5,7 +5,7 @@ All valid official EgoLifeQA questions for the 120 short-term reference clips
 are evaluated. The source video clip is the official target segment. Answer
 accuracy is judged semantically by a separate blind Qwen request.
 """
-import json, re, sys, time, tempfile, urllib.request
+import argparse, json, re, sys, time, tempfile, urllib.request
 from collections import Counter, defaultdict
 from datetime import date, timedelta
 from pathlib import Path
@@ -130,10 +130,11 @@ def make_mem_add(mem, fields, sid):
 
 def summarize(rows):
     n=len(rows)
-    if not n: return {"questions":0,"top5_hit":0,"top5_hit_rate":None,"answer_correct":0,"answer_accuracy":None}
+    if not n: return {"questions":0,"top5_hit":0,"top5_hit_rate":None,"answer_correct":None,"answer_accuracy":None}
     hits=sum(r.get("top5_hit") is True for r in rows)
-    correct=sum(r.get("answer_correct") is True for r in rows)
-    return {"questions":n,"top5_hit":hits,"top5_hit_rate":round(hits/n,4),"answer_correct":correct,"answer_accuracy":round(correct/n,4)}
+    scored=[r for r in rows if r.get("answer_correct") is not None]
+    correct=sum(r.get("answer_correct") is True for r in scored)
+    return {"questions":n,"top5_hit":hits,"top5_hit_rate":round(hits/n,4),"answer_correct":correct if scored else None,"answer_accuracy":round(correct/len(scored),4) if scored else None}
 
 
 def write_report(path, report):
@@ -141,10 +142,16 @@ def write_report(path, report):
 
 
 def main():
+    parser=argparse.ArgumentParser(description="Evaluate official short/long EgoLife QA retrieval and answer accuracy.")
+    parser.add_argument("--cache",type=Path,default=CACHE)
+    parser.add_argument("--output",type=Path,default=OUT)
+    parser.add_argument("--retrieval-only",action="store_true",help="Skip answer generation and semantic judging")
+    args=parser.parse_args()
+    output_path=args.output
     samples=[json.loads(l) for l in TEST.read_text(encoding="utf-8").splitlines() if l.strip()]
     qa_test_clips=[json.loads(l) for l in QA_CLIP_SET.read_text(encoding="utf-8").splitlines() if l.strip()]
     questions=[json.loads(l) for l in QA_TESTSET.read_text(encoding="utf-8").splitlines() if l.strip()]
-    cache=json.loads(CACHE.read_text(encoding="utf-8"))
+    cache=json.loads(args.cache.read_text(encoding="utf-8"))
     if not questions:
         raise SystemExit("Official QA test set is empty")
     matched_clip_ids={q["id"] for q in questions}
@@ -163,9 +170,9 @@ def main():
         "testset_file": str(QA_TESTSET.relative_to(ROOT)),
         "testset_clip_file": str(QA_CLIP_SET.relative_to(ROOT)),
     }
-    report={"created_at":time.strftime("%Y-%m-%d %H:%M:%S"),"status":"running","benchmark":"all valid official EgoLifeQA questions matched to short-term clips","method":{"question_source":"The persisted official_video_qa_v1_questions_810.jsonl set; all valid official questions for the 84 retained clips, with clips lacking official QA removed from this QA test set.","target":"The official QA source video clip itself; each top-5 hit requires exact retrieval of that clip ID.","short_term_memory":"The 120 Qwen-cached short-term snippets remain the retrieval corpus in six isolated participant stores; only the 84 labeled clips are QA test targets. Causal cutoff is after the source 30-second clip ends.","long_term_memory":"All currently cached Qwen memory for the same participant; future clips are excluded by the same causal cutoff. Multi-day memory is available only for A1_JAKE in the current cache.","answer_scoring":"Qwen generates an answer without seeing the reference; a separate Qwen call judges semantic agreement against the official reference answer. This is AI-judged, not human gold.","scope":"This is a same-question, single-day comparison across the 84 labeled target clips (810 questions). The 36 source clips without official QA are excluded from this QA test set. It does not replace the separate 500-question A1_JAKE cross-day multiple-choice benchmark."},"participant_names":{"A1_JAKE":"Jake","A2_ALICE":"Alice","A3_TASHA":"Tasha","A4_LUCIA":"Lucia","A5_KATRINA":"Katrina","A6_SHURE":"Shure"},"question_count":len(questions),"sample_coverage":qa_coverage,"short_term":{"overall":{},"by_participant":{},"details":[]},"long_term":{"overall":{},"by_participant":{},"details":[]}}
-    if OUT.exists():
-        prior=json.loads(OUT.read_text(encoding="utf-8"))
+    report={"created_at":time.strftime("%Y-%m-%d %H:%M:%S"),"status":"running","benchmark":"all valid official EgoLifeQA questions matched to short-term clips","method":{"retrieval_only":args.retrieval_only,"memory_cache":str(args.cache),"question_source":"The persisted official_video_qa_v1_questions_810.jsonl set; all valid official questions for the 84 retained clips, with clips lacking official QA removed from this QA test set.","target":"The official QA source video clip itself; each top-5 hit requires exact retrieval of that clip ID.","short_term_memory":"The 120 Qwen-cached short-term snippets remain the retrieval corpus in six isolated participant stores; only the 84 labeled clips are QA test targets. Causal cutoff is after the source 30-second clip ends.","long_term_memory":"All currently cached Qwen memory for the same participant; future clips are excluded by the same causal cutoff. Multi-day memory is available only for A1_JAKE in the current cache.","answer_scoring":"Not run in retrieval-only mode." if args.retrieval_only else "Qwen generates an answer without seeing the reference; a separate Qwen call judges semantic agreement against the official reference answer. This is AI-judged, not human gold.","scope":"This is a same-question, single-day comparison across the 84 labeled target clips (810 questions). The 36 source clips without official QA are excluded from this QA test set. It does not replace the separate 500-question A1_JAKE cross-day multiple-choice benchmark."},"participant_names":{"A1_JAKE":"Jake","A2_ALICE":"Alice","A3_TASHA":"Tasha","A4_LUCIA":"Lucia","A5_KATRINA":"Katrina","A6_SHURE":"Shure"},"question_count":len(questions),"sample_coverage":qa_coverage,"short_term":{"overall":{},"by_participant":{},"details":[]},"long_term":{"overall":{},"by_participant":{},"details":[]}}
+    if output_path.exists():
+        prior=json.loads(output_path.read_text(encoding="utf-8"))
         if prior.get("benchmark")==report["benchmark"]:
             report=prior
             report["status"]="running"
@@ -203,13 +210,17 @@ def main():
                     fields=next((f for x,f in clips if x==sid),{})
                     text=compact(fields)
                     if text:mem_text.append(text)
-                started=time.perf_counter()
-                predicted=api(query_prompt(q["question"],mem_text))
-                answer_ms=round((time.perf_counter()-started)*1000,1)
-                started=time.perf_counter()
-                judge=api(judge_prompt(q["question"],q["official_answer"],predicted))
-                judge_ms=round((time.perf_counter()-started)*1000,1)
-                row={**q,"scope":scope,"retrieved_ids":retrieved,"top5_hit":bool(set(retrieved[:5])&set(q["expected_ids"])),"model_answer":predicted,"answer_correct":parse_verdict(judge),"judge_output":judge,"answer_latency_ms":answer_ms,"judge_latency_ms":judge_ms,"memory_clips_available":len(clips)}
+                if args.retrieval_only:
+                    predicted=None; judge=None; answer_ms=None; judge_ms=None; answer_correct=None
+                else:
+                    started=time.perf_counter()
+                    predicted=api(query_prompt(q["question"],mem_text))
+                    answer_ms=round((time.perf_counter()-started)*1000,1)
+                    started=time.perf_counter()
+                    judge=api(judge_prompt(q["question"],q["official_answer"],predicted))
+                    judge_ms=round((time.perf_counter()-started)*1000,1)
+                    answer_correct=parse_verdict(judge)
+                row={**q,"scope":scope,"retrieved_ids":retrieved,"top5_hit":bool(set(retrieved[:5])&set(q["expected_ids"])),"model_answer":predicted,"answer_correct":answer_correct,"judge_output":judge,"answer_latency_ms":answer_ms,"judge_latency_ms":judge_ms,"memory_clips_available":len(clips)}
                 report[scope]["details"].append(row)
                 group=report[scope]["details"]
                 report[scope]["overall"]=summarize(group)
@@ -217,11 +228,11 @@ def main():
                 for r in group:by[r["participant"]].append(r)
                 report[scope]["by_participant"]={k:summarize(v) for k,v in sorted(by.items())}
                 report["updated_at"]=time.strftime("%Y-%m-%d %H:%M:%S")
-                write_report(OUT,report)
+                write_report(output_path,report)
                 print(f"{scope} {len(group)}/{len(questions)} {person} {q['question_id']} hit={row['top5_hit']} answer={row['answer_correct']}",flush=True)
     report["status"]="complete"
     report["completed_at"]=time.strftime("%Y-%m-%d %H:%M:%S")
-    write_report(OUT,report)
-    print(json.dumps({"status":report["status"],"short_term":report["short_term"]["overall"],"long_term":report["long_term"]["overall"],"by_participant_short":report["short_term"]["by_participant"],"by_participant_long":report["long_term"]["by_participant"],"output":str(OUT)},ensure_ascii=False,indent=2))
+    write_report(output_path,report)
+    print(json.dumps({"status":report["status"],"short_term":report["short_term"]["overall"],"long_term":report["long_term"]["overall"],"by_participant_short":report["short_term"]["by_participant"],"by_participant_long":report["long_term"]["by_participant"],"output":str(output_path)},ensure_ascii=False,indent=2))
 
 if __name__=="__main__":main()
