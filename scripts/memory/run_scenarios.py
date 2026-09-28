@@ -42,14 +42,28 @@ LONG_META = TESTSET / "long_term" / "timeline_meta.json"
 # ---------------------------------------------------------------------------
 
 def snapshot(mem, label, action=""):
-    """提取当前记忆状态的统计摘要（供可视化展示）。"""
+    # Capture structural quality signals at this exact replay step.
     m = mem.memory
     l7 = m["layer7"]
-
+    moments = l7.get("moments", {}) or {}
+    live_ids = {str(mid) for mid, doc in moments.items()
+                if isinstance(doc, dict) and not doc.get("stale")}
+    all_ids = {str(mid) for mid in moments}
     indices = {}
     index_top = {}
+    refs_by_index = {}
+    dangling_refs = 0
+    indexed_ids = set()
     for key in LAYER7_INDICES:
-        idx = l7.get(key, {})
+        idx = l7.get(key, {}) or {}
+        refs = set()
+        for ids in idx.values():
+            if isinstance(ids, (list, tuple, set)):
+                refs.update(str(mid) for mid in ids)
+        dangling_refs += len(refs - all_ids)
+        valid_live_refs = refs & live_ids
+        refs_by_index[key] = len(valid_live_refs)
+        indexed_ids.update(valid_live_refs)
         indices[key] = len(idx)
         index_top[key] = sorted(
             ((tag, len(ids)) for tag, ids in idx.items()),
@@ -61,7 +75,53 @@ def snapshot(mem, label, action=""):
         k: (len(v) if isinstance(v, (list, dict)) else (1 if v else 0))
         for k, v in profile.items()
     }
-
+    active_docs = [doc for mid, doc in moments.items() if str(mid) in live_ids]
+    core_complete = sum(
+        bool(str(doc.get("scene") or "").strip()) and
+        bool(str(doc.get("user_action") or "").strip())
+        for doc in active_docs if isinstance(doc, dict)
+    )
+    timestamped = sum(bool(str(doc.get("timestamp") or "").strip())
+                      for doc in active_docs if isinstance(doc, dict))
+    layer4 = m.get("layer4", {}) or {}
+    layer5 = m.get("layer5", {}) or {}
+    l4_summary = str(layer4.get("summary") or "")
+    l5_summary = str(layer5.get("summary") or "")
+    denominator = len(live_ids)
+    dimension_coverage = {
+        key: {
+            "count": refs_by_index.get(key, 0),
+            "rate": round(100 * refs_by_index.get(key, 0) / denominator, 1)
+                    if denominator else 0.0,
+        }
+        for key in LAYER7_INDICES
+    }
+    episode_ids = {
+        str(doc.get("id"))
+        for i in range(1, 4)
+        for doc in m.get(f"layer{i}", [])
+        if isinstance(doc, dict) and doc.get("id")
+    }
+    step_metrics = {
+        "episodic_moments": len(episode_ids),
+        "archive_moments": len(live_ids),
+        "core_fields_complete": core_complete,
+        "core_fields_rate": round(100 * core_complete / denominator, 1) if denominator else 0.0,
+        "timestamped_moments": timestamped,
+        "timestamp_rate": round(100 * timestamped / denominator, 1) if denominator else 0.0,
+        "indexed_moments": len(indexed_ids),
+        "index_coverage_rate": round(100 * len(indexed_ids) / denominator, 1) if denominator else 0.0,
+        "index_coverage_by_dimension": dimension_coverage,
+        "dangling_index_references": dangling_refs,
+        "stale_moments": len(all_ids - live_ids),
+        "highlighted_moments": sum(bool(doc.get("highlighted")) for doc in active_docs
+                                   if isinstance(doc, dict)),
+        "layer4_summary_chars": len(l4_summary),
+        "layer5_summary_chars": len(l5_summary),
+        "layer4_source_moments": int(layer4.get("source_moment_count") or 0),
+        "layer5_source_moments": int(layer5.get("source_moment_count") or 0),
+        "profile_slots": sum(profile_fields.values()),
+    }
     return {
         "label": label,
         "action": action,
@@ -74,11 +134,11 @@ def snapshot(mem, label, action=""):
         "indices": indices,
         "index_top": index_top,
         "profile_fields": profile_fields,
-        "layer4_summary": (m["layer4"].get("summary") or "")[:120],
-        "layer5_summary": (m["layer5"].get("summary") or "")[:120],
+        "layer4_summary": l4_summary[:120],
+        "layer5_summary": l5_summary[:120],
         "total_moments": m["metadata"].get("total_moments", 0),
+        "step_metrics": step_metrics,
     }
-
 
 def add_moment(mem, m):
     """把一条 EgoLife moment 写入记忆模型。"""

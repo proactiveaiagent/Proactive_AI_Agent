@@ -36,8 +36,26 @@ VIDEO_ROOT = (ROOT / "data" / "egolife").resolve()
 
 SHORT_FILE = TESTSET / "short_term" / "moments_scattered.jsonl"
 SHORT_PLAN = TESTSET / "short_term" / "crud_plan.json"
+SHORT_EXPANDED_FILE = TESTSET / "short_term" / "moments_scattered_v2_120.jsonl"
+SHORT_EXPANDED_PLAN = TESTSET / "short_term" / "crud_plan_v2.json"
 LONG_FILE = TESTSET / "long_term" / "full_day.jsonl"
 LONG_META = TESTSET / "long_term" / "timeline_meta.json"
+LONG_PERSON_DIR = TESTSET / "long_term" / "person_sets"
+
+
+def site_perceiver():
+    """Use the memory-eval V3 cache for this visualization, with an env override."""
+    configured = os.environ.get("EGOLIFE_QWEN_CACHE")
+    if configured:
+        cache_path = Path(configured)
+        if not cache_path.is_absolute():
+            cache_path = ROOT / cache_path
+    else:
+        cache_path = RUNS / "qwen_cache_memory_prompt_v3.json"
+        if not cache_path.exists():
+            cache_path = RUNS / "qwen_cache.json"
+    return QwenPerceiver(cache_file=cache_path)
+
 
 SCENARIO_META = {
     "short_term": {"name": "短期记忆场景", "desc": "不连续视频片段 · 验证 Layer1~7 完整 CRUD"},
@@ -93,7 +111,8 @@ def moment_brief(m):
         "hour": m.get("_hour", ""),
         "people": m.get("people") or gt.get("people_gt") or [],
         "location": loc[0] if loc else (m.get("location") or ""),
-        "action": (m.get("user_action") or m.get("scene") or "")[:160],
+        "scene": m.get("scene") or "",
+        "action": (m.get("user_action") or m.get("scene") or ""),
         "video_url": video_url,
         "clip_start": clip_start,
         "clip_end": clip_end,
@@ -105,17 +124,208 @@ def _load_jsonl(path):
         return [json.loads(l) for l in f if l.strip()]
 
 
+PARTICIPANT_NAMES = {
+    "A1_JAKE": "Jake",
+    "A2_ALICE": "Alice",
+    "A3_TASHA": "Tasha",
+    "A4_LUCIA": "Lucia",
+    "A5_KATRINA": "Katrina",
+    "A6_SHURE": "Shure",
+}
+
+
+def interactive_dataset_options():
+    """Datasets available in the step-by-step runner."""
+    options = []
+    for dataset, path, plan_path, title in (
+        ("base", SHORT_FILE, SHORT_PLAN, "短期 CRUD 演示集"),
+        ("expanded", SHORT_EXPANDED_FILE, SHORT_EXPANDED_PLAN, "短期扩展集"),
+    ):
+        rows = _load_jsonl(path)
+        counts = {}
+        for row in rows:
+            parts = str(row.get("id", "")).split("_")
+            participant = "_".join(parts[1:3]) if len(parts) >= 3 else ""
+            if participant:
+                counts[participant] = counts.get(participant, 0) + 1
+        per_person = next(iter(counts.values()), 0)
+        purpose = (
+            f"{len(rows)} 段，6 人各 {per_person} 段；原 CRUD 步进演示集。"
+            if dataset == "base" else
+            f"{len(rows)} 段，6 人各 {per_person} 段；扩展短期测评集，可逐段写入并执行 CRUD。"
+        )
+        options.append({
+            "value": f"short_term|{dataset}|all",
+            "scenario": "short_term",
+            "dataset": dataset,
+            "participant": None,
+            "label": f"{title} · 全部人物（{len(rows)} 段）",
+            "note": purpose,
+        })
+        for participant in PARTICIPANT_NAMES:
+            if participant not in counts:
+                continue
+            name = PARTICIPANT_NAMES[participant]
+            options.append({
+                "value": f"short_term|{dataset}|{participant}",
+                "scenario": "short_term",
+                "dataset": dataset,
+                "participant": participant,
+                "label": f"{title} · {name}（{counts[participant]} 段）",
+                "note": f"{purpose} 当前只加载 {name} 的片段。",
+            })
+
+    long_index = json.load(open(LONG_PERSON_DIR / "index.json", encoding="utf-8"))
+    for meta in long_index.get("datasets", []):
+        participant = meta["participant"]
+        name = PARTICIPANT_NAMES.get(participant, participant)
+        complete = meta.get("complete", False)
+        coverage = round(float(meta.get("coverage", 0)) * 100, 1)
+        if complete:
+            label = f"长期完整日集 · {name}（{meta['available_count']} 段）"
+            note = (
+                f"DAY1 完整视频集：{meta['available_count']} 段，覆盖 "
+                f"{len(meta.get('hours_covered', []))} 个有数据时段。"
+            )
+        else:
+            label = (
+                f"长期部分集 · {name}（{meta['available_count']}/"
+                f"{meta['total_candidates']} 段 · {coverage}%）"
+            )
+            note = (
+                f"DAY1 视频不完整：仅 {meta['available_count']}/"
+                f"{meta['total_candidates']} 段（{coverage}%）可运行；"
+                "结果仅代表本地已下载片段，不是完整日测评。"
+            )
+        options.append({
+            "value": f"long_term|long_day|{participant}",
+            "scenario": "long_term",
+            "dataset": "long_day",
+            "participant": participant,
+            "label": label,
+            "note": note,
+        })
+    return options
+
+
 class InteractiveSession:
     """一个场景的步进执行会话。"""
 
-    def __init__(self, key, perceiver=None):
+    def __init__(self, key, participant=None, dataset="base", perceiver=None):
         assert key in SCENARIO_META, f"unknown scenario: {key}"
         self.key = key
+        self.participant = participant
+        self.dataset_key = dataset
         self.pos = 0            # 已执行步数 = 下一步索引
         self.log = []           # [{kind, title, msg, snapshot, perception}]
-        self.perceiver = perceiver or QwenPerceiver()
+        self.perceiver = perceiver or site_perceiver()
         self.qwen_health = self.perceiver.health()
         self._build()
+
+    def _install_operation_audit(self):
+        """Record actual memory API calls made by this interactive session."""
+        self.operation_log = []
+        self._active_step_no = None
+        self._active_step_title = None
+        tracked = (
+            "add", "query", "query_hierarchical", "update", "update_feedback",
+            "highlight", "delete", "sort", "combine", "compress", "update_profile",
+        )
+        for name in tracked:
+            original = getattr(self.mem, name, None)
+            if not callable(original):
+                continue
+
+            def audited(*args, __name=name, __original=original, **kwargs):
+                started = time.perf_counter()
+                before_highlighted = None
+                if __name == "combine":
+                    moments = self.mem.memory.get("layer7", {}).get("moments", {})
+                    before_highlighted = {
+                        mid for mid, item in moments.items()
+                        if isinstance(item, dict) and item.get("highlighted")
+                    }
+                try:
+                    result = __original(*args, **kwargs)
+                except Exception as exc:
+                    self._append_operation(__name, args, kwargs, None,
+                                           started, error=exc)
+                    raise
+                self._append_operation(
+                    __name, args, kwargs, result, started,
+                    before_highlighted=before_highlighted,
+                )
+                return result
+
+            setattr(self.mem, name, audited)
+
+    def _append_operation(self, name, args, kwargs, result, started,
+                          error=None, before_highlighted=None):
+        """Append a compact, factual audit event; never stores full memory payloads."""
+        status = "failed" if error else ("blocked" if result is False else "success")
+        summary = self._operation_summary(name, args, kwargs, result, error,
+                                          before_highlighted)
+        self.operation_log.append({
+            "seq": len(self.operation_log) + 1,
+            "time": time.strftime("%H:%M:%S"),
+            "step": self._active_step_no,
+            "step_title": self._active_step_title or "",
+            "operation": name,
+            "status": status,
+            "summary": summary,
+            "elapsed_ms": round((time.perf_counter() - started) * 1000),
+        })
+
+    def _operation_summary(self, name, args, kwargs, result, error,
+                           before_highlighted=None):
+        if error:
+            return f"{name} 失败：{str(error)[:140]}"
+        arg0 = args[0] if args else None
+        if name == "add":
+            mid = str(result or "")
+            item = self.mem.memory.get("layer7", {}).get("moments", {}).get(mid, {})
+            text = str(item.get("scene") or item.get("user_action") or "").strip()
+            text = text.replace("\n", " ")[:100]
+            return f"写入记忆 {mid}" + (f" · {text}" if text else "")
+        if name in ("query", "query_hierarchical"):
+            query = str(arg0 if arg0 is not None else kwargs.get("query_text", ""))[:80]
+            hits = result if isinstance(result, list) else []
+            return f"检索「{query}」· 命中 {len(hits)} 条"
+        if name == "update":
+            mid = str(arg0 or "")
+            updates = args[1] if len(args) > 1 else kwargs.get("updates", {})
+            fields = ", ".join(str(x) for x in updates) if isinstance(updates, dict) else ""
+            return f"更新记忆 {mid}" + (f" · 字段 {fields}" if fields else "")
+        if name == "update_feedback":
+            return f"修正记忆 {arg0 or ''} · 反馈已保存"
+        if name == "highlight":
+            return f"重点标记 {arg0 or ''}" if result else f"重点标记失败 {arg0 or ''}"
+        if name == "delete":
+            reason = kwargs.get("reason", "manual")
+            return f"删除记忆 {arg0 or ''} · {'成功' if result else '被保护/未找到'} · {reason}"
+        if name == "sort":
+            analysis = arg0 if isinstance(arg0, dict) else {}
+            tags = sum(len(v) for v in analysis.values() if isinstance(v, dict))
+            refs = sum(len(ids) for dim in analysis.values() if isinstance(dim, dict)
+                       for ids in dim.values() if isinstance(ids, list))
+            return f"整理索引 · {len(analysis)} 个维度、{tags} 个标签、{refs} 条引用"
+        if name == "combine":
+            mapping = arg0 if isinstance(arg0, dict) else {}
+            aliases = sum(len(v) for v in mapping.values() if isinstance(v, dict))
+            moments = self.mem.memory.get("layer7", {}).get("moments", {})
+            after = {mid for mid, item in moments.items()
+                     if isinstance(item, dict) and item.get("highlighted")}
+            auto_highlighted = len(after - (before_highlighted or set()))
+            return f"合并索引别名 {aliases} 个" + (
+                f" · 合并后自动标记重点 {auto_highlighted} 条" if auto_highlighted else "")
+        if name == "compress":
+            payload = arg0 if isinstance(arg0, dict) else {}
+            layers = "、".join(k.upper() for k in payload if k in ("layer4", "layer5", "layer6"))
+            return f"压缩整理摘要 · 更新 {layers or '长期摘要'}"
+        if name == "update_profile":
+            fields = list(arg0) if isinstance(arg0, dict) else []
+            return "更新用户画像" + (f" · 字段 {'、'.join(map(str, fields[:8]))}" if fields else "")
+        return name
 
     # ------------------------------------------------------------------
     # 感知 → 记忆写入
@@ -156,26 +366,6 @@ class InteractiveSession:
         }
         return mid, info
 
-    def _sort_analysis_from_qwen(self):
-        """按 Qwen 产出的字段聚合出归类结果（ground-truth 不参与记忆）。"""
-        dims = {"people": "people", "locations": "location",
-                "activity_events": "activity", "environments": "environments",
-                "objects": "objects"}
-        analysis = {}
-        for dim, fkey in dims.items():
-            bucket = {}
-            for did, mid in self.id_map.items():
-                f = self._qwen_fields.get(did) or {}
-                v = f.get(fkey)
-                vals = v if isinstance(v, list) else ([v] if v else [])
-                for t in vals:
-                    t = str(t).strip()
-                    if t:
-                        bucket.setdefault(t, []).append(mid)
-            if bucket:
-                analysis[dim] = bucket
-        return analysis
-
     # ------------------------------------------------------------------
     # 会话构建
     # ------------------------------------------------------------------
@@ -190,6 +380,7 @@ class InteractiveSession:
             os.rename(mem_dir, trash_dir / f"{self.key}_{time.time_ns()}")
             mem_dir.mkdir(parents=True, exist_ok=True)
         self.mem = PersonMemory(memory_dir=str(mem_dir))
+        self._install_operation_audit()
         self.daytime = DaytimeProcessor(self.mem)
         self.daytime.start_scene(f"{self.key}_{time.strftime('%Y-%m-%d')}")
         self.id_map = {}        # 数据集 id → 记忆模型 moment_id
@@ -202,12 +393,100 @@ class InteractiveSession:
 
         self._log_snapshot("初始状态", "init", "会话创建，等待第一步")
 
+    def _display_brief(self, m):
+        """Current-step preview uses the same cached English fields that feed memory."""
+        brief = moment_brief(m)
+        cached = (self.perceiver.cache.get(m.get("id", "")) or {}).get("fields") or {}
+        if cached:
+            if cached.get("scene"):
+                brief["scene"] = cached["scene"]
+            if cached.get("user_action"):
+                brief["action"] = cached["user_action"]
+            for key in ("people", "location", "activity"):
+                if cached.get(key):
+                    brief[key] = cached[key]
+        if not brief.get("action") or any("\u3400" <= ch <= "\u9fff" for ch in str(brief.get("action", ""))):
+            brief["action"] = "English summary will appear after this step runs."
+        return brief
+
     def _plan_short(self):
-        """短期场景：逐条写入 + CRUD 计划。"""
-        moments = _load_jsonl(SHORT_FILE)
-        plan = json.load(open(SHORT_PLAN, encoding="utf-8"))
+        """短期场景：逐条写入 + CRUD 计划，可按人物筛选当前演示集。"""
+        if self.dataset_key not in ("base", "expanded"):
+            raise ValueError(f"未知短期数据集：{self.dataset_key}")
+        source_file, plan_file = (
+            (SHORT_EXPANDED_FILE, SHORT_EXPANDED_PLAN)
+            if self.dataset_key == "expanded" else (SHORT_FILE, SHORT_PLAN)
+        )
+        all_moments = _load_jsonl(source_file)
+        all_plan = json.load(open(plan_file, encoding="utf-8"))
+        if self.participant:
+            moments = [
+                m for m in all_moments
+                if "_".join(str(m.get("id", "")).split("_")[1:3]) == self.participant
+            ]
+            if not moments:
+                raise ValueError(f"短期交互集没有参与者 {self.participant}")
+            def for_participant(item_id):
+                return "_".join(str(item_id).split("_")[1:3]) == self.participant
+
+            plan = {
+                **all_plan,
+                "add": [m.get("id") for m in moments],
+                "update": [x for x in all_plan.get("update", [])
+                           if for_participant(x.get("id"))],
+                "highlight": [x for x in all_plan.get("highlight", [])
+                              if for_participant(x)],
+                "delete": [x for x in all_plan.get("delete", [])
+                           if for_participant(x.get("id"))],
+            }
+            # 每个人物都保留完整的 CRUD 演示路径；没有预设操作时，
+            # 从该人物自己的片段生成一条可追溯的演示操作。
+            if not plan["update"]:
+                for m in moments:
+                    gt = m.get("ground_truth", {})
+                    for field, gt_key in (
+                        ("environments", "environments_gt"),
+                        ("objects", "objects_gt"),
+                        ("location", "location_gt"),
+                        ("people", "people_gt"),
+                        ("activity", "activity_gt"),
+                    ):
+                        value = gt.get(gt_key)
+                        if isinstance(value, list) and value:
+                            value = value[0]
+                        if value:
+                            plan["update"] = [{
+                                "id": m["id"], "field": field,
+                                "new_value": value,
+                                "reason": "按该片段标注生成的 CRUD 演示操作",
+                            }]
+                            break
+                    if plan["update"]:
+                        break
+            if not plan["highlight"]:
+                plan["highlight"] = [moments[0]["id"]]
+            if not plan["delete"]:
+                delete_target = next(
+                    (m["id"] for m in reversed(moments)
+                     if m["id"] not in plan["highlight"]),
+                    moments[-1]["id"],
+                )
+                plan["delete"] = [{
+                    "id": delete_target,
+                    "reason": "短期场景结束后清理该人物的演示记忆",
+                }]
+        else:
+            moments = all_moments
+            plan = all_plan
+
         self.moments = moments
         self.plan = plan
+        self.dataset_options = interactive_dataset_options()
+        self.dataset_id = f"short_term|{self.dataset_key}|{self.participant or 'all'}"
+        self.dataset_note = next(
+            (x["note"] for x in self.dataset_options if x["value"] == self.dataset_id), "")
+        self.participant_label = PARTICIPANT_NAMES.get(
+            self.participant, "全部人物" if not self.participant else self.participant)
         steps = []
 
         # 1) add：每条视频片段一步（Qwen 感知 → 记忆）
@@ -221,7 +500,7 @@ class InteractiveSession:
             steps.append({
                 "kind": "add",
                 "title": f"感知并写入视频片段 {i}/{len(moments)}",
-                "inputs": [moment_brief(m)],
+                "inputs": [self._display_brief(m)],
                 "run": run,
             })
 
@@ -305,11 +584,23 @@ class InteractiveSession:
 
     def _plan_long(self):
         """长期场景：白天按小时批量写入 + 夜间整理 4 步。"""
-        moments = _load_jsonl(LONG_FILE)
-        meta = json.load(open(LONG_META, encoding="utf-8"))
+        self.dataset_key = "long_day"
+        default_meta = json.load(open(LONG_META, encoding="utf-8"))
+        participant = self.participant or default_meta.get("participant", "A1_JAKE")
+        meta_path = LONG_PERSON_DIR / f"{participant}.meta.json"
+        data_path = LONG_PERSON_DIR / f"{participant}.jsonl"
+        if not meta_path.exists() or not data_path.exists():
+            raise ValueError(f"没有 {participant} 的长期数据集")
+        meta = json.load(open(meta_path, encoding="utf-8"))
+        moments = _load_jsonl(data_path)
+        self.participant = participant
         self.moments = moments
         self.meta = meta
-        participant = meta["participant"]
+        self.dataset_options = interactive_dataset_options()
+        self.dataset_id = f"long_term|long_day|{participant}"
+        self.dataset_note = next(
+            (x["note"] for x in self.dataset_options if x["value"] == self.dataset_id), "")
+        self.participant_label = PARTICIPANT_NAMES.get(participant, participant)
         steps = []
 
         # 白天：按小时分批
@@ -332,7 +623,7 @@ class InteractiveSession:
             steps.append({
                 "kind": "add_batch",
                 "title": f"白天感知写入 · {h}:00 时段（{len(group)} 条）",
-                "inputs": [moment_brief(m) for m in group],
+                "inputs": [self._display_brief(m) for m in group],
                 "run": run,
             })
 
@@ -389,13 +680,9 @@ class InteractiveSession:
                     "clip_start": b["clip_start"], "clip_end": b["clip_end"],
                     "clock": b["clock"]}
 
-        def cut(s, n=110):
-            s = s or ""
-            return s if len(s) <= n else s[:n] + "…"
-
         def fmt(x, with_stale=False):
-            d = {"id": x.get("id", ""), "scene": cut(x.get("scene", "")),
-                 "user_action": cut(x.get("user_action", "")),
+            d = {"id": x.get("id", ""), "scene": x.get("scene", ""),
+                 "user_action": x.get("user_action", ""),
                  "location": x.get("location", ""),
                  "activity": x.get("activity", ""),
                  "people": x.get("people", []),
@@ -439,7 +726,13 @@ class InteractiveSession:
         if self.pos >= len(self.steps):
             return "所有步骤已执行完毕"
         step = self.steps[self.pos]
-        msg, perception = step["run"](force=force)
+        self._active_step_no = self.pos + 1
+        self._active_step_title = step["title"]
+        try:
+            msg, perception = step["run"](force=force)
+        finally:
+            self._active_step_no = None
+            self._active_step_title = None
         self._log_snapshot(step["title"], step["kind"], msg, perception)
         self.pos += 1
         return msg
@@ -461,37 +754,49 @@ class InteractiveSession:
                 "detail": s.get("detail", {}),
                 "inputs": s.get("inputs", []),
             }
-        # 日志里的 Qwen 原始输出按需裁剪，避免单步响应过大
+        # 原始输出在前端折叠显示；这里保留完整文本，避免用户看到人为截断的字段。
         slim = []
         for e in self.log:
             e2 = dict(e)
             p = e.get("perception")
             if p:
-                p = dict(p)
-                if p.get("raw"):
-                    p["raw"] = p["raw"][:400]
-                if p.get("kind") == "batch":
-                    p["items"] = [{**it, "raw": (it.get("raw") or "")[:200]}
-                                  for it in p.get("items", [])]
-                e2["perception"] = p
+                e2["perception"] = dict(p)
             slim.append(e2)
 
         meta = SCENARIO_META[self.key]
-        extra = {}
+        extra = {
+            "participant": self.participant,
+            "participant_label": self.participant_label,
+            "dataset_id": self.dataset_id,
+            "dataset_key": self.dataset_key,
+            "dataset_note": self.dataset_note,
+            "dataset_options": self.dataset_options,
+        }
         if self.key == "long_term":
-            extra = {
-                "participant": self.meta.get("participant"),
-                "hours_covered": self.meta.get("hours_covered", []),
-            }
+            extra["hours_covered"] = self.meta.get("hours_covered", [])
+        display_name = meta["name"]
+        description = meta["desc"]
+        if self.key == "short_term" and self.participant:
+            display_name += f" · {self.participant_label}"
+        elif self.key == "long_term":
+            display_name += f" · {self.participant_label}"
+            if not self.meta.get("complete", False):
+                display_name += "（部分视频）"
+            extra["available_count"] = self.meta.get("available_count", len(self.moments))
+            extra["total_candidates"] = self.meta.get("total_candidates", len(self.moments))
+            extra["coverage"] = self.meta.get("coverage", 1.0)
+            extra["complete_day"] = self.meta.get("complete", False)
+            description = self.dataset_note
         return {
             "scenario": self.key,
-            "name": meta["name"],
-            "desc": meta["desc"],
+            "name": display_name,
+            "desc": description,
             "total": total,
             "pos": self.pos,
             "finished": self.pos >= total,
             "current": cur,
             "log": slim,
+            "operations": [dict(event) for event in self.operation_log[-2000:]],
             "snapshot": self.log[-1]["snapshot"] if self.log else None,
             "qwen": {
                 "ok": bool(self.qwen_health.get("model_loaded")),

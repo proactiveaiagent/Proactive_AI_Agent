@@ -28,6 +28,7 @@ CACHE_FILE = RUNS / "qwen_cache.json"
 
 DEFAULT_API = "http://localhost:8000"
 DEFAULT_FRAMES = 4
+PROMPT_VERSION = "memory-v2-2026-09-28"
 
 
 # ---------------------------------------------------------------------------
@@ -38,32 +39,22 @@ DEFAULT_FRAMES = 4
 def build_prompt(transcript: str, n_frames: int) -> str:
     ts = transcript.strip() if transcript and transcript.strip() else \
         "[No audio transcript — infer from visual only]"
-    return f"""You are a proactive personal assistant with multi-modal perception.
+    return f"""Create a concise, factual episodic memory from {n_frames} ordered first-person video frames and this transcript:
 
-You are given {n_frames} ordered frames sampled uniformly across a short
-first-person (egocentric) video clip. Reason over the whole sequence — motion,
-action progression, and what changes between frames.
-
-Transcript:
 {ts}
 
-Based on the input above, provide:
+Return exactly these English fields, one line each. Translate speech into natural English; never copy source-language text. Keep names in Latin script.
+Scene: one sentence stating the main event and key fact
+Location: broad or specific place supported by the frames; use a broad label if the exact room or store is uncertain
+Time/Occasion: only supported time or occasion
+People: only named speakers or people clearly identified in the frames; never use generic labels such as visitors, group, others, or people. Use None if no one can be identified
+User Action: concrete camera-wearer actions in order; do not assign another person's action to the camera wearer
+Activity: the main activity. If speech explains the event, preserve the named person, action, object, and key fact instead of reducing it to generic conversation
+Objects: only tangible items clearly visible or explicitly handled/discussed; prefer the few important items. Do not guess furniture, devices, or objects from a room type
+Environment: concise physical setting supported by frames only. Do not guess room names, lighting, clutter, or multiple rooms; use a broad description when uncertain
+Interaction Details: key supported who-did-what-to-whom/object facts, transfers, state changes, or specific spoken facts
 
-## PART 1 — Scene Recognition
-- Location: [specific location]
-- Time/Occasion: [time of day, occasion …]
-- People: [name1, name2, …] (first names only; write None if nobody)
-- User Action: [what the camera wearer is doing — one sentence]
-- Activity: [high-level activity category, e.g. cooking / meeting / commuting / resting]
-- Objects: [notable objects around, comma separated]
-- Environment: [setting descriptors, e.g. indoor, office, kitchen]
-
-Rules:
-- Answer with the exact field labels above, one per line.
-- Be concrete and brief. No explanations outside the fields.
-
-Keep the response structured and concise."""
-
+Attribute speech using transcript speaker labels. Separate explicit transcript facts from visual inference. If uncertain, say so briefly in English instead of guessing. Keep the answer under 150 words. Add no extra text."""
 
 def _field(text: str, label: str) -> str:
     """抽取 '- Label: value' 形式的字段值。"""
@@ -74,29 +65,44 @@ def _field(text: str, label: str) -> str:
     return ""
 
 
-def _split_list(raw: str):
+def _split_list(raw: str, person: bool = False):
     if not raw:
         return []
     parts = re.split(r"[,，、;；]", raw)
     out = []
+    person_placeholders = {"other", "others", "other people", "people", "group",
+                           "crowd", "someone", "somebody", "unknown person",
+                           "unidentified person", "camera wearer",
+                           "none identified", "none clearly identifiable",
+                           "no one identifiable", "no one clearly identifiable",
+                           "no identifiable people", "no people identified"}
     for p in parts:
-        p = re.sub(r"（[^）]*）|\([^)]*\)", "", p).strip()
-        if p and p.lower() not in ("none", "n/a", "unknown", "null", "-"):
-            out.append(p)
+        if re.search(r"\b(implied|possibly|maybe|unclear|uncertain|inferred|guess(?:ed)?)\b", p, re.I):
+            continue
+        p = re.sub(r"（[^）]*）|\([^)]*\)", "", p).strip().strip(".，。, ;；: ")
+        if not p or p.lower() in ("none", "n/a", "unknown", "null", "-"):
+            continue
+        if person and (p.lower() in person_placeholders or
+                       re.fullmatch(r"(?:one|two|three|several|many|a few) others?", p.lower())):
+            continue
+        out.append(p)
     return out
-
 
 def parse_analysis(text: str) -> dict:
     """Qwen 输出 → 结构化记忆条目（对齐 memory.add 的参数）。"""
     location = _field(text, "Location")
-    people = _split_list(_field(text, "People"))
+    people = _split_list(_field(text, "People"), person=True)
     action = _field(text, "User Action")
+    interaction = _field(text, "Interaction Details")
+    if interaction and interaction.lower() not in action.lower():
+        action = (action.rstrip(" .") + ". Interaction details: " +
+                  interaction.strip().rstrip(" .")) if action else interaction
     activity = _field(text, "Activity")
     objects = _split_list(_field(text, "Objects"))
     envs = _split_list(_field(text, "Environment"))
     return {
-        # scene 沿用 code/agent.py 的约定：场景 = location
-        "scene": location,
+        # Store the event narrative separately from the location so search can find facts.
+        "scene": _field(text, "Scene") or location,
         "user_action": action,
         "people": people,
         "location": location or None,
@@ -107,6 +113,11 @@ def parse_analysis(text: str) -> dict:
         "needs": [],
         "solutions": [],
     }
+
+
+def _contains_cjk(text: str) -> bool:
+    """Return True when model output still contains untranslated CJK text."""
+    return bool(re.search(r"[\u3400-\u9fff\uf900-\ufaff\u3040-\u30ff\uac00-\ud7af]", str(text or "")))
 
 
 # ---------------------------------------------------------------------------
@@ -218,8 +229,13 @@ class QwenPerceiver:
         mid = m.get("id", "")
         if not force and mid in self.cache:
             hit = dict(self.cache[mid])
-            hit["source"] = "cache"
-            return hit
+            fields_text = json.dumps(hit.get("fields") or {}, ensure_ascii=False)
+            if not _contains_cjk(fields_text) and not _contains_cjk(hit.get("raw", "")):
+                hit["source"] = "cache"
+                return hit
+            # Do not let an old non-English cache entry re-enter memory.
+            self.cache.pop(mid, None)
+            self._save_cache()
 
         vp = video_path_of(m)
         if vp is None:
@@ -229,16 +245,31 @@ class QwenPerceiver:
         t0 = time.time()
         try:
             bufs = extract_frames(vp, start, end, self.num_frames)
-            prompt = build_prompt(m.get("transcript", ""), len(bufs))
+            base_prompt = build_prompt(m.get("transcript", ""), len(bufs))
             files = [("images", (f"f{i}.jpg", b, "image/jpeg"))
                      for i, b in enumerate(bufs)]
-            resp = requests.post(f"{self.api_url}/analyze_video",
-                                 files=files, data={"prompt": prompt}, timeout=240)
-            if resp.status_code != 200:
-                return {"source": "error",
-                        "error": f"API {resp.status_code}: {resp.text[:200]}",
-                        "fields": None}
-            raw = resp.json().get("analysis", "")
+            raw = ""
+            for attempt in range(3):
+                prompt = base_prompt
+                if attempt == 1:
+                    prompt += ("\n\nRewrite the previous answer. It violated the English-only rule. "
+                               "Translate or paraphrase every phrase into English; never include CJK characters. "
+                               "For an idiom whose meaning is uncertain, say it is an unclear colloquial phrase.")
+                elif attempt == 2:
+                    prompt += ("\n\nFinal rewrite: do not quote any speech. Summarize dialogue only when you can "
+                               "state it naturally in English; otherwise write that the colloquial speech was unclear. "
+                               "Every field value must contain English text only and zero CJK characters.")
+                resp = requests.post(f"{self.api_url}/analyze_video",
+                                     files=files, data={"prompt": prompt}, timeout=240)
+                if resp.status_code != 200:
+                    return {"source": "error",
+                            "error": f"API {resp.status_code}: {resp.text[:200]}",
+                            "fields": None}
+                raw = resp.json().get("analysis", "")
+                if not _contains_cjk(raw):
+                    break
+            if _contains_cjk(raw):
+                return {"source": "error", "error": "Qwen output remained non-English after retry; rejected from memory", "fields": None}
         except Exception as e:
             return {"source": "error", "error": str(e), "fields": None}
 
@@ -250,6 +281,7 @@ class QwenPerceiver:
             "num_frames": len(bufs) if bufs else 0,
             "model": self.health().get("model", "Qwen3-VL"),
             "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "prompt_version": PROMPT_VERSION,
         }
         self.cache[mid] = out
         self._save_cache()

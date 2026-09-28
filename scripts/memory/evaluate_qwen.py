@@ -1,6 +1,7 @@
 """Batch Qwen3-VL golden-set evaluation with one-to-one precision/recall/F1."""
 import argparse
 import json
+import os
 import re
 import sys
 import time
@@ -16,6 +17,8 @@ DATA = {
     "short_term": ROOT / "data/egolife/testset/short_term/moments_scattered.jsonl",
     "long_term": ROOT / "data/egolife/testset/long_term/full_day.jsonl",
 }
+CACHE_PATH = Path(os.environ.get("EGOLIFE_QWEN_CACHE", str(ROOT / "data/egolife/runs/qwen_cache.json")))
+
 DIMS = {
     "people": ("people", "people_gt"),
     "locations": ("location", "location_gt"),
@@ -69,6 +72,10 @@ def values(value):
     return [text] if text else []
 
 
+def has_cjk(text):
+    return bool(re.search(r"[\u3400-\u9fff\uf900-\ufaff\u3040-\u30ff\uac00-\ud7af]", text or ""))
+
+
 def load_rows(path):
     with path.open(encoding="utf-8") as f:
         return [json.loads(line) for line in f if line.strip()]
@@ -94,26 +101,43 @@ def main():
     ap.add_argument("--scenario", choices=["short_term", "long_term", "both"], default="both")
     ap.add_argument("--limit", type=int, default=0, help="Per scenario limit; 0 means all")
     ap.add_argument("--force", action="store_true", help="Bypass perception cache and call Qwen")
+    ap.add_argument("--cache-only", action="store_true", help="Require cached outputs; never call the model")
+    ap.add_argument("--unique-long", action="store_true", help="Evaluate only canonical _en rows in paired long-term data")
     ap.add_argument("--api-url", default="http://localhost:8000")
+    ap.add_argument("--short-file", type=Path, default=DATA["short_term"],
+                    help="Override the short-term JSONL testset")
+    ap.add_argument("--long-file", type=Path, default=DATA["long_term"],
+                    help="Override the long-term JSONL testset")
     ap.add_argument("--output", help="JSON report path; defaults under data/egolife/runs")
     args = ap.parse_args()
+    source_files = {"short_term": args.short_file, "long_term": args.long_file}
     selected = list(DATA) if args.scenario == "both" else [args.scenario]
-    perceiver = QwenPerceiver(api_url=args.api_url)
-    health = perceiver.health()
-    if not health.get("model_loaded"):
+    perceiver = QwenPerceiver(api_url=args.api_url, cache_file=CACHE_PATH)
+    health = ({"model": "cached model outputs", "model_loaded": None}
+              if args.cache_only else perceiver.health())
+    if not args.cache_only and not health.get("model_loaded"):
         print(json.dumps({"ok": False, "error": "Qwen service is not ready", "health": health}, ensure_ascii=False))
         raise SystemExit(2)
 
     report = {"ok": True, "created_at": datetime.now().isoformat(timespec="seconds"),
-              "model": health, "cache_used": not args.force, "scenarios": {},
+              "model": health, "cache_used": not args.force, "cache_only": args.cache_only,
+              "unique_long_rows": args.unique_long, "cache_file": str(CACHE_PATH), "scenarios": {},
               "time_index_check": {"description": "Dataset hour labels are checked against source IDs; this is input metadata, not a visual-model score."}}
     t_all = time.time()
     for scenario in selected:
-        rows = load_rows(DATA[scenario])
+        rows = load_rows(source_files[scenario])
+        if scenario == "long_term" and args.unique_long:
+            rows = [row for row in rows if str(row.get("id", "")).endswith("_en")]
+        if args.cache_only:
+            missing = [row.get("id", "") for row in rows if row.get("id", "") not in perceiver.cache]
+            if missing:
+                raise SystemExit(f"cache-only evaluation missing {len(missing)} records; examples: {missing[:5]}")
         if args.limit > 0:
             rows = rows[:args.limit]
         sums = {d: {"tp": 0, "fp": 0, "fn": 0, "predictions": 0, "goldens": 0} for d in DIMS}
         failures, latencies, details = [], [], []
+        quality = {"records_checked": 0, "cjk_violations": [], "english_fallbacks": [],
+                   "empty_scene": [], "empty_user_action": []}
         sources = Counter()
         time_checked = time_correct = 0
         shared_inputs = {}
@@ -133,6 +157,14 @@ def main():
                     shared_inputs[signature] = dict(perceiver.cache.get(mid, out))
             sources[out.get("source", "unknown")] += 1
             fields = out.get("fields") or {}
+            quality["records_checked"] += 1
+            if (perceiver.cache.get(row.get("id", "")) or {}).get("quality_fallback"):
+                quality["english_fallbacks"].append(row.get("id"))
+            if has_cjk(json.dumps(fields, ensure_ascii=False)):
+                quality["cjk_violations"].append(row.get("id"))
+            for required_field in ("scene", "user_action"):
+                if not str(fields.get(required_field) or "").strip():
+                    quality[f"empty_{required_field}"].append(row.get("id"))
             if out.get("elapsed_ms") is not None:
                 latencies.append(out["elapsed_ms"])
             if not fields:
@@ -171,6 +203,7 @@ def main():
                            "p50": percentile(latencies, 0.50),
                            "p95": percentile(latencies, 0.95)},
             "metrics": metrics,
+            "quality_audit": quality,
             "time_index_check": {"checked": time_checked, "correct": time_correct,
                                  "accuracy": round(time_correct / time_checked, 4) if time_checked else None},
             "details": details,
@@ -180,7 +213,7 @@ def main():
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     report["report_path"] = str(out_path)
-    print(json.dumps({"ok": report["ok"], "report_path": str(out_path), "elapsed_seconds": report["elapsed_seconds"], "scenarios": {k: {"samples": v["samples"], "failed_samples": v["failed_samples"], "metrics": v["metrics"], "time_index_check": v["time_index_check"], "latency_ms": v["latency_ms"]} for k, v in report["scenarios"].items()}}, ensure_ascii=False, indent=2))
+    print(json.dumps({"ok": report["ok"], "report_path": str(out_path), "elapsed_seconds": report["elapsed_seconds"], "scenarios": {k: {"samples": v["samples"], "failed_samples": v["failed_samples"], "metrics": v["metrics"], "quality_audit": v["quality_audit"], "time_index_check": v["time_index_check"], "latency_ms": v["latency_ms"]} for k, v in report["scenarios"].items()}}, ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":

@@ -22,7 +22,9 @@ DB Operations
 """
 
 import json
+import math
 import os
+from collections import Counter
 import time
 from pathlib import Path
 from datetime import datetime, date
@@ -87,6 +89,7 @@ def _wrap_attr(value, source: str = "legacy", timestamp: Optional[str] = None) -
     return {
         "value": value,
         "confidence": 1.0,
+        "rank_score": 1.0,
         "source": source,
         "timestamp": timestamp or _now_iso(),
         "last_seen": timestamp or _now_iso(),
@@ -96,7 +99,10 @@ def _wrap_attr(value, source: str = "legacy", timestamp: Optional[str] = None) -
 
 PLACEHOLDER_TAGS = {
     "canonical_name", "canonical_location", "canonical_tag",
-    "event_tag", "moment_id_1", "moment_id_2"
+    "event_tag", "moment_id_1", "moment_id_2",
+    "other", "others", "other people", "unknown person", "unidentified person",
+    "someone", "somebody", "group", "crowd", "camera wearer",
+    "two others", "three others", "several others", "a few others"
 }
 
 NON_PERSON_PATTERNS = (
@@ -229,10 +235,15 @@ def _finalize_attr(attr: Dict, source: str, timestamp: str) -> Optional[Dict]:
         conf = float(attr.get("confidence", 0.5))
     except (TypeError, ValueError):
         conf = 0.5
+    try:
+        rank_score = float(attr.get("rank_score", attr.get("importance", attr.get("strength", conf))))
+    except (TypeError, ValueError):
+        rank_score = conf
     ts = timestamp or _now_iso()
     out = {
         "value": value,
         "confidence": max(0.0, min(1.0, conf)),
+        "rank_score": max(0.0, min(1.0, rank_score)),
         "source": attr.get("source") or source or "llm_inference",
         "evidence": str(attr.get("evidence", ""))[:200],
         "timestamp": ts,
@@ -255,11 +266,18 @@ def _finalize_attr(attr: Dict, source: str, timestamp: str) -> Optional[Dict]:
 
 
 def _corroborate_attr(old: Dict, new: Dict) -> Dict:
-    """佐证合并：同值重复出现 → observations 累加、confidence 增强、last_seen 更新。"""
-    old["observations"] += new.get("observations", 1)
-    old["confidence"] = 1 - (1 - old["confidence"]) * (1 - new["confidence"])
+    """同值再次出现时累加证据，并保留独立的排序强度。"""
+    old_count = max(1, int(old.get("observations", 1) or 1))
+    new_count = max(1, int(new.get("observations", 1) or 1))
+    old_conf = float(old.get("confidence", 0))
+    new_conf = float(new.get("confidence", 0))
+    old_rank = float(old.get("rank_score", old_conf))
+    new_rank = float(new.get("rank_score", new_conf))
+    old["observations"] = old_count + new_count
+    old["confidence"] = 1 - (1 - old_conf) * (1 - new_conf)
+    old["rank_score"] = (old_rank * old_count + new_rank * new_count) / old["observations"]
     old["last_seen"] = max(old.get("last_seen", ""), new.get("last_seen", ""))
-    if new["confidence"] > old["confidence"]:
+    if new_conf > old_conf:
         old["source"] = new["source"]
     return old
 
@@ -343,6 +361,128 @@ def tokenize(text: str) -> list:
         tokens.append(buf)
     return tokens
 
+
+
+_SEARCH_EN_STOPWORDS = frozenset({
+    "a", "about", "after", "all", "also", "am", "an", "and", "are", "as", "at",
+    "be", "because", "been", "being", "but", "by", "can", "could", "did", "do",
+    "does", "doing", "down", "during", "each", "for", "from", "had", "has",
+    "have", "having", "he", "her", "here", "hers", "him", "himself", "his",
+    "how", "i", "if", "in", "into", "is", "it", "its", "just", "me", "more",
+    "most", "my", "no", "nor", "of", "off", "on", "once", "only", "or", "our",
+    "ours", "out", "over", "own", "same", "she", "should", "so", "some", "such",
+    "than", "that", "the", "their", "them", "then", "there", "these", "they",
+    "this", "those", "through", "to", "too", "under", "until", "up", "very",
+    "was", "we", "were", "what", "when", "where", "which", "while", "who",
+    "whom", "why", "will", "with", "you", "your", "now", "currently"
+})
+_SEARCH_ZH_STOPWORDS = frozenset("的了在是有我你他她它和与及就也都很过把被给让而或又吗呢吧对从到这那一个些谁什么如何哪怎么现在刚才")
+
+def _retrieval_tokens(text: str) -> list:
+    """Return content-bearing terms for lexical retrieval; preserve Chinese character tokens."""
+    return [token for token in tokenize(text)
+            if token not in _SEARCH_EN_STOPWORDS
+            and token not in _SEARCH_ZH_STOPWORDS
+            and (len(token) > 1 or '\u4e00' <= token <= '\u9fff')]
+
+def _rank_memory_docs(query_text: str, documents: list) -> list:
+    """Rank active memories with field-aware BM25.
+
+    Text is scored within semantic fields (scene/action/entities/tags) instead
+    of flattening a whole record into one long document. This keeps concise
+    people, object, place, and activity fields searchable when action text is
+    much longer. Normalized translated text remains searchable at a lower
+    weight so multilingual queries still work without live translation.
+    """
+    documents = [doc for doc in documents
+                 if isinstance(doc, dict) and not doc.get("stale")]
+    if not documents:
+        return []
+    query_terms = list(dict.fromkeys(_retrieval_tokens(str(query_text or "")[:1200])))
+    if not query_terms:
+        return []
+
+    field_weights = {
+        "scene": 1.0,
+        "user_action": 1.0,
+        "activity": 1.0,
+        "people": 1.0,
+        "location": 1.0,
+        "objects": 1.0,
+        "environments": 1.0,
+        "activity_events": 1.0,
+        "needs": 1.0,
+        "solutions": 1.0,
+        "time_occasion": 0.7,
+        "extra_notes": 0.6,
+        "normalized": 0.5,
+    }
+    metadata = {
+        "id", "timestamp", "created_at", "updated_at", "last_used",
+        "access_count", "stale", "decay_type", "decay_rate", "expires_at",
+        "confidence", "highlighted", "feedback", "source_ids", "layer",
+    }
+
+    def as_search_text(value):
+        if isinstance(value, dict):
+            return " ".join(as_search_text(item) for item in value.values())
+        if isinstance(value, (list, tuple, set)):
+            return " ".join(as_search_text(item) for item in value)
+        if value is None:
+            return ""
+        return str(value)
+
+    # Keep common semantic fields independent. Unknown content fields are
+    # searchable at a conservative weight for schema compatibility.
+    all_fields = set(field_weights)
+    field_counts = []
+    field_lengths = []
+    document_frequency = Counter()
+    for document in documents:
+        values = {}
+        for key, value in document.items():
+            if key in metadata:
+                continue
+            field = key if key in field_weights else "other"
+            values[field] = (values.get(field, "") + " " + as_search_text(value)).strip()
+        counts = {
+            field: Counter(_retrieval_tokens(values.get(field, "").lower()))
+            for field in all_fields | {"other"}
+        }
+        lengths = {field: sum(counter.values()) for field, counter in counts.items()}
+        field_counts.append(counts)
+        field_lengths.append(lengths)
+        for field, counter in counts.items():
+            for term in counter:
+                document_frequency[(field, term)] += 1
+
+    live_count = len(documents)
+    average_lengths = {}
+    for field in all_fields | {"other"}:
+        nonempty = [lengths[field] for lengths in field_lengths if lengths[field] > 0]
+        average_lengths[field] = sum(nonempty) / len(nonempty) if nonempty else 1.0
+
+    k1, b = 1.2, 0.75
+    ranked = []
+    for index, counts_by_field in enumerate(field_counts):
+        score = 0.0
+        for term in query_terms:
+            for field, counts in counts_by_field.items():
+                tf = counts.get(term, 0)
+                if not tf:
+                    continue
+                df = document_frequency[(field, term)]
+                idf = math.log(1.0 + (live_count - df + 0.5) / (df + 0.5))
+                average_length = average_lengths[field]
+                length = field_lengths[index][field]
+                norm_tf = (tf * (k1 + 1.0)) / (
+                    tf + k1 * (1.0 - b + b * length / average_length)
+                )
+                score += field_weights.get(field, 0.75) * idf * norm_tf
+        if score > 0:
+            ranked.append((score, index, documents[index]))
+    ranked.sort(key=lambda item: (-item[0], item[1]))
+    return [(score, document) for score, _, document in ranked]
 
 def _contains_cjk(text: str) -> bool:
     """检测是否含中日韩字符（需先翻译为英文才能分词）。"""
@@ -502,34 +642,23 @@ def _has_profile_content(profile: Dict) -> bool:
 
 
 def _collect_attrs(node, out: list, sort_key: str = "confidence"):
-    """递归收集非 stale 的 AttrValue 为 'value(conf)' 字符串（供画像注入 prompt）。
-
-    规范（09-22 画像排序）：list 型节点按字段语义排序后再收集——
-    - sort_key="frequency"（行为习惯 behavior_patterns）：按 observations 频率从高到低
-    - sort_key="confidence"（默认，性格/目标/偏好/决策/动机）：按 confidence 从高到低
-      （分别对应确定性↓ / 重要性↓ / 强弱↓ / 影响因素↓）
-    """
+    """收集非 stale 画像，并按该维度的文档排序规则排列。"""
     if isinstance(node, dict) and "value" in node:
         if not node.get("stale"):
             out.append(f"{node['value']}({node.get('confidence', 0):.2f})")
     elif isinstance(node, list):
-        items = [x for x in node]
         if sort_key == "frequency":
-            items.sort(key=lambda x: x.get("observations", 1) if isinstance(x, dict) else 0,
-                       reverse=True)
+            key_fn = lambda x: x.get("observations", 1) if isinstance(x, dict) else 0
+        elif sort_key == "rank_score":
+            key_fn = lambda x: x.get("rank_score", x.get("confidence", 0)) if isinstance(x, dict) else 0
         else:
-            items.sort(key=lambda x: x.get("confidence", 0) if isinstance(x, dict) else 0,
-                       reverse=True)
-        for x in items:
-            _collect_attrs(x, out, sort_key)
+            key_fn = lambda x: x.get("confidence", 0) if isinstance(x, dict) else 0
+        for item in sorted(node, key=key_fn, reverse=True):
+            _collect_attrs(item, out, sort_key)
     elif isinstance(node, dict):
-        for v in node.values():
-            _collect_attrs(v, out, sort_key)
+        for value in node.values():
+            _collect_attrs(value, out, sort_key)
 
-
-# ---------------------------------------------------------------------------
-# Core data structures
-# ---------------------------------------------------------------------------
 
 def _empty_moment() -> Dict:
     """A single captured moment (goes into Layer 1 → 2 → 3)."""
@@ -581,7 +710,11 @@ def _empty_db() -> Dict:
                 "demographics": {},
                 "preferences": {},
                 "frequent_locations": [],
-                "behavior_patterns": {}
+                "behavior_patterns": {},
+                "personality": {},
+                "goals": [],
+                "decisions": {},
+                "motivations": []
             },
             "last_updated": None,
             "source_moment_count": 0
@@ -847,33 +980,46 @@ class PersonMemory:
     # ------------------------------------------------------------------
 
     def update_feedback(self, moment_id: str, corrections: Dict = None,
-                        confirmed: bool = False, user_rating: int = None):
-        """
-        Part4 feedback: correct Part1-3 data.
-        This is called AFTER the main pipeline and does not block it.
-        """
+                        confirmed: bool = False, user_rating: int = None) -> bool:
+        """保存 Part4 反馈；修正沿用 UPDATE 校验并同步 Layer7 索引。"""
         moment = self.memory["layer7"]["moments"].get(moment_id)
         if not moment:
-            return
+            return False
 
-        fb = moment["feedback"]
-        fb["confirmed"] = confirmed
-        if corrections:
-            fb["corrections"].update(corrections)
-            # Apply corrections directly to moment fields
-            for field, val in corrections.items():
-                if field in moment:
-                    moment[field] = val
-        if user_rating is not None:
+        feedback_corrections = corrections if isinstance(corrections, dict) else {}
+        valid_corrections = self._validated_updates(feedback_corrections)
+        if valid_corrections:
+            self.update(moment_id, valid_corrections)
+            moment = self.memory["layer7"]["moments"].get(moment_id)
+            if not moment:
+                return False
+
+        fb = moment.setdefault("feedback", {
+            "confirmed": False, "corrections": {}, "user_rating": None
+        })
+        if not isinstance(fb, dict):
+            fb = {"confirmed": False, "corrections": {}, "user_rating": None}
+            moment["feedback"] = fb
+        compliance_only = (
+            "compliance_check" in feedback_corrections and not valid_corrections
+        )
+        if not compliance_only and isinstance(confirmed, bool):
+            fb["confirmed"] = confirmed
+        if feedback_corrections:
+            stored = fb.get("corrections")
+            if not isinstance(stored, dict):
+                stored = {}
+                fb["corrections"] = stored
+            stored.update(feedback_corrections)
+        if user_rating is not None and isinstance(user_rating, (int, float)) \
+                and not isinstance(user_rating, bool) and 1 <= user_rating <= 5:
             fb["user_rating"] = user_rating
 
-        # Sync back into layer1/2/3 if still present
-        for layer_key in ["layer1", "layer2", "layer3"]:
-            for i, m in enumerate(self.memory[layer_key]):
-                if m.get("id") == moment_id:
-                    self.memory[layer_key][i] = moment
-
+        if fb.get("confirmed"):
+            moment["highlighted"] = True
+        self._sync_window_moment(moment_id)
         self._save()
+        return True
 
     def update_habits(self, profile_updates: Dict):
         """[已弃用] 旧画像更新接口（浅覆盖，会丢历史）。请改用 update_profile()。"""
@@ -963,38 +1109,19 @@ class PersonMemory:
         tokens = []
         for text in texts:
             if text:
-                tokens += tokenize(text)
+                tokens += tokenize(str(text))
         return tokens
 
     def query(self, query_text: str, top_k: int = 5) -> List[Dict]:
-        """关键词检索（统一英文分词），按 token 命中数排序取 Top-K。"""
-        tokens = self._query_tokens(query_text)
-        if not tokens:
-            return []
-
-        scored = []
-        for m in self.memory["layer7"]["moments"].values():
-            if m.get("stale"):
-                continue
-            text = json.dumps(m, ensure_ascii=False).lower()
-            score = sum(1 for t in tokens if t in text)
-            if score > 0:
-                scored.append((score, m))
-
-        scored.sort(key=lambda x: x[0], reverse=True)
-        return [m for _, m in scored[:top_k]]
-
-    def query_hierarchical(self, query_text: str, top_k: int = 5) -> List[Dict]:
-        """按 Layer 1→5 顺序检索，某层取够 top_k 后提前停止。
-
-        Layer1~3 返回命中的 moment；Layer4~5 将摘要视作一条结果。
-        返回项包含 layer / score / moment。该接口只读内存，不调用 LLM，
-        Layer7 主存储仍由 query() / retrieve() 提供检索入口。
-        """
+        """Search the Layer 7 archive with stopword filtering and BM25 ranking."""
         if top_k <= 0:
             return []
-        tokens = set(self._query_tokens(query_text))
-        if not tokens:
+        documents = list(self.memory["layer7"]["moments"].values())
+        return [moment for _, moment in _rank_memory_docs(query_text, documents)[:top_k]]
+
+    def query_hierarchical(self, query_text: str, top_k: int = 5) -> List[Dict]:
+        """Search L1→L5 in order, using BM25 within each layer and early stopping."""
+        if top_k <= 0 or not _retrieval_tokens(str(query_text or "")[:1200]):
             return []
 
         results = []
@@ -1002,36 +1129,27 @@ class PersonMemory:
         for layer_no in range(1, 6):
             if layer_no <= 3:
                 layer_key = f"layer{layer_no}"
-                scored = []
-                for moment in self._sorted_layer_moments(layer_key):
-                    if moment.get("stale"):
-                        continue
-                    moment_id = moment.get("id")
-                    text = json.dumps(moment, ensure_ascii=False).lower()
-                    score = sum(1 for token in tokens if token in text)
-                    if score:
-                        scored.append((score, moment))
-                # Preserve the layer's newest-first ordering for equal scores.
-                scored.sort(key=lambda pair: pair[0], reverse=True)
-                for score, moment in scored:
+                documents = self._sorted_layer_moments(layer_key)
+                for score, moment in _rank_memory_docs(query_text, documents):
                     moment_id = moment.get("id")
                     if moment_id and moment_id in seen_ids:
                         continue
                     if moment_id:
                         seen_ids.add(moment_id)
-                    results.append({"layer": layer_no, "score": score, "moment": moment})
+                    results.append({"layer": layer_no, "score": round(score, 4), "moment": moment})
                     if len(results) >= top_k:
                         break
             else:
                 layer = self.memory.get(f"layer{layer_no}", {})
-                searchable = json.dumps(layer, ensure_ascii=False).lower()
-                score = sum(1 for token in tokens if token in searchable)
-                if score:
+                ranked = _rank_memory_docs(query_text, [layer])
+                if ranked:
+                    score, _ = ranked[0]
                     moment = {"id": f"layer{layer_no}_summary", "layer": layer_no, **layer}
-                    results.append({"layer": layer_no, "score": score, "moment": moment})
+                    results.append({"layer": layer_no, "score": round(score, 4), "moment": moment})
             if len(results) >= top_k:
                 return results[:top_k]
         return results[:top_k]
+
     def _sorted_layer_moments(self, layer_key: str) -> list:
         """规范（09-22 层级）：层内记忆按时间远近顺序排列，返回最近优先（时间倒序）的列表。"""
         items = self.memory.get(layer_key, [])
@@ -1063,48 +1181,80 @@ class PersonMemory:
     # ------------------------------------------------------------------
 
     def retrieve(self, people: List[str] = None, location: str = None,
-                 activity: str = None, layer: int = None, top_k: int = 5) -> str:
-        """检索结构化上下文（相关性排序取 Top-K，跳过 stale）。"""
+                 activity: str = None, layer: int = None, top_k: int = 5,
+                 query_text: str = None, include_summaries: bool = True,
+                 exclude_ids: set = None) -> str:
+        """按标签和当前查询检索 L7，并返回完整的 Part1–4 事实。"""
+        if top_k <= 0:
+            return "No relevant memory found."
         parts = []
+        if include_summaries:
+            for lnum, lkey in [(4, "layer4"), (5, "layer5"), (6, "layer6")]:
+                if layer and layer != lnum:
+                    continue
+                summary = self.memory.get(lkey, {}).get("summary")
+                if summary:
+                    parts.append(f"[Layer {lnum}] {summary}")
 
-        # Layer 4-6 compressed summaries
-        for lnum, lkey in [(4, "layer4"), (5, "layer5"), (6, "layer6")]:
-            if layer and layer != lnum:
-                continue
-            ldata = self.memory[lkey]
-            if ldata.get("summary"):
-                parts.append(f"[Layer {lnum}] {ldata['summary']}")
-
-        # Layer 7：按 person/location/activity 关键词打分排序（统一英文分词）
-        query_tokens = []
-        for p in (people or []):
-            query_tokens += self._query_tokens(p)
-        if location:
-            query_tokens += self._query_tokens(location)
-        if activity:
-            query_tokens += self._query_tokens(activity)
-
+        query_text = str(query_text or "")[:1200]
+        query_tokens = set(self._query_tokens(
+            query_text, *(str(x) for x in (people or [])),
+            str(location or ""), str(activity or "")))
+        excluded = set(exclude_ids or ())
         scored = []
-        for m in self.memory["layer7"]["moments"].values():
-            if m.get("stale"):
+        for moment_id, moment in self.memory["layer7"]["moments"].items():
+            if moment_id in excluded or moment.get("stale"):
                 continue
-            text = json.dumps(m, ensure_ascii=False).lower()
-            score = sum(1 for t in query_tokens if t in text)
-            if score > 0:
-                scored.append((score, m))
+            searchable = json.dumps(moment, ensure_ascii=False).lower()
+            score = sum(1 for token in query_tokens if token in searchable)
+            if score:
+                scored.append((score, bool(moment.get("highlighted")),
+                               moment.get("timestamp", ""), moment))
 
-        scored.sort(key=lambda x: x[0], reverse=True)
-        for _, m in scored[:top_k]:
-            needs_str = "; ".join(n.get("need", "") for n in m.get("needs", []))
-            parts.append(
-                f"[Layer7/{m.get('id','')}] {m.get('timestamp','')[:10]} | "
-                f"Scene: {m.get('scene','')[:80]} | "
-                f"Needs: {needs_str[:80]}"
-            )
+        scored.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
+        for _, _, _, moment in scored[:top_k]:
+            def values(items):
+                if not isinstance(items, list):
+                    return str(items or "")
+                rendered = []
+                for item in items:
+                    if isinstance(item, dict):
+                        value = (item.get("need") or item.get("solution")
+                                 or item.get("value") or item.get("action"))
+                    else:
+                        value = item
+                    if value:
+                        rendered.append(str(value))
+                return "；".join(rendered)
 
-        return "\n".join(parts) if parts else "No relevant memory found."
+            feedback = moment.get("feedback") or {}
+            corrections = feedback.get("corrections") or {}
+            feedback_text = "；".join(
+                f"{key}={value}" for key, value in corrections.items()
+            ) if isinstance(corrections, dict) else ""
+            if feedback.get("confirmed"):
+                feedback_text = (feedback_text + "；" if feedback_text else "") + "用户已确认"
+            if moment.get("highlighted") and not feedback_text:
+                feedback_text = "已标记为重点/重复记忆"
 
-    # ------------------------------------------------------------------
+            line = f"[Layer7/{moment.get('id','')}] {moment.get('timestamp','')[:19]}"
+            fields = [
+                ("场景", moment.get("scene")),
+                ("动作", moment.get("user_action")),
+                ("需求", values(moment.get("needs"))),
+                ("方案", values(moment.get("solutions"))),
+                ("人物", values(moment.get("people"))),
+                ("地点", moment.get("location")),
+                ("活动", moment.get("activity")),
+                ("反馈修正", feedback_text),
+            ]
+            for label, value in fields:
+                if value:
+                    line += f" | {label}: {str(value).replace(chr(10), ' ').strip()[:180]}"
+            parts.append(line)
+
+        return chr(10).join(parts) if parts else "No relevant memory found."
+
     # Operation 5 : COMPRESS  (called AFTER Part2+3, never during)
     # ------------------------------------------------------------------
 
@@ -1243,6 +1393,7 @@ class PersonMemory:
                             if isinstance(m.get(field), list) and old_key in m[field]:
                                 m[field] = [canonical if x == old_key else x
                                             for x in m[field]]
+                        self._sync_window_moment(mid)
         self._save()
 
     # ------------------------------------------------------------------
@@ -1270,9 +1421,12 @@ class PersonMemory:
         del self.memory["layer7"]["moments"][moment_id]
         # Remove from indices
         for index_key in LAYER7_INDICES:
-            for tag, ids in self.memory["layer7"][index_key].items():
+            index = self.memory["layer7"].get(index_key, {})
+            for tag, ids in list(index.items()):
                 if moment_id in ids:
                     ids.remove(moment_id)
+                if not ids:
+                    index.pop(tag, None)
         # Remove from raw layers
         for lkey in ["layer1", "layer2", "layer3"]:
             self.memory[lkey] = [m for m in self.memory[lkey]
@@ -1291,11 +1445,15 @@ class PersonMemory:
         效果：① 删除清扫中受保护（delete 默认拒删）；② v2：检索排序提权、
         画像更新高权重佐证。moment 不存在返回 False。
         """
-        if moment_id in self.memory["layer7"]["moments"]:
-            self.memory["layer7"]["moments"][moment_id]["highlighted"] = True
+        moment = self.memory["layer7"]["moments"].get(moment_id)
+        if not moment:
+            return False
+        changed = not moment.get("highlighted", False)
+        moment["highlighted"] = True
+        changed = self._sync_window_moment(moment_id) or changed
+        if changed:
             self._save()
-            return True
-        return False
+        return True
 
     # ------------------------------------------------------------------
     # Context helpers (called by pipeline)
@@ -1303,40 +1461,112 @@ class PersonMemory:
 
     def get_context_for_analysis(self, people: List[str] = None,
                                   location: str = None,
-                                  activity: str = None) -> str:
-        """按 04 文档 2.3.1 early-stop 路径组装上下文：
-        layer6 稳定画像 → layer5 长期模式 → layer4 近期任务 → layer7 索引细节。
-        只渲染非 stale 画像；同步链路不含任何 LLM 调用。
-        """
+                                  activity: str = None,
+                                  query_text: str = None,
+                                  top_k: int = 5) -> str:
+        """按文档优先级查询 L1→L5，再注入 L6 画像和命中的 L7 原始事实。"""
         lines = ["=== MEMORY CONTEXT ==="]
+        query_text = str(query_text or "")[:1200]
+        top_k = max(0, int(top_k))
+        hits = self.query_hierarchical(query_text, top_k=top_k) if query_text.strip() else []
+        seen_ids = set()
 
-        # ① layer6 稳定画像（直读，排除 stale，value 带置信度）
+        def render_items(items):
+            if not isinstance(items, list):
+                return str(items or "")
+            values = []
+            for item in items:
+                if isinstance(item, dict):
+                    value = (item.get("need") or item.get("solution")
+                             or item.get("value") or item.get("action"))
+                else:
+                    value = item
+                if value:
+                    values.append(str(value))
+            return "；".join(values)
+
+        def add_moment(layer_no, moment):
+            moment_id = moment.get("id")
+            if moment_id:
+                seen_ids.add(moment_id)
+            fields = [
+                ("场景", moment.get("scene")),
+                ("动作", moment.get("user_action")),
+                ("需求", render_items(moment.get("needs"))),
+                ("方案", render_items(moment.get("solutions"))),
+                ("人物", render_items(moment.get("people"))),
+                ("地点", moment.get("location")),
+                ("活动", moment.get("activity")),
+            ]
+            feedback = moment.get("feedback") or {}
+            corrections = feedback.get("corrections") or {}
+            feedback_text = "；".join(
+                f"{key}={value}" for key, value in corrections.items()
+            ) if isinstance(corrections, dict) else ""
+            if feedback.get("confirmed"):
+                feedback_text = (feedback_text + "；" if feedback_text else "") + "用户已确认"
+            if feedback_text:
+                fields.append(("Part4反馈", feedback_text))
+            line = f"[Layer {layer_no} · {moment.get('timestamp','')[:19]} {moment_id or ''}]"
+            for label, value in fields:
+                if value:
+                    line += f" | {label}: {str(value).replace(chr(10), ' ')[:180]}"
+            lines.append(line)
+
+        if hits:
+            for hit in hits:
+                layer_no, moment = hit["layer"], hit["moment"]
+                if layer_no <= 3:
+                    add_moment(layer_no, moment)
+                elif moment.get("summary"):
+                    lines.append(f"[Layer {layer_no}] {moment['summary'][:1200]}")
+        elif not query_text and top_k:
+            # 没有查询语句时以最近窗口作短上下文；同一 moment 只注入一次。
+            for layer_no in (1, 2, 3):
+                for moment in self._sorted_layer_moments(f"layer{layer_no}"):
+                    if moment.get("id") and moment["id"] in seen_ids:
+                        continue
+                    add_moment(layer_no, moment)
+                    if len(seen_ids) >= top_k:
+                        break
+                if len(seen_ids) >= top_k:
+                    break
+            for layer_no in (4, 5):
+                summary = self.memory.get(f"layer{layer_no}", {}).get("summary")
+                if summary:
+                    lines.append(f"[Layer {layer_no}] {summary[:1200]}")
+
+        # L6 profile 的顺序采用文档所列频率、确定性、重要性和强度维度。
         profile = self.memory["layer6"]["profile"]
         profile_parts = []
         for field in PROFILE_FIELDS:
             field_attrs = []
-            # 规范排序：行为习惯按频率↓，其余按 confidence（确定性/重要性/强弱/影响因素）↓
-            sort_key = "frequency" if field == "behavior_patterns" else "confidence"
+            if field in ("behavior_patterns", "frequent_locations"):
+                sort_key = "frequency"
+            elif field == "personality":
+                sort_key = "confidence"
+            elif field in ("preferences", "goals", "decisions", "motivations"):
+                sort_key = "rank_score"
+            else:
+                sort_key = "confidence"
             _collect_attrs(profile.get(field), field_attrs, sort_key)
             if field_attrs:
                 profile_parts.append(f"{field}:[{'; '.join(field_attrs)}]")
+        profile_summary = self.memory["layer6"].get("summary")
+        if profile_summary:
+            lines.append(f"[Layer 6 summary] {profile_summary[:1000]}")
         if profile_parts:
-            lines.append(f"[Profile] {' | '.join(profile_parts)}")
+            lines.append(f"[Layer 6 profile] {' | '.join(profile_parts)}")
 
-        # ② layer5 长期模式
-        if self.memory["layer5"].get("summary"):
-            lines.append(f"[Long-term] {self.memory['layer5']['summary']}")
-
-        # ③ layer4 近期任务
-        if self.memory["layer4"].get("summary"):
-            lines.append(f"[Recent] {self.memory['layer4']['summary']}")
-
-        # ④ layer7 索引细节（相关性排序，取够即停）
-        extra = self.retrieve(people=people, location=location, activity=activity)
-        if extra and extra != "No relevant memory found.":
+        # L7 检索补全场景、动作、需求、方案及 Part4 反馈；同步链路不调用 LLM。
+        extra = self.retrieve(
+            people=people, location=location, activity=activity,
+            query_text=query_text, top_k=top_k, include_summaries=False,
+            exclude_ids=seen_ids)
+        if extra != "No relevant memory found.":
             lines.append(extra)
 
-        return "\n".join(lines) if len(lines) > 1 else "No previous memory found."
+        return chr(10).join(lines) if len(lines) > 1 else "No previous memory found."
 
     def get_all_memory(self) -> str:
         """Human-readable full memory dump for debugging."""
@@ -1364,6 +1594,46 @@ class PersonMemory:
     UPDATE_FIELDS = ("scene", "user_action", "needs", "solutions",
                      "people", "location", "activity", "notes",
                      "environments", "objects")
+
+    def _validated_updates(self, updates: Dict) -> Dict:
+        """按记忆 schema 筛选可更新字段和值类型。"""
+        if not isinstance(updates, dict):
+            return {}
+        string_fields = {"scene", "user_action", "location", "activity", "notes"}
+        list_fields = {"people", "environments", "objects", "needs", "solutions"}
+        clean = {}
+        for field, value in updates.items():
+            if field not in self.UPDATE_FIELDS or value is None:
+                continue
+            if field in string_fields:
+                if isinstance(value, str):
+                    clean[field] = value
+                continue
+            if field not in list_fields or not isinstance(value, list):
+                continue
+            if field == "people":
+                clean[field] = [x for x in value
+                                if isinstance(x, str) and _is_valid_person_tag(x)]
+            elif field in ("environments", "objects"):
+                clean[field] = [x for x in value if isinstance(x, str) and
+                                _is_valid_index_tag(field, x)]
+            else:
+                clean[field] = [x for x in value if isinstance(x, (dict, str))]
+        return clean
+
+    def _sync_window_moment(self, moment_id: str) -> bool:
+        """同步主存储到仍存活的 L1/L2/L3 窗口副本。"""
+        moment = self.memory.get("layer7", {}).get("moments", {}).get(moment_id)
+        if not moment:
+            return False
+        changed = False
+        for layer_key in ("layer1", "layer2", "layer3"):
+            for i, current in enumerate(self.memory.get(layer_key, [])):
+                if current.get("id") == moment_id:
+                    if current != moment:
+                        changed = True
+                    self.memory[layer_key][i] = moment
+        return changed
 
     def _sync_indices_for_moment(self, moment_id: str, moment: Dict,
                                  old_people, old_location, old_activity,
@@ -1396,17 +1666,10 @@ class PersonMemory:
         sync("objects", old_objects, moment.get("objects"))
 
     def update(self, moment_id: str, updates: Dict) -> bool:
-        """改正指定 moment 的 Part1-3 数据（设计说明书 §4.2 定稿语义）。
-
-        - 允许字段白名单：UPDATE_FIELDS；禁止改 id/timestamp/feedback/highlighted/layer。
-        - 同步 layer1/2/3 同 id 条目（落盘重载后引用断开，防御同步）。
-        - people/location/activity 变更时联动 layer7 索引（含预翻译刷新）。
-        - 返回：至少一个合法字段被更新 → True；否则 False。
-        """
-        if not isinstance(updates, dict):
-            return False
+        """改正指定 moment 的 Part1-3 数据，并同步 Layer7 标签索引。"""
+        clean = self._validated_updates(updates)
         moment = self.memory["layer7"]["moments"].get(moment_id)
-        if not moment:
+        if not moment or not clean:
             return False
 
         old_people = moment.get("people") or []
@@ -1414,44 +1677,37 @@ class PersonMemory:
         old_activity = moment.get("activity")
         old_environments = moment.get("environments") or []
         old_objects = moment.get("objects") or []
-
-        changed = False
-        for field, val in updates.items():
-            if field not in self.UPDATE_FIELDS or val is None:
-                continue
-            if field == "people":
-                moment["people"] = [p for p in val if _is_valid_person_tag(p)]
-            else:
-                moment[field] = val
-            changed = True
-
-        if not changed:
+        changed_fields = []
+        for field, value in clean.items():
+            if moment.get(field) != value:
+                moment[field] = value
+                changed_fields.append(field)
+        if not changed_fields:
             return False
 
-        # 预翻译刷新（统一英文分词：更新后重译，保持 normalized 与正文一致）
-        if self.translate_fn:
-            normalized = moment.get("normalized") or {}
-            for field in ("scene", "user_action", "location", "activity"):
-                v = moment.get(field)
-                if v and _contains_cjk(str(v)):
+        # 清除可能过期的英文缓存；改写中文时再生成对应 normalized 值。
+        searchable_fields = {"scene", "user_action", "location", "activity", "notes"}
+        if searchable_fields.intersection(changed_fields):
+            normalized = dict(moment.get("normalized") or {})
+            for field in searchable_fields.intersection(changed_fields):
+                normalized.pop(field, None)
+                value = moment.get(field)
+                if self.translate_fn and value and _contains_cjk(str(value)):
                     try:
-                        normalized[field] = self.translate_fn(str(v))
+                        translated = self.translate_fn(str(value))
+                        if translated:
+                            normalized[field] = translated
                     except Exception:
                         pass
             if normalized:
                 moment["normalized"] = normalized
+            else:
+                moment.pop("normalized", None)
 
-        # 同步 layer1/2/3 同 id 条目
-        for layer_key in ("layer1", "layer2", "layer3"):
-            for i, m in enumerate(self.memory[layer_key]):
-                if m.get("id") == moment_id:
-                    self.memory[layer_key][i] = moment
-
-        # 索引联动
         self._sync_indices_for_moment(
             moment_id, moment, old_people, old_location, old_activity,
             old_environments, old_objects)
-
+        self._sync_window_moment(moment_id)
         self._save()
         return True
 

@@ -25,7 +25,7 @@ import shutil
 import subprocess
 import sys
 import threading
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
@@ -35,10 +35,12 @@ VIZ_DIR = Path(__file__).resolve().parent / "viz"
 VIDEO_ROOT = (ROOT / "data" / "egolife").resolve()
 PREVIEW_ROOT = RUNS / "viz_video_cache"
 
-# 交互式步进执行会话（单线程 HTTPServer，全局单例即可）
+# 交互式步进执行会话（ThreadingHTTPServer 多线程，步骤执行需互斥：
+# 实时推理可能耗时数分钟，期间 state / 视频流照常服务，重复 step 返回 409）
 SESSION = None
+STEP_LOCK = threading.Lock()
 # Qwen 缓存预热任务状态
-PREWARM = {"running": False, "done": 0, "total": 0, "error": None, "scenario": None}
+PREWARM = {"running": False, "done": 0, "total": 0, "cache_hits": 0, "inferred": 0, "failed": 0, "error": None, "scenario": None}
 PREVIEW_JOBS = {}
 PREVIEW_LOCK = threading.Lock()
 PREVIEW_SEMAPHORE = threading.BoundedSemaphore(2)
@@ -276,6 +278,12 @@ class Handler(BaseHTTPRequestHandler):
         if url.path == "/api/video":
             return self._stream_video()
 
+        if url.path == "/api/evaluation-data":
+            evaluation = load_json(RUNS / "evaluation_dashboard_data_20260928.json")
+            if evaluation is None:
+                return self._send(503, {"error": "evaluation data is not ready"})
+            return self._send(200, evaluation)
+
         if url.path == "/api/scenarios":
             out = []
             for key, cfg in SCENARIOS.items():
@@ -308,8 +316,32 @@ class Handler(BaseHTTPRequestHandler):
             mem = load_json(RUNS / cfg["memory"])
             if mem is None:
                 return self._send(404, {"error": "memory state not found"})
-            # 只回传可视化需要的部分，避免全量 moment 过大
+            # 按六维高频索引挑少量正文样例，避免把全部归档重复发给浏览器。
             l7 = mem.get("layer7", {})
+            moments = l7.get("moments", {})
+            dimensions = ("people", "locations", "time_nodes",
+                          "activity_events", "environments", "objects")
+            indices = {k: l7.get(k, {}) for k in dimensions}
+            archive_samples = {}
+            for dimension in dimensions:
+                ranked = sorted(indices[dimension].items(),
+                                key=lambda item: (-len(item[1]), str(item[0])))[:2]
+                groups = []
+                for tag, ids in ranked:
+                    examples = []
+                    for mid in ids[:1]:
+                        moment = moments.get(mid)
+                        if moment:
+                            examples.append({
+                                key: moment.get(key)
+                                for key in ("id", "timestamp", "scene", "user_action",
+                                            "people", "location", "activity",
+                                            "environments", "objects", "notes",
+                                            "highlighted")
+                                if moment.get(key) is not None
+                            })
+                    groups.append({"tag": tag, "count": len(ids), "moments": examples})
+                archive_samples[dimension] = groups
             return self._send(200, {
                 "layer1": mem.get("layer1", []),
                 "layer2": mem.get("layer2", []),
@@ -317,23 +349,37 @@ class Handler(BaseHTTPRequestHandler):
                 "layer4": mem.get("layer4", {}),
                 "layer5": mem.get("layer5", {}),
                 "layer6": mem.get("layer6", {}),
-                "indices": {k: l7.get(k, {}) for k in
-                            ("people", "locations", "time_nodes",
-                             "activity_events", "environments", "objects")},
-                "moments_count": len(l7.get("moments", {})),
+                "indices": indices,
+                "archive_samples": archive_samples,
+                "moments_count": len(moments),
                 "metadata": mem.get("metadata", {}),
             })
 
         # ---------------- 交互式步进执行 ----------------
         global SESSION
 
+        if url.path == "/api/interactive/options":
+            return self._send(200, ir.interactive_dataset_options())
+
         if url.path == "/api/interactive/new":
             key = (qs.get("scenario") or ["short_term"])[0]
+            participant = (qs.get("participant") or [""])[0] or None
+            if participant == "all":
+                participant = None
+            dataset = (qs.get("dataset") or ["base"])[0]
+            if not STEP_LOCK.acquire(blocking=False):
+                return self._send(409, {"error": "busy",
+                                        "message": "有步骤正在执行（实时推理可能需要数分钟），请等它完成后再新建会话"})
             try:
-                SESSION = InteractiveSession(key)
-            except Exception as e:
-                return self._send(500, {"error": f"创建会话失败: {e}"})
-            return self._send(200, SESSION.state())
+                try:
+                    SESSION = InteractiveSession(
+                        key, participant=participant, dataset=dataset
+                    )
+                except Exception as e:
+                    return self._send(500, {"error": f"创建会话失败: {e}"})
+                return self._send(200, SESSION.state())
+            finally:
+                STEP_LOCK.release()
 
         if url.path == "/api/interactive/state":
             if SESSION is None:
@@ -344,14 +390,20 @@ class Handler(BaseHTTPRequestHandler):
             if SESSION is None:
                 return self._send(404, {"error": "no session"})
             force = (qs.get("force") or ["0"])[0] in ("1", "true", "True")
+            if not STEP_LOCK.acquire(blocking=False):
+                return self._send(409, {"error": "busy",
+                                        "message": "上一步仍在执行（实时推理可能需要数分钟），请稍候"})
             try:
-                msg = SESSION.run_step(force=force)
-            except Exception as e:
-                return self._send(500, {"error": f"执行失败: {e}"})
-            st = SESSION.state()
-            st["last_result"] = msg
-            st["last_force"] = force
-            return self._send(200, st)
+                try:
+                    msg = SESSION.run_step(force=force)
+                except Exception as e:
+                    return self._send(500, {"error": f"执行失败: {e}"})
+                st = SESSION.state()
+                st["last_result"] = msg
+                st["last_force"] = force
+                return self._send(200, st)
+            finally:
+                STEP_LOCK.release()
 
         # Qwen 缓存预热（后台跑，前端轮询进度）
         if url.path == "/api/interactive/prewarm":
@@ -360,18 +412,48 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"started": False, **PREWARM})
 
             def work():
-                PREWARM.update(running=True, done=0, total=0, error=None, scenario=key)
+                PREWARM.update(running=True, done=0, total=0, cache_hits=0, inferred=0, failed=0, error=None, scenario=key)
                 try:
-                    src = ir.SHORT_FILE if key == "short_term" else ir.LONG_FILE
-                    ms = ir._load_jsonl(src)
+                    dataset = (qs.get("dataset") or ["base"])[0]
+                    participant = (qs.get("participant") or [""])[0] or None
+                    dataset_id = (
+                        f"{key}|{dataset}|{participant or 'all'}"
+                    )
+                    same_session = SESSION is not None and SESSION.dataset_id == dataset_id
+                    if same_session:
+                        ms = SESSION.moments
+                        p = SESSION.perceiver
+                    else:
+                        if key == "short_term":
+                            src = (ir.SHORT_EXPANDED_FILE if dataset == "expanded"
+                                   else ir.SHORT_FILE)
+                        else:
+                            participant = participant or "A1_JAKE"
+                            src = ir.LONG_PERSON_DIR / f"{participant}.jsonl"
+                        ms = ir._load_jsonl(src)
+                        if key == "long_term":
+                            pass  # participant datasets contain only local English clips
+                        elif participant:
+                            ms = [m for m in ms
+                                  if "_".join(str(m.get("id", "")).split("_")[1:3]) == participant]
+                        p = ir.site_perceiver()
                     PREWARM["total"] = len(ms)
-                    p = QwenPerceiver()
                     for m in ms:
                         try:
-                            p.perceive(m)
+                            result = p.perceive(m)
+                            if result.get("fields"):
+                                if result.get("source") == "cache":
+                                    PREWARM["cache_hits"] += 1
+                                elif result.get("source") == "qwen":
+                                    PREWARM["inferred"] += 1
+                                else:
+                                    PREWARM["failed"] += 1
+                            else:
+                                PREWARM["failed"] += 1
                         except Exception:
-                            pass
-                        PREWARM["done"] += 1
+                            PREWARM["failed"] += 1
+                        finally:
+                            PREWARM["done"] += 1
                 except Exception as e:
                     PREWARM["error"] = str(e)
                 finally:
@@ -404,7 +486,7 @@ def main():
     print(f"\n  服务地址: http://localhost:{port}")
     print("  页面内可切换「交互执行」模式：逐步查看输入的视频/时间点，手工点击运行")
     print("  按 Ctrl+C 停止\n")
-    HTTPServer(("0.0.0.0", port), Handler).serve_forever()
+    ThreadingHTTPServer(("0.0.0.0", port), Handler).serve_forever()
 
 
 if __name__ == "__main__":

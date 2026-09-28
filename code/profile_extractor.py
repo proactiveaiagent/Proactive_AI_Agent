@@ -73,9 +73,12 @@ DO NOT extract transient state (current emotion, attention focus, gaze, current 
 
 RULES:
 1. Only output a field if you have EVIDENCE from the analysis. Do NOT hallucinate.
-2. Each attribute value carries "confidence" (0.0-1.0) and "evidence" (short quote/paraphrase from the analysis).
-3. A first-time / single observation should have LOW confidence (< 0.5); repeated evidence raises confidence.
-4. OPTIONAL: each attribute may carry "decay_type" to indicate its temporal nature:
+2. Each attribute carries "confidence" (certainty, 0.0-1.0) and "evidence".
+3. Also provide "rank_score" (0.0-1.0), separate from confidence: preference/motivation strength,
+   goal importance, and decision-factor influence. Personality ordering uses confidence; repeated
+   behavior/location observations use their observation frequency.
+4. A first-time / single observation should have LOW confidence (< 0.5); repeated evidence raises confidence.
+5. OPTIONAL: each attribute may carry "decay_type" to indicate its temporal nature:
    - "stable"   : identity / preference (gender, name, taste) — long-lasting or permanent
    - "decaying" : life-stage / state (e.g. occupation, "currently a student") — fades over time
    - "deadline" : time-limited (coupon, membership expiry) — MUST also give "expires_at" in ISO format
@@ -85,7 +88,7 @@ RULES:
 OUTPUT FORMAT:
 {{
   "demographics": {{ "name": {{"value":"...","confidence":0.9,"evidence":"..."}}, "age": {{...}}, "social_relations": [{{"value":"...","confidence":0.6,"evidence":"..."}}] }},
-  "preferences": {{ "food": [{{"value":"spicy","confidence":0.85,"evidence":"..."}}], "hobbies": [{{"value":"...","confidence":0.6,"evidence":"..."}}] }},
+  "preferences": {{ "food": [{{"value":"spicy","confidence":0.85,"rank_score":0.9,"evidence":"..."}}], "hobbies": [{{"value":"...","confidence":0.6,"evidence":"..."}}] }},
   "frequent_locations": [{{"value":"...","confidence":0.6,"evidence":"..."}}],
   "behavior_patterns": {{
     "with_surroundings": [{{"value":"...","confidence":0.6,"evidence":"..."}}],
@@ -93,9 +96,9 @@ OUTPUT FORMAT:
     "with_agents": [{{"value":"...","confidence":0.6,"evidence":"..."}}]
   }},
   "personality": {{ "traits": [{{"value":"...","confidence":0.7,"evidence":"..."}}] }},
-  "goals": [{{"value":"...","confidence":0.6,"evidence":"..."}}],
+  "goals": [{{"value":"...","confidence":0.6,"rank_score":0.7,"evidence":"..."}}],
   "decisions": {{ "patterns": [{{"value":"...","confidence":0.5,"evidence":"..."}}], "key_factors": [{{"value":"...","confidence":0.5,"evidence":"..."}}] }},
-  "motivations": [{{"value":"...","confidence":0.6,"evidence":"..."}}]
+  "motivations": [{{"value":"...","confidence":0.6,"rank_score":0.7,"evidence":"..."}}]
 }}
 
 USER INTERACTION ANALYSIS:
@@ -145,9 +148,14 @@ def _normalise_attr(item: Any) -> Optional[Dict]:
     except (TypeError, ValueError):
         conf = 0.0
     conf = max(0.0, min(1.0, conf))
+    try:
+        rank_score = float(item.get("rank_score", conf))
+    except (TypeError, ValueError):
+        rank_score = conf
     return {
         "value": value,
         "confidence": conf,
+        "rank_score": max(0.0, min(1.0, rank_score)),
         "evidence": str(item.get("evidence", ""))[:200],
         "source": item.get("source", "llm_inference"),
     }

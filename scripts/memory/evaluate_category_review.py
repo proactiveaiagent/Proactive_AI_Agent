@@ -9,7 +9,8 @@ from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_TEMPLATE = ROOT / "data/egolife/testset/long_term/category_review_template.csv"
+TESTSET_ROOT = ROOT / "data/egolife/testset"
+DEFAULT_TEMPLATE = TESTSET_ROOT / "long_term/category_review_template.csv"
 DIMS = {
     "people": ("people_json", "people"),
     "locations": ("locations_json", "locations"),
@@ -80,11 +81,11 @@ def parse_json_list(row, column, sample_id):
     return value
 
 
-def load_qwen_details(path):
+def load_qwen_details(path, scenario_key):
     report = json.loads(path.read_text(encoding="utf-8"))
-    scenario = report.get("scenarios", {}).get("long_term")
+    scenario = report.get("scenarios", {}).get(scenario_key)
     if not isinstance(scenario, dict) or not isinstance(scenario.get("details"), list):
-        raise ValueError("Qwen report must contain scenarios.long_term.details")
+        raise ValueError(f"Qwen report must contain scenarios.{scenario_key}.details")
     details = {}
     duplicates = []
     for item in scenario["details"]:
@@ -121,14 +122,16 @@ def read_rows(path, description):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--scenario", choices=("short_term", "long_term"), default="long_term",
+                    help="Which blind-review packet to score (default: long_term)")
     ap.add_argument("--annotations", type=Path, required=True,
-                    help="Adjudicated CSV copied from category_review_template.csv")
+                    help="Adjudicated CSV copied from the selected scenario template")
     ap.add_argument("--qwen-report", type=Path, required=True,
-                    help="evaluate_qwen.py long-term JSON report with per-row details")
+                    help="evaluate_qwen.py JSON report containing the selected scenario details")
     ap.add_argument("--aliases", type=Path, required=True,
                     help="JSON mapping per dimension: observed alias -> canonical label")
-    ap.add_argument("--template", type=Path, default=DEFAULT_TEMPLATE,
-                    help="Authoritative full review template; defaults to the 725-sample set")
+    ap.add_argument("--template", type=Path, default=None,
+                    help="Authoritative full review template; defaults to the selected scenario packet")
     ap.add_argument("--allow-partial", action="store_true",
                     help="Allow scoring a subset; its report is always marked complete=false")
     ap.add_argument("--output", type=Path,
@@ -136,9 +139,10 @@ def main():
     args = ap.parse_args()
 
     aliases = load_aliases(args.aliases)
-    qwen = load_qwen_details(args.qwen_report)
+    template = args.template or TESTSET_ROOT / args.scenario / "category_review_template.csv"
+    qwen = load_qwen_details(args.qwen_report, args.scenario)
     rows, annotation_ids = read_rows(args.annotations, "Annotation")
-    _, expected_ids = read_rows(args.template, "Authoritative template")
+    _, expected_ids = read_rows(template, "Authoritative template")
     extra_ids = sorted(annotation_ids - expected_ids)
     missing_ids = sorted(expected_ids - annotation_ids)
     if extra_ids:
@@ -279,8 +283,9 @@ def main():
     result = {
         "ok": True,
         "created_at": datetime.now().isoformat(timespec="seconds"),
+        "scenario": args.scenario,
         "annotations": str(args.annotations),
-        "template": str(args.template),
+        "template": str(template),
         "qwen_report": str(args.qwen_report),
         "aliases": str(args.aliases),
         "expected_samples": len(expected_ids),

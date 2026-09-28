@@ -942,10 +942,9 @@ Keep the response structured and concise."""
 
         # ── memory context retrieval（分层检索 early-stop，替代全量 dump）──
         # 09-10：get_all_memory() 只输出统计数字、不含画像内容，且全量 dump；
-        # 改为 get_context_for_analysis() 按 layer6画像→layer4/5摘要→layer7 索引
-        # 分层渲染最小够用上下文（同步链路不含 LLM 调用）。
+        # 按 L1→L5 相关度检索，并补充 L6 画像与 L7 原始事实。
         t0 = time.time()
-        memory_context = self.memory.get_context_for_analysis()
+        memory_context = self.memory.get_context_for_analysis(query_text=formatted_transcript or "")
         self.timings_phase_a["memory_retrieval"] = time.time() - t0
         print(f"\n{memory_context}\n")
 

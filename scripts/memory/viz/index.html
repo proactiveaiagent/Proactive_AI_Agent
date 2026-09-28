@@ -32,6 +32,56 @@ input[type=range]{flex:1;min-width:200px;accent-color:var(--brand)}
 .ttl{font-weight:700;font-size:13.5px}
 .cnt{margin-left:auto;font-size:20px;font-weight:800;color:var(--brand)}
 .desc{font-size:11.5px;color:var(--muted);margin-bottom:6px}
+.layer.family-raw{border-top:4px solid #4f78df;background:linear-gradient(180deg,#f5f8ff,#fff)}
+.layer.family-summary{border-top:4px solid #9a65d6;background:linear-gradient(180deg,#fbf7ff,#fff)}
+.layer.family-profile{border-top:4px solid #20a278;background:linear-gradient(180deg,#f3fcf8,#fff)}
+.layer.family-index{border-top:4px solid #d68a29;background:linear-gradient(180deg,#fffaf1,#fff)}
+.layer-kind{display:inline-flex;align-items:center;border-radius:999px;padding:2px 8px;margin:1px 0 7px;font-size:10px;font-weight:800;background:#eef2ff;color:#4059aa}
+.layer.family-summary .layer-kind{background:#f2eafd;color:#7643a8}
+.layer.family-profile .layer-kind{background:#e4f6ef;color:#187957}
+.layer.family-index .layer-kind{background:#fff0d9;color:#8d5a10}
+.layer-facts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;margin:7px 0}
+.layer-fact{padding:6px 8px;border-radius:8px;background:rgba(255,255,255,.78);border:1px solid rgba(220,226,238,.9);min-width:0}
+.layer-fact small{display:block;font-size:9px;line-height:1.3;color:var(--muted)}
+.layer-fact b{display:block;font-size:10.5px;line-height:1.4;color:#37435d;overflow-wrap:anywhere}
+.layer-note{font-size:10px;line-height:1.45;color:#596781;background:rgba(255,255,255,.8);border:1px dashed #cfd8e8;border-radius:8px;padding:6px 8px;margin:6px 0}
+.layer-window{margin:7px 0}
+.layer-window-label{font-size:10px;color:#56627a;display:flex;justify-content:space-between;gap:6px}
+.layer-window-track{height:5px;border-radius:99px;background:#e7ebf3;margin-top:4px;overflow:hidden}
+.layer-window-track i{display:block;height:100%;border-radius:99px;background:#5b79df}
+.layer-field{padding:6px 0;border-top:1px solid #edf0f6}
+.layer-field:first-child{border-top:0}
+.layer-field>b{display:block;font-size:10px;color:#5c6881}
+.layer-field>div{font-size:11px;color:#313d55;overflow-wrap:anywhere}
+.layer-tags{display:flex;flex-wrap:wrap;gap:4px;margin-top:3px}
+.layer-tags .mtag{margin:0}
+.layer-summary-text{padding:7px 8px;border-radius:8px;background:#fff;border:1px solid var(--border);font-size:11px}
+.profile-attribute{padding:6px 8px;margin:4px 0;border:1px solid #dcefe6;border-radius:8px;background:#fff}
+.profile-attribute b{font-size:10px;color:#366550}
+.profile-attribute span{display:block;font-size:11px;color:#253d34;overflow-wrap:anywhere}
+.profile-attribute small{display:block;font-size:9px;color:#73867d}
+.profile-empty{padding:8px;border-radius:8px;background:#fff8e8;color:#815b18;border:1px solid #f3dfae;font-size:10px;line-height:1.5}
+.layer-index-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px}
+.layer-index-cell{padding:6px 7px;border-radius:8px;background:#fff;border:1px solid #f1e4d1;min-width:0}
+.layer-index-cell b{font-size:10px;color:#654b29}
+.layer-index-cell small{display:block;font-size:9px;color:#7e715f}
+.layer-memberships{display:block;margin-top:5px}
+.layer-membership{display:inline-block;border-radius:999px;padding:0 6px;margin-right:3px;font-size:9px;font-weight:800;background:#edf2ff;color:#415fb4}
+.layer-tone-l1{--layer-accent:#c84f62;--layer-soft:#fff0f2;--layer-border:#f0c6ce}
+.layer-tone-l2{--layer-accent:#bf681e;--layer-soft:#fff3e7;--layer-border:#f1d1b2}
+.layer-tone-l3{--layer-accent:#9b7400;--layer-soft:#fff9df;--layer-border:#eadfa9}
+.layer-tone-l4{--layer-accent:#168365;--layer-soft:#eaf7f1;--layer-border:#c1e6d5}
+.layer-tone-l5{--layer-accent:#376fbd;--layer-soft:#eef4ff;--layer-border:#cbdaf4}
+.layer-tone-l6{--layer-accent:#8052b2;--layer-soft:#f4eeff;--layer-border:#dacbf0}
+.layer-tone-l7{--layer-accent:#147d98;--layer-soft:#eaf8fc;--layer-border:#c0e3eb}
+.layer-token{display:inline-flex;align-items:center;border:1px solid var(--layer-border);border-radius:999px;padding:0 6px;background:var(--layer-soft);color:var(--layer-accent);font-size:9px;font-weight:800;line-height:1.5;white-space:nowrap}
+.layer-membership[class*="layer-tone-"],.window-count[class*="layer-tone-"]{background:var(--layer-soft);border-color:var(--layer-border);color:var(--layer-accent)}
+.window-count[class*="layer-tone-"] b{color:var(--layer-accent)}
+.window-intro{padding:8px 10px;margin:6px 0 10px;border-radius:9px;background:#f1f5ff;border:1px solid #dfe7fb;font-size:11px;color:#4a5873;line-height:1.5}
+.window-counts{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0}
+.window-count{padding:4px 8px;border-radius:8px;background:#f7f8fc;border:1px solid var(--border);font-size:10px;color:#49556e}
+.window-count b{color:#334f9c}
+.layer-audit-note{padding:9px 11px;margin:8px 0;border-radius:9px;border:1px solid #f0d8a3;background:#fff9e9;color:#6f551d;font-size:11px;line-height:1.55}
 .body{font-size:12px;color:#3a4058;background:#fff;border-radius:7px;padding:8px 10px;max-height:120px;overflow-y:auto;border:1px solid var(--border)}
 .body .empty{color:#9aa0c3;font-style:italic}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
@@ -45,10 +95,12 @@ td{padding:6px 10px;border-top:1px solid var(--border)}
 .badge.warn{background:rgba(232,147,12,.12);color:var(--warn)}
 .tag{display:inline-block;background:var(--code);border:1px solid var(--border);border-radius:6px;padding:2px 8px;margin:2px 4px 2px 0;font-size:11.5px}
 .log{max-height:280px;overflow-y:auto;font-size:12.5px}
-.log .row{padding:6px 10px;border-top:1px solid var(--border);display:flex;gap:10px}
+.log .row{padding:6px 10px;border-top:1px solid var(--border);display:grid;grid-template-columns:100px 110px minmax(0,1fr);align-items:start;gap:10px}
 .log .row:first-child{border-top:none}
-.log .idx{color:#9aa0c3;min-width:28px}
-.log .act{min-width:90px;font-weight:700}
+.log .idx{color:#9aa0c3;white-space:nowrap}
+.log .act{min-width:0;font-weight:700}
+.log .row>span:last-child{min-width:0;overflow-wrap:anywhere;line-height:1.5}
+@media(max-width:640px){.log .row{grid-template-columns:78px 88px minmax(0,1fr);gap:6px;padding:6px 7px}}
 .log .act.add{color:var(--ok)}.log .act.query{color:var(--brand)}
 .log .act.update{color:var(--warn)}.log .act.delete{color:#e5484d}
 .log .act.highlight{color:var(--brand2)}.log .act.sort{color:var(--brand)}
@@ -69,7 +121,7 @@ td{padding:6px 10px;border-top:1px solid var(--border)}
 .pbar{height:8px;background:var(--code);border-radius:999px;overflow:hidden;margin:10px 0 4px}
 .pbar>div{height:100%;background:linear-gradient(90deg,var(--brand),var(--brand2));border-radius:999px;transition:width .3s}
 .stepbox{border:1px dashed var(--brand);border-radius:11px;padding:14px 16px;background:rgba(91,108,255,.04);margin-bottom:12px}
-.stepbox .st-title{font-size:15px;font-weight:800;margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.stepbox .st-title{font-size:15px;font-weight:800;margin-bottom:8px;display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:8px}
 .minput{background:#fff;border:1px solid var(--border);border-radius:9px;padding:8px 12px;margin-bottom:8px}
 .minput .mhead{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:4px;align-items:center}
 .minput .mact{font-size:12.5px;color:#3a4058}
@@ -91,7 +143,7 @@ td{padding:6px 10px;border-top:1px solid var(--border)}
 .clipvid{width:100%;max-width:320px;aspect-ratio:16/9;border-radius:8px;background:#000;display:block;margin:4px 0}
 .mrec .clipvid{max-width:260px}
 .vmeta{font-size:11.5px;color:var(--muted);margin-bottom:2px}
-/* Qwen 感知产出 vs Golden 对照 */
+/* Qwen 感知产出与自动标签诊断 */
 .percbox{border:1px solid var(--border);border-radius:10px;padding:12px 14px;background:#fafbff;margin-top:10px}
 .percbox h4{margin:0 0 8px;font-size:13.5px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .srctag{font-size:11px;font-weight:700;padding:2px 9px;border-radius:999px;background:#eef2ff;color:var(--brand)}
@@ -106,14 +158,16 @@ td{padding:6px 10px;border-top:1px solid var(--border)}
 .tag.hit{background:rgba(12,166,120,.14);color:var(--ok)}
 .tag.miss{background:rgba(229,72,77,.12);color:#e5484d}
 .tag.extra{background:#f3f4f6;color:#6b7280}
+.cmp-legend{display:flex;gap:4px;flex-wrap:wrap;margin:4px 0}
+.cmp-note{font-size:11px;color:var(--muted);margin:4px 0 6px}
 .prec-sum{font-size:12.5px;color:#3a4058;margin-bottom:8px;font-weight:600}
-.prec-raw{margin-top:8px;font-size:11.5px;color:#4b5563;background:#fff;border:1px solid var(--border);border-radius:8px;padding:8px 10px;white-space:pre-wrap;max-height:180px;overflow:auto}
+.prec-raw{margin-top:8px;font-size:11.5px;color:#4b5563;background:#fff;border:1px solid var(--border);border-radius:8px;padding:8px 10px;white-space:pre-wrap;overflow-wrap:anywhere}
 .qstat{font-size:12px;color:var(--muted);margin-left:auto}
 .qstat b{color:var(--ok)}
 .fulltoggle{cursor:pointer;user-select:none}.fulltoggle:hover{color:var(--brand)}
 .mrec{background:#fff;border:1px solid var(--border);border-radius:8px;padding:6px 10px;margin-bottom:5px;font-size:12.5px}
-.mrec .mid{font-weight:800;color:var(--brand)}.mrec .mscene{color:#374151}
-.mrec .maction{color:#4b5563}.mrec .mtag{display:inline-block;background:#eef;border-radius:4px;padding:1px 6px;margin:1px 2px;font-size:11px}
+.mrec .mid{font-weight:800;color:var(--brand)}.mrec .mscene{display:block;color:#374151;line-height:1.5;margin-top:4px;overflow-wrap:anywhere}
+.mrec .maction{display:block;color:#4b5563;line-height:1.5;margin-top:4px;overflow-wrap:anywhere}.mrec .mtag{display:inline-block;background:#eef;border-radius:4px;padding:1px 6px;margin:1px 2px;font-size:11px}
 .mrec.hi{border-color:#f59e0b;background:linear-gradient(90deg,#fffbeb,#fff)}.mrec.stale{opacity:.5}
 .mrec .mid{font-weight:800;color:var(--brand)}
 .sublayer{font-size:12px;color:var(--muted);margin:6px 0 4px;font-weight:700}
@@ -155,75 +209,418 @@ body{background:radial-gradient(1000px 380px at 50% -120px,#e7edff 0,transparent
 .layer-details>summary:after{content:"＋";color:var(--brand);font-size:18px}
 .layer-details[open]>summary:after{content:"−"}
 .layer-details>summary small{color:var(--muted);font-weight:500;font-size:11px}
+.layer-legend{display:inline-flex;align-items:center;gap:4px;flex-wrap:wrap}.layer-legend strong{margin-left:4px}
 .layer-details .layers{padding:2px 0 16px}
 .layer{background:#f8faff;border-radius:13px}
-.layer .body{line-height:1.55}
+.layer .body{line-height:1.55;max-height:340px}
+.moment-detail{background:#fff;border:1px solid #e2e8f2;border-radius:9px;padding:8px;margin:5px 0}
+.moment-detail-head{display:flex;justify-content:space-between;gap:8px;font-size:10px;color:#64718a}
+.moment-detail-head b{color:#3555b5}
+.moment-detail-tags{display:flex;flex-wrap:wrap;gap:3px;margin:4px 0}
+.moment-detail-copy{margin-top:5px}
+.moment-detail-copy strong{display:block;font-size:10px;color:#596781}
+.moment-detail-copy p{font-size:11px;line-height:1.5;color:#27344c;overflow-wrap:anywhere}
+.moment-detail-copy .trimmed{color:#8a94a8;font-size:9px}
+.archive-dimension{margin:6px 0 10px}
+.archive-dimension-title{font-size:10px;font-weight:800;color:#815a1e;margin:5px 0 3px}
+.layer-sample-label{font-size:9px;font-weight:800;color:#64718a;margin:4px 0 2px}
+.archive-sample-card .moment-detail{padding:6px}
+.layer-empty-evidence{font-size:10px;line-height:1.45;color:#765b24;background:#fff8e8;border-radius:7px;padding:6px 8px}
 .video-shell{margin:8px 0 5px}
-.video-placeholder{display:flex;align-items:center;gap:12px;min-height:74px;padding:12px 14px;border-radius:11px;background:linear-gradient(130deg,#17233b,#293e68);color:#fff}
-.video-placeholder[hidden]{display:none}
-.video-placeholder .preview-icon{width:36px;height:36px;border-radius:50%;display:grid;place-items:center;background:rgba(255,255,255,.16);font-size:14px;flex:none}
-.video-placeholder strong{display:block;font-size:12px}
-.video-placeholder small{display:block;color:#c4d0e9;font-size:11px;margin-top:2px}
+a.video-repeat-note{display:inline-flex;margin:5px 0 1px;color:#5163c4;font-size:11px;text-decoration:none}
+a.video-repeat-note:hover{text-decoration:underline}
 .video-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:7px}
 .video-actions .btn{font-size:11.5px;padding:4px 10px}
 .video-actions .preview-load{background:#eef2ff;color:#344fb0;border-color:#dce4ff}
 .video-actions .preview-load:disabled{opacity:.55;cursor:wait}
 .video-actions .original-load{color:#68758d;background:#fff}
-.video-status{min-height:16px;color:#63718a;font-size:11px;margin-top:4px}
+.video-status{min-height:0;color:#63718a;font-size:11px;margin-top:4px}.video-status:empty{display:none}
+.input-toggle{display:flex;justify-content:center;margin:5px 0;z-index:4}
+.input-toggle-top{position:sticky;top:0;justify-content:flex-end;padding:5px 0;background:rgba(248,250,255,.94);backdrop-filter:blur(8px);border-bottom:1px solid #e6ebf4}
+.input-toggle-top .btn{padding:5px 11px;font-size:11px;box-shadow:0 2px 8px rgba(28,45,82,.08)}
 .video-shell .clipvid{width:100%;max-width:360px;max-height:260px;aspect-ratio:16/9;object-fit:contain;border-radius:11px;background:#101725;border:1px solid #dfe6f1}
 .video-shell .clipvid[hidden]{display:none}
 @media(max-width:1020px){.flow-track{grid-template-columns:1fr;gap:8px}.flow-arrow{flex-direction:row;gap:8px;min-height:24px}.flow-arrow i{transform:rotate(90deg);font-size:21px}.flow-stage>p{min-height:0}.flow-metrics{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media(max-width:620px){.flow-heading{display:block}.flow-current{display:inline-block;margin-top:10px}.flow-card{padding:17px}.flow-metrics{gap:5px}.flow-metric{padding:8px 6px}.flow-metric b{font-size:15px}.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.layer-details>summary small{display:none}}
 
+.speed-control{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px;white-space:nowrap}
+.speed-control select{border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--ink);padding:5px 8px;font:inherit}
+.playback-toolbar .btn:disabled{opacity:.45;cursor:not-allowed}
+.keyboard-hint{margin-top:-6px;margin-bottom:10px}
+@media(max-width:620px){.playback-toolbar{gap:7px}.playback-toolbar .step-info{min-width:100%;order:6}.speed-control{margin-left:auto}}
+
+html,body{height:100%;overflow:hidden}
+body{height:100vh;height:100dvh;min-height:0;display:flex;flex-direction:column}
+.hero{flex:none;padding:12px clamp(14px,2.5vw,36px)}
+.hero h1{font-size:20px}
+.tabs,.modes{margin-top:8px}
+.wrap{flex:1;min-height:0;width:100%;max-width:1480px;margin:0 auto;display:flex;flex-direction:column;padding:10px clamp(12px,2vw,28px) 12px}
+#replayCard{flex:none;padding:10px 14px;margin-bottom:8px}
+#replayCard h2{font-size:14px;margin-bottom:6px}
+#replayCard .toolbar{gap:8px;margin-bottom:0}
+#replayCard .keyboard-hint,#replayCard #replayNote{display:none}
+#kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin-top:7px}
+#kpis .kpi{padding:5px 9px}
+#kpis .kpi .num{font-size:15px}
+#kpis .kpi .lbl{font-size:10px}
+.view-tabs{display:flex;align-items:center;gap:6px;flex:none;margin:0 0 8px;padding:2px 1px;overflow-x:auto;scrollbar-width:thin}
+.view-tab{flex:none;border:1px solid var(--border);border-radius:9px;background:#fff;color:#52617b;padding:7px 13px;font:600 12px inherit;cursor:pointer;transition:background .15s,color .15s,border-color .15s}
+.view-tab:hover{border-color:#aab8e7;color:var(--brand)}
+.view-tab[aria-selected="true"]{background:#edf1ff;border-color:#cbd6ff;color:#334fb4}
+#viewStage{flex:1;min-height:0;overflow:hidden;position:relative}
+.content-panel{display:none;height:100%;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:0 4px 8px 0;scrollbar-gutter:stable}
+.content-panel.active{display:block}
+.content-panel>.card,.content-panel>.flow-card{margin-bottom:8px}
+#memoryFlowCard{margin-bottom:0}
+#interactivePane{display:block}
+#interactivePane>.card{margin-bottom:8px}
+.layer-details{margin-bottom:0}
+.layers{grid-template-columns:repeat(3,minmax(0,1fr));align-items:start}
+.layer.family-index{grid-column:1/-1}
+.layer .body{max-height:none;overflow:visible}
+.layer-index-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+.moment-detail{padding:8px 9px;margin:5px 0;min-width:0}
+.moment-detail-head{align-items:flex-start}
+.moment-detail-head time{white-space:nowrap;flex:none}
+.moment-preview{font-size:11px;line-height:1.45;color:#27344c;overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;margin-top:5px}
+.moment-action-preview,.moment-notes-preview{font-size:10px;line-height:1.4;color:#69758c;margin-top:3px;overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:1;overflow:hidden}
+.moment-action-preview b,.moment-notes-preview b{color:#596781;margin-right:4px}
+.moment-detail.is-expanded .moment-preview,.moment-detail.is-expanded .moment-action-preview,.moment-detail.is-expanded .moment-notes-preview{display:block;-webkit-line-clamp:unset;overflow:visible;white-space:pre-wrap}
+.layer-memory-row.is-expanded .layer-memory-copy{display:block;-webkit-line-clamp:unset;overflow:visible}
+.memory-inline-detail{grid-column:1/-1;margin:8px 0 2px;padding:10px 12px;border:1px solid #dfe6f1;border-radius:9px;background:#f8faff}
+.memory-inline-detail-title{font-size:11px;font-weight:800;color:#52617b;margin-bottom:5px}
+.memory-inline-detail-meta{font-size:10px;color:#68758d;margin-bottom:7px}
+.memory-inline-detail p{margin:5px 0;font-size:12px;line-height:1.55;color:#27344c;white-space:pre-wrap;overflow-wrap:anywhere}
+.memory-inline-detail .moment-detail-tags{margin:5px 0}
+@media(max-width:980px){.layers{grid-template-columns:repeat(2,minmax(0,1fr))}.layer-index-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:620px){.layers,.layer-index-grid{grid-template-columns:1fr}.layer.family-index{grid-column:auto}}
+@media(min-width:761px) and (max-width:1100px){
+  .flow-track{grid-template-columns:minmax(0,1fr) 30px minmax(0,1fr) 30px minmax(0,1fr);gap:6px}
+  .flow-stage{padding:10px}
+  .flow-stage-head{align-items:flex-start;gap:7px}
+  .flow-stage h3{font-size:13px}
+  .flow-stage h3 small{font-size:10px}
+  .flow-stage>p{min-height:72px;line-height:1.4;margin:8px 0}
+  .flow-metrics{gap:4px}
+  .flow-metric{padding:7px 5px}
+  .flow-metric b{font-size:15px}
+  .flow-metric span{font-size:9px}
+  .flow-arrow{font-size:8px;flex-direction:column;gap:2px;min-height:0;line-height:1}
+  .flow-arrow span{display:none}
+  .flow-arrow i{font-size:21px;transform:none}
+}
+@media(max-width:760px){.flow-track{grid-template-columns:1fr;gap:8px}.flow-arrow{flex-direction:row;gap:8px;min-height:24px}.flow-arrow i{transform:rotate(90deg);font-size:21px}.flow-stage>p{min-height:0}}
+@media(max-width:620px){.hero{padding:10px 12px}.hero h1{font-size:18px}.view-tabs{gap:5px}.view-tab{padding:6px 10px}.wrap{padding:8px 10px 10px}#replayCard{padding:8px 10px}#replayCard .step-info{min-width:100%;order:8}.content-panel{padding-right:2px}}
+
+
+/* 空间整理：标题与模式导航同排，压低固定播放区，优先留出记忆内容 */
+.hero{display:flex;align-items:center;gap:6px 12px;padding:6px clamp(10px,1.5vw,20px)}
+.hero h1{font-size:16px;white-space:nowrap;flex:none}
+.hero .sub{display:none}
+.hero .tabs{margin:0 0 0 auto;gap:5px;flex:none}
+.hero .modes{margin:0;gap:5px;flex:none}
+.hero .tab,.hero .mode{padding:4px 8px;font-size:11px;border-radius:7px;white-space:nowrap}
+#replayCard{padding:6px 10px;margin-bottom:5px}
+#replayCard h2{display:none}
+#replayCard .toolbar{gap:6px}
+#replayCard .toolbar .btn{padding:4px 9px;font-size:11px;min-height:26px}
+#replayCard .speed-control{font-size:10px;gap:4px}
+#replayCard .speed-control select{padding:3px 5px;font-size:11px}
+#replayCard .step-info{font-size:11px;min-width:140px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#replayCard .keyboard-hint,#replayCard #replayNote{display:none}
+#replayCard #kpis{margin-top:3px;gap:2px}
+#replayCard #kpis .kpi{display:flex;justify-content:center;align-items:baseline;gap:4px;padding:1px 3px;border:0;border-radius:0;background:transparent}
+#replayCard #kpis .num{font-size:12px;line-height:1.2}
+#replayCard #kpis .lbl{font-size:9px;margin-top:0}
+.view-tabs{gap:4px;margin-bottom:5px}
+.view-tab{padding:5px 9px;font-size:11px}
+.layer-details{padding:0 12px}
+.layer-details>summary{padding:8px 0}
+.layer-details .layers{padding:0 0 10px}
+@media(max-width:760px){.hero{flex-wrap:wrap;gap:5px 8px}.hero h1{width:100%;font-size:15px}.hero .tabs{margin-left:0}.hero .modes{margin-left:auto}}
+@media(max-width:420px){.hero .tabs,.hero .modes{gap:4px}.hero .tab,.hero .mode{padding:4px 6px;font-size:10px}}
+
+
+#replayCard input[type=range]{min-width:100px}
+#replayCard .step-info{flex:0 1 140px;min-width:110px;max-width:140px}
+.layer-details>summary{padding:5px 0}
+.layer-details>summary small{display:none}
+@media(max-width:620px){#replayCard .step-info{flex:0 0 100%;min-width:100%;max-width:none;order:8}}
+
+
+.layer-meaning{margin:0 0 5px;padding:5px 7px;border-radius:7px;background:#f5f7fb;color:#53617a;font-size:9px;line-height:1.4}
+/* Layer 1–7 总览：改为紧凑纵向清单，七层在首屏同时可见 */
+.layer-details .layers{display:grid;grid-template-columns:minmax(0,1fr);gap:5px;padding:0}
+.layer-details .layer{display:grid;grid-template-columns:clamp(106px,15vw,168px) minmax(0,1fr);align-items:center;gap:8px;padding:5px 9px;border-radius:9px}
+.layer-details .layer .hd{display:grid;grid-template-columns:25px minmax(0,1fr);grid-template-areas:"no title" "count count";align-items:center;gap:1px 6px;margin:0;min-width:0}
+.layer-details .layer .no{grid-area:no;width:24px;height:24px;border-radius:7px;font-size:10px}
+.layer-details .layer .ttl{grid-area:title;font-size:11px;line-height:1.2;overflow-wrap:anywhere}
+.layer-details .layer .cnt{grid-area:count;margin:0;font-size:10px;line-height:1.2;white-space:normal;color:#63718a}
+.layer-details .layer .body{min-width:0;max-height:none;overflow:visible;font-size:11px;line-height:1.35}
+.layer-details .layer[class*="layer-tone-"]{border-top:3px solid var(--layer-accent);border-left:4px solid var(--layer-accent);background:linear-gradient(90deg,var(--layer-soft),#fff 70%)}
+.layer-details .layer[class*="layer-tone-"] .no{background:var(--layer-accent)}
+.layer-details .layer[class*="layer-tone-"] .ttl,.layer-details .layer[class*="layer-tone-"] .cnt{color:var(--layer-accent)}
+.layer-details .layer[class*="layer-tone-"] .layer-kind{background:var(--layer-soft);border:1px solid var(--layer-border);color:var(--layer-accent)}
+.layer-section{border-left:3px solid var(--layer-accent);border-radius:0 9px 9px 0;padding:4px 8px;margin:9px 0;background:linear-gradient(90deg,var(--layer-soft),transparent 82%)}
+.layer-section .sublayer{color:var(--layer-accent)}
+.layer-memory-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:1px 8px;min-width:0}
+.layer-memory-context{grid-column:1;font-size:9px;line-height:1.25;color:#748098;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.layer-memory-copy{grid-column:1;font-size:11px;line-height:1.35;color:#2e3a52;overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
+.memory-expand-toggle{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;padding:0;border:1px solid #dce4f2;border-radius:50%;background:#fff;color:#405cc0;font-family:inherit;font-size:13px;line-height:1;font-weight:700;cursor:pointer}
+.memory-expand-toggle:hover{background:#f1f5ff;border-color:#b9c9f2}
+.memory-expand-toggle:focus-visible{outline:2px solid #6b83dc;outline-offset:2px}
+.memory-expand-toggle[hidden]{display:none!important}
+.layer-memory-row .memory-expand-toggle{grid-column:2;grid-row:1/3;align-self:center}
+.moment-detail .memory-expand-toggle{margin-top:5px}
+.layer-window{margin:3px 0 0}
+.layer-window-label{display:none}
+.layer-window-track{height:3px;margin:0}
+.layer-summary-strip,.layer-profile-strip,.layer7-overview{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:3px 8px;min-width:0}
+.layer-summary-copy{grid-column:1;font-size:10.5px;line-height:1.35;color:#344158;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
+.layer-text-open{grid-column:2;grid-row:1/3;align-self:center;border:1px solid #e4e9f3;border-radius:7px;background:#fff;color:#405cc0;font-family:inherit;font-size:9px;font-weight:600;padding:4px 7px;white-space:nowrap;cursor:pointer}
+.layer-strip-tags,.layer7-index-chips{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:3px;min-width:0}
+.layer-strip-tag{display:inline-block;max-width:100%;padding:1px 5px;border:1px solid #e7eaf2;border-radius:5px;background:#fff;color:#58657d;font-size:9px;line-height:1.35;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.layer-strip-tag b{color:#485873}
+.layer-strip-meta{grid-column:1/-1;font-size:9px;line-height:1.2;color:#7a859a}
+.layer-profile-empty{font-size:10px;color:#77839a}
+.layer7-overview{grid-template-columns:minmax(0,1fr)}
+.layer7-index-chips{grid-column:1;max-height:none;overflow:visible;align-items:flex-start}
+@media(max-width:620px){
+  .layer-details{padding:0 8px}
+  .layer-details .layer{grid-template-columns:78px minmax(0,1fr);gap:6px;padding:5px 6px}
+  .layer-details .layer .hd{grid-template-columns:22px minmax(0,1fr);gap:2px 4px}
+  .layer-details .layer .no{width:21px;height:21px;font-size:9px}
+  .layer-details .layer .ttl{font-size:10px}
+  .layer-details .layer .cnt{font-size:9px}
+  .layer-memory-row .memory-expand-toggle{width:21px;height:21px;font-size:12px}
+  .layer-text-open{font-size:8px;padding:3px 5px}
+}
+
+
+/* 交互区头部压缩：会话、步骤、缓存按钮与状态同排 */
+#interactivePane>.card{padding:10px 13px;margin-bottom:6px}
+#interactivePane>.card h2{font-size:13px;margin-bottom:6px}
+#intControls{display:flex;align-items:center;gap:8px;flex-wrap:nowrap;margin:0}
+.dataset-picker{display:flex;align-items:center;gap:7px;margin:0 0 6px;font-size:11px;color:#596781}
+.dataset-picker label{font-weight:700;white-space:nowrap}
+.dataset-picker select{max-width:300px;min-width:210px;padding:5px 25px 5px 8px;border:1px solid #d8e0ef;border-radius:7px;background:#fff;color:#293650;font:inherit}
+.dataset-picker .note{margin:0;line-height:1.25}
+#intControls .btn{flex:none;padding:5px 9px;font-size:11px;white-space:nowrap}
+#intControls #intProgress.step-info{flex:none;min-width:0;font-size:11px;white-space:nowrap}
+#intControls .qstat{flex:none;margin-left:auto;font-size:10px;white-space:nowrap}
+#interactivePane .pbar{height:4px;margin:6px 0 3px}
+#interactivePane #prewarmNote{font-size:10px;line-height:1.3;margin-top:2px}
+#interactivePane #prewarmNote:empty{display:none}
+@media(max-width:760px){
+  #intControls{flex-wrap:wrap;gap:6px}
+  #intControls .qstat{margin-left:0}
+  .dataset-picker{align-items:flex-start;flex-wrap:wrap}
+  .dataset-picker select{min-width:min(100%,260px);max-width:100%}
+  .dataset-picker .note{flex-basis:100%}
+}
+
+
+/* memory evaluation panel */
+.evaluation-page{display:grid;gap:8px;color:#26334b}
+.eval-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 12px;background:#f2f5ff;border:1px solid #dfe7fa;border-radius:10px}
+.eval-heading h2{margin:0;font-size:14px}
+.eval-heading p{margin:3px 0 0;color:#64718a;font-size:11px;line-height:1.35}
+
+.eval-heading-tools{display:flex;align-items:center;gap:7px;flex:none}
+.eval-person-filter{display:flex;align-items:center;gap:5px;font-size:10px;font-weight:700;color:#596781;white-space:nowrap}
+.eval-person-filter select{max-width:145px;border:1px solid #cbd7f2;border-radius:8px;padding:5px 8px;background:#fff;color:#34445f;font:inherit;font-size:10px;font-weight:700;cursor:pointer}
+.eval-person-filter select:focus-visible{outline:2px solid #8ba2e8;outline-offset:1px}
+.eval-person-note{margin:0 0 9px!important;padding:6px 9px;border-radius:7px;background:#f7f9fd;color:#68758d;font-size:9px;line-height:1.5}
+.eval-help-btn{border:1px solid #cbd7f2;border-radius:8px;padding:5px 10px;background:#fff;color:#3452a0;font:inherit;font-size:10px;font-weight:800;cursor:pointer;white-space:nowrap}
+.eval-help-btn:hover,.eval-help-btn:focus-visible{background:#edf2ff;border-color:#879de0;outline:none}
+.eval-help-overlay{display:none;position:fixed;inset:0;z-index:10000;align-items:center;justify-content:center;padding:16px;background:rgba(20,29,48,.48)}
+.eval-help-overlay.open{display:flex}
+.eval-help-dialog{width:min(860px,100%);max-height:calc(100vh - 32px);overflow:auto;border:1px solid #dce4f1;border-radius:16px;background:#f8faff;box-shadow:0 24px 80px rgba(10,20,45,.28);padding:16px}
+.eval-help-head{position:sticky;top:-16px;z-index:2;display:flex;justify-content:space-between;align-items:center;gap:12px;margin:-16px -16px 12px;padding:12px 16px;background:rgba(248,250,255,.96);border-bottom:1px solid #e2e8f2;backdrop-filter:blur(8px)}
+.eval-help-head h2{font-size:16px;margin:0;color:#25324a}
+.eval-help-head p{font-size:10px;color:#6d7890;margin:2px 0 0}
+.eval-help-close{width:30px;height:30px;border:1px solid #dbe2ec;border-radius:50%;background:#fff;color:#49566e;font-size:19px;line-height:1;cursor:pointer}
+.eval-help-content{display:grid;gap:9px}
+.eval-drill-dialog{width:min(1040px,100%);max-height:calc(100vh - 28px);overflow:auto;border:1px solid #dce4f1;border-radius:16px;background:#f8faff;box-shadow:0 24px 80px rgba(10,20,45,.28);padding:14px}
+.eval-drill-head{position:sticky;top:-14px;z-index:3;display:flex;justify-content:space-between;align-items:center;gap:12px;margin:-14px -14px 10px;padding:11px 14px;background:rgba(248,250,255,.96);border-bottom:1px solid #e2e8f2;backdrop-filter:blur(8px)}
+.eval-drill-head h2{font-size:15px;margin:0;color:#25324a}.eval-drill-head p{font-size:10px;color:#6d7890;margin:3px 0 0}
+.eval-drill-list{display:grid;gap:7px}.eval-question{border:1px solid #e1e7f0;border-radius:10px;background:#fff;overflow:hidden}
+.eval-question>summary{cursor:pointer;padding:9px 11px;font-size:11px;font-weight:700;color:#2f4168;line-height:1.45}
+.eval-question[open]>summary{border-bottom:1px solid #e7ebf2;background:#f6f8fd}
+.eval-question-body{padding:10px 11px;display:grid;gap:8px}
+.eval-q-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+.eval-q-box{padding:8px;border:1px solid #e6ebf3;border-radius:8px;background:#fbfcff;font-size:10px;line-height:1.5;color:#4d5b72;overflow-wrap:anywhere}
+.eval-q-box strong{display:block;margin-bottom:3px;color:#354a7c}
+.eval-options{display:grid;gap:3px;margin-top:5px}.eval-option{padding:3px 6px;border-radius:5px;background:#f3f5f9}.eval-option.correct{background:#e7f7f0;color:#087b53;font-weight:700}.eval-option.predicted{outline:1px solid #657ada}
+.eval-segment-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+.eval-segment{border:1px solid #e1e7f0;border-radius:8px;background:#fff;padding:7px;min-width:0}
+.eval-segment.target{border-color:#72c69d;background:#f5fcf8}.eval-segment-hit{color:#0b8c5c;font-weight:800}
+.eval-segment-title{font-size:10px;font-weight:700;color:#34445f;overflow-wrap:anywhere}.eval-segment-copy{margin:4px 0;color:#64718a;font-size:9px;line-height:1.4;white-space:pre-wrap;overflow-wrap:anywhere}
+.eval-segment-play{border:1px solid #dbe3f0;border-radius:6px;padding:3px 7px;background:#f6f8fc;color:#40568f;font:inherit;font-size:9px;font-weight:700;cursor:pointer}
+.eval-segment video{display:block;width:100%;max-height:210px;margin-top:6px;border-radius:7px;background:#111827}
+.eval-drill-pager{display:flex;align-items:center;justify-content:center;gap:10px;padding:8px}
+.eval-drill-pager button{border:1px solid #d5deef;border-radius:7px;padding:4px 10px;background:#fff;color:#40568f;font:inherit;font-size:10px;cursor:pointer}
+.eval-drill-pager button:disabled{opacity:.45;cursor:not-allowed}
+.eval-drill-empty{padding:18px;border:1px dashed #ccd5e4;border-radius:9px;background:#fff;color:#68758d;font-size:11px;text-align:center}
+@media(max-width:700px){.eval-q-grid,.eval-segment-list{grid-template-columns:1fr}.eval-drill-dialog{padding:10px}.eval-drill-head{top:-10px;margin:-10px -10px 9px;padding:9px 10px}}
+.eval-help-section{padding:10px 12px;border:1px solid #e1e7f0;border-radius:10px;background:#fff}
+.eval-help-section h3{font-size:12px;margin:0 0 5px;color:#40558e}
+.eval-help-section p{font-size:10px;line-height:1.5;color:#5f6c83;margin:4px 0}
+.eval-help-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+.eval-help-item{padding:7px 8px;border:1px solid #e7ebf2;border-radius:8px;background:#fbfcff}
+.eval-help-item b{display:block;font-size:10px;color:#344d8c;margin-bottom:2px}
+.eval-help-item span{display:block;font-size:9px;line-height:1.45;color:#64718a}
+.eval-help-example{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.eval-help-example>div{padding:8px;border-radius:8px;background:#f5f7fc;border:1px solid #e5eaf3}
+.eval-help-example b{font-size:10px;color:#35445f}
+.eval-help-example p{margin:3px 0;font-size:10px}
+.eval-help-example small{font-size:9px;color:#748098}
+.eval-help-link{color:#405cb4;font-size:9px}
+@media(max-width:620px){.eval-heading{align-items:flex-start}.eval-heading-tools{flex-direction:column;align-items:flex-end}.eval-heading p{font-size:10px}.eval-help-dialog{padding:12px}.eval-help-head{top:-12px;margin:-12px -12px 10px;padding:10px 12px}.eval-help-grid,.eval-help-example{grid-template-columns:1fr}}
+.eval-badge,.eval-status{padding:4px 8px;border-radius:99px;font-size:10px;font-weight:800;white-space:nowrap;background:#e8f6ef;color:#187552}
+.eval-badge.pending,.eval-status.todo{background:#fff4df;color:#96631b}
+.eval-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}.eval-grid.eval-summary-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+.eval-card,.eval-block{padding:8px 10px;border:1px solid #e1e7f0;border-radius:9px;background:#fff;min-width:0}
+.eval-card.eval-clickable{display:block;width:100%;text-align:left;color:inherit;font:inherit;cursor:pointer;transition:border-color .15s,box-shadow .15s,transform .15s}
+.eval-card.eval-clickable:hover,.eval-card.eval-clickable:focus-visible{border-color:#879de0;box-shadow:0 5px 16px rgba(54,78,146,.12);transform:translateY(-1px);outline:none}
+.eval-card.eval-clickable:disabled{cursor:not-allowed;opacity:.55;transform:none;box-shadow:none}
+.eval-card h3,.eval-block h3,.eval-layer-section>h3{margin:0 0 5px;font-size:11px;color:#53617a}
+.eval-main{font-size:19px;font-weight:850;color:#16835d;line-height:1.15}
+.eval-warn{color:#ad6a12}
+.eval-card p,.eval-block p{margin:4px 0;font-size:10px;line-height:1.4;color:#66738a}
+.eval-card small{font-size:9px;color:#77839a}
+.eval-block-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px}
+.eval-block-heading h3{margin:0}
+.eval-block-heading>span:not(.eval-status){font-size:10px;color:#63718a;white-space:nowrap}
+.eval-acceptance-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}.eval-acceptance-grid .eval-card{display:flex;flex-direction:column;align-items:flex-start}.eval-acceptance-grid .eval-status{margin-top:6px}@media(max-width:900px){.eval-acceptance-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.eval-method-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}.eval-method{padding:7px 8px;border:1px solid #e7ebf2;border-radius:7px;background:#fbfcff;min-width:0}.eval-method b{display:block;margin-bottom:2px;color:#40558e;font-size:10px}.eval-method p{margin:0;color:#59677e;font-size:9px;line-height:1.45}@media(max-width:620px){.eval-method-grid{grid-template-columns:1fr}.eval-acceptance-grid{grid-template-columns:1fr}}
+.eval-flow{display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:8px;background:#f7f9fd}.eval-flow>div{display:flex;align-items:baseline;gap:5px}.eval-flow b{font-size:18px;color:#344f9d}.eval-flow span{font-size:10px;color:#68758d}.eval-flow i{font-style:normal;color:#95a0b3}@media(max-width:620px){.eval-flow{flex-wrap:wrap}.eval-flow>div{min-width:28%}}
+.eval-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+.eval-metric{padding:6px 8px;border-radius:7px;background:#f7f9fd}
+.eval-metric b{display:block;font-size:16px;line-height:1.2;color:#344f9d}
+.eval-metric span{display:block;margin-top:2px;font-size:9px;color:#68758d}
+.eval-plain{margin:6px 0 0!important;color:#53617a!important}
+.eval-accuracy{background:#fffdf7;border-color:#f0dfb9}
+
+.eval-layer-section{display:grid;gap:5px}
+.eval-layer-section>h3{margin:0}
+.eval-layer-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
+.eval-layer{display:grid;grid-template-columns:auto 1fr;align-items:center;gap:4px 7px;padding:7px 8px;border:1px solid #e3e9f2;border-radius:8px;background:#fff;min-width:0}
+.eval-layer strong{font-size:10px;color:#53617a}
+.eval-layer span:last-child{grid-column:1/-1;font-size:9px;line-height:1.35;color:#68758d}
+.eval-scope{padding:6px 9px;border:1px solid #e1e7f0;border-radius:8px;background:#f8faff;color:#5d6980;font-size:9px;line-height:1.4}
+.eval-resources{display:flex;align-items:center;gap:6px 12px;flex-wrap:wrap;font-size:9px}
+.eval-resources span{color:#7a859a}
+.eval-resources a{color:#405cb4;text-decoration:none}
+.eval-resources a:hover{text-decoration:underline}
+
+.eval-type-table{width:100%;border-collapse:collapse;font-size:10px;color:#4c5a72}
+.eval-type-table th,.eval-type-table td{padding:5px 7px;border-bottom:1px solid #edf0f5;text-align:left}
+.eval-type-table th{font-weight:700;color:#7b879c;background:#f8f9fc}
+.eval-type-table td:last-child,.eval-type-table th:last-child{text-align:right}
+.eval-type-table tr:last-child td{border-bottom:0}
+
+.eval-source{font-size:9px;color:#8490a4}
+.eval-not-measured{color:#8b641e}
+@media(max-width:900px){.eval-layer-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.eval-grid.eval-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:620px){.eval-grid{grid-template-columns:1fr}.eval-grid.eval-summary-grid{grid-template-columns:1fr}.eval-layer-grid{grid-template-columns:1fr 1fr}.eval-heading p{font-size:10px}}
+@media(max-width:420px){.eval-layer-grid{grid-template-columns:1fr}.eval-metric b{font-size:14px}}
+
+.interactive-summary{margin-top:7px;padding-top:6px;border-top:1px solid var(--border)}
+.interactive-summary-title{font-size:10px;font-weight:750;color:var(--muted);margin-bottom:3px}
+#intSummary #kpis{grid-template-columns:repeat(4,minmax(0,1fr));gap:3px;margin:0}
+#intSummary #kpis .kpi{display:flex;justify-content:center;align-items:baseline;gap:4px;padding:2px 4px;border:0;border-radius:0;background:transparent}
+#intSummary #kpis .num{font-size:12px;line-height:1.2}
+#intSummary #kpis .lbl{font-size:9px;margin-top:0}
+@media(max-width:620px){#intSummary #kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+.stepbox .st-title-text{min-width:0;overflow-wrap:anywhere}
+.stepbox .st-title .video-actions{margin:0;gap:6px;flex-wrap:nowrap;justify-content:flex-end}
+.stepbox .st-title .video-actions .btn{white-space:nowrap;padding:4px 9px}
+@media(max-width:760px){.stepbox .st-title{grid-template-columns:auto minmax(0,1fr)}.stepbox .st-title .video-actions{grid-column:1/-1;justify-self:end}}
+
+/* The interactive run controls replace the obsolete standalone replay player. */
+#replayCard{display:none!important}
+
+.storage-projection-wrap{width:100%;overflow-x:auto}
+.storage-projection-table{width:100%;min-width:610px;border-collapse:collapse;font-size:11px}
+.storage-projection-table th,.storage-projection-table td{padding:7px 9px;border-bottom:1px solid #e9edf5;text-align:left;white-space:nowrap}
+.storage-projection-table th{color:#6d7890;background:#f7f9fd;font-weight:700}
+.storage-projection-table td:nth-child(2),.storage-projection-table td:nth-child(4){font-variant-numeric:tabular-nums}
+.storage-projection-table tr:last-child td{border-bottom:0}
+.storage-projection-ok{color:#14845b}
+.storage-projection-note{margin:6px 0 0;color:#68758d;font-size:10px;line-height:1.55}
 </style>
 </head>
 <body>
 
 <div class="hero">
   <h1>🧠 7 层记忆模型 · 可视化</h1>
-  <div class="sub">EgoLife 数据集跑通结果 · 短期记忆场景 / 长期记忆场景</div>
+
   <div class="tabs" id="tabs"></div>
-  <div class="modes">
-    <div class="mode on" id="modeReplay" onclick="setMode('replay')">📊 结果回放</div>
-    <div class="mode" id="modeInt" onclick="setMode('interactive')">🎮 交互执行（逐步运行）</div>
-  </div>
 </div>
 
 <div class="wrap">
 
-  <!-- 播放器置顶常驻：从步骤卡片或记忆条目点「看视频」都能立刻看到画面 -->
+  <!-- 静态结果回放使用时间轴；交互执行时由运行步骤控制，不显示此卡片 -->
   <div class="card" id="replayCard">
     <h2><span class="dot"></span><span id="replayTitle">时间轴回放</span></h2>
-    <div class="toolbar">
-      <button class="btn" id="playBtn">▶ 播放</button>
-      <input type="range" id="slider" min="0" max="0" value="0">
-      <div class="step-info" id="stepInfo">加载中…</div>
+    <div class="toolbar playback-toolbar">
+      <button class="btn" id="prevBtn" type="button" title="上一步（←）" aria-label="上一步">◀ 上一步</button>
+      <button class="btn" id="playBtn" type="button" aria-pressed="false">▶ 播放</button>
+      <button class="btn" id="nextBtn" type="button" title="下一步（→）" aria-label="下一步">下一步 ▶</button>
+      <label class="speed-control" for="playbackSpeed">速度
+        <select id="playbackSpeed" aria-label="时间轴播放速度">
+          <option value="1200">0.5×</option><option value="600" selected>1×</option>
+          <option value="300">2×</option><option value="150">4×</option>
+        </select>
+      </label>
+      <input type="range" id="slider" min="0" max="0" value="0" aria-label="时间轴步骤">
+      <div class="step-info" id="stepInfo" aria-live="polite">加载中…</div>
     </div>
-    <div id="kpis" class="kpis"></div>
+    <div class="note keyboard-hint">快捷键：空格 播放/暂停 · ← 上一步 · → 下一步</div>
+    <div id="kpis" class="kpis" title="变化量与上一步相比；第一步为0"></div>
     <div class="note" id="replayNote">拖动滑块或点击播放，观察记忆随时间的演化（各层数量、索引维度、画像字段的变化）。</div>
   </div>
 
-  <div id="interactivePane" style="display:none">
+  <nav class="view-tabs" role="tablist" aria-label="记忆内容视图">
+    <button class="view-tab" role="tab" aria-selected="true" data-view="overview">记忆流动</button>
+    <button class="view-tab" role="tab" aria-selected="false" data-view="interactive">当前步骤</button>
+      <button class="view-tab" role="tab" aria-selected="false" data-view="layers">逐层详情</button>
+    <button class="view-tab" role="tab" aria-selected="false" data-view="index">索引与画像</button>
+    <button class="view-tab" role="tab" aria-selected="false" data-view="memory">完整记忆</button>
+    <button class='view-tab' role='tab' aria-selected='false' data-view='evaluation'>评估指标</button>
+    <button class="view-tab" role="tab" aria-selected="false" data-view="log">操作日志</button>
+  </nav>
+  <main id="viewStage">
+  <section class="content-panel" data-view-panel="interactive" role="tabpanel" aria-label="交互执行">
+  <div id="interactivePane">
     <div class="card">
       <h2><span class="dot"></span>交互执行 · <span id="intName">—</span></h2>
-      <div class="toolbar">
-        <button class="btn" onclick="newSession('short_term')">🔄 新建 · 短期场景</button>
-        <button class="btn" onclick="newSession('long_term')">🔄 新建 · 长期场景</button>
-        <div class="step-info" id="intProgress">未开始</div>
+      <div class="dataset-picker">
+        <label for="interactiveDataset">当前步骤测试集</label>
+        <select id="interactiveDataset" onchange="changeInteractiveDataset(this.value)" aria-label="选择当前步骤测试集">
+          <option value="">加载测试集…</option>
+        </select>
+        <span id="interactiveDatasetNote" class="note"></span>
       </div>
-      <div class="pbar"><div id="intBar" style="width:0%"></div></div>
-      <div class="note" id="intDesc"></div>
-      <div class="toolbar" style="margin-top:10px">
-        <button class="btn" id="prewarmBtn" onclick="prewarm()">🔥 预热 Qwen 缓存</button>
+      <div class="toolbar" id="intControls">
+        <button class="btn" onclick="newSession(curKey||'short_term', intState&&intState.participant, intState&&intState.dataset_key)">🔄 重开当前会话</button>
+        <div class="step-info" id="intProgress">未开始</div>
+        <button class="btn" id="prewarmBtn" onclick="prewarm()">🔎 检查/补齐缓存</button>
         <div class="qstat" id="qstat">—</div>
       </div>
+      <div class="pbar"><div id="intBar" style="width:0%"></div></div>
       <div class="note" id="prewarmNote"></div>
+      <div id="intSummary" class="interactive-summary" aria-label="本次运行指标">
+        <div class="interactive-summary-title">本次运行指标</div>
+      </div>
     </div>
 
     <div class="card" id="stepCard">
       <h2><span class="dot"></span>⏭ 当前待执行步骤</h2>
       <div id="stepDetail"><div class="note">点击上方「新建」按钮开始一个会话。</div></div>
-      <div class="toolbar" style="margin-top:12px">
+      <div class="toolbar" id="stepActions" style="margin-top:10px">
         <button class="btn primary" id="runStepBtn" onclick="runStep(false)" disabled>▶ 运行此步</button>
         <button class="btn" id="liveBtn" onclick="runStep(true)" disabled>⚡ 实时推理此步</button>
         <button class="btn" id="autoBtn" onclick="toggleAuto()" disabled>⏩ 自动连续运行</button>
@@ -231,102 +628,237 @@ body{background:radial-gradient(1000px 380px at 50% -120px,#e7edff 0,transparent
       <div class="lastres" id="lastRes"></div>
       <div id="percBox"></div>
     </div>
-  </div>
+  </div></section>
 
+  <section class="content-panel active" data-view-panel="overview" role="tabpanel" aria-label="记忆流动">
   <section class="card flow-card" id="memoryFlowCard">
     <div class="flow-heading">
-      <div><h2>记忆怎样流动</h2><p>沿着“事件进入 → 汇总与画像 → 分类索引”阅读；拖动上方时间轴可观察每一步变化。</p></div>
+      <div><h2>记忆怎样流动</h2><p>逐步运行场景，观察事件写入、夜间整理和索引归档。</p></div>
       <span class="flow-current" id="flowStep">等待快照</span>
     </div>
     <div class="flow-track">
       <article class="flow-stage" data-stage="episode">
-        <div class="flow-stage-head"><span class="flow-no">01</span><h3>短期情节记忆<small>先记下发生了什么 · L1—L3</small></h3></div>
+        <div class="flow-stage-head"><span class="flow-no">01</span><h3>短期情节记忆<small>先记下发生了什么 · <b class="layer-token layer-tone-l1">L1</b> <b class="layer-token layer-tone-l2">L2</b> <b class="layer-token layer-tone-l3">L3</b></small></h3></div>
         <p>当前事件进入工作记忆，再按场景与日期组织，支持即时上下文和当天回顾。</p>
         <div class="flow-metrics">
-          <div class="flow-metric"><b id="flowL1">0</b><span>L1 · 当前事件</span></div>
-          <div class="flow-metric"><b id="flowL2">0</b><span>L2 · 同场景</span></div>
-          <div class="flow-metric"><b id="flowL3">0</b><span>L3 · 当日记忆</span></div>
+          <div class="flow-metric"><b id="flowL1">0</b><span><b class="layer-token layer-tone-l1">L1</b> · 当前事件</span></div>
+          <div class="flow-metric"><b id="flowL2">0</b><span><b class="layer-token layer-tone-l2">L2</b> · 同场景</span></div>
+          <div class="flow-metric"><b id="flowL3">0</b><span><b class="layer-token layer-tone-l3">L3</b> · 当日记忆</span></div>
         </div>
       </article>
       <div class="flow-arrow"><span>场景结束<br>夜间归纳</span><i>→</i></div>
       <article class="flow-stage" data-stage="refine">
-        <div class="flow-stage-head"><span class="flow-no">02</span><h3>压缩与画像<small>从事件提炼长期信息 · L4—L6</small></h3></div>
+        <div class="flow-stage-head"><span class="flow-no">02</span><h3>压缩与画像<small>从事件提炼长期信息 · <b class="layer-token layer-tone-l4">L4</b> <b class="layer-token layer-tone-l5">L5</b> <b class="layer-token layer-tone-l6">L6</b></small></h3></div>
         <p>把一天的记录压缩成近期/远期摘要，并逐步更新稳定偏好与行为模式。</p>
         <div class="flow-metrics">
-          <div class="flow-metric"><b id="flowL4">0</b><span>L4 · 近期摘要字数</span></div>
-          <div class="flow-metric"><b id="flowL5">0</b><span>L5 · 远期摘要字数</span></div>
-          <div class="flow-metric"><b id="flowL6">0</b><span>L6 · 画像字段</span></div>
+          <div class="flow-metric"><b id="flowL4">0</b><span><b class="layer-token layer-tone-l4">L4</b> · 近期摘要字数</span></div>
+          <div class="flow-metric"><b id="flowL5">0</b><span><b class="layer-token layer-tone-l5">L5</b> · 远期摘要字数</span></div>
+          <div class="flow-metric"><b id="flowL6">0</b><span><b class="layer-token layer-tone-l6">L6</b> · 字段槽</span></div>
         </div>
       </article>
       <div class="flow-arrow"><span>建立检索入口<br>保留原始事实</span><i>→</i></div>
       <article class="flow-stage" data-stage="archive">
-        <div class="flow-stage-head"><span class="flow-no">03</span><h3>索引与归档<small>让事实可检索、可追溯 · L7</small></h3></div>
+        <div class="flow-stage-head"><span class="flow-no">03</span><h3>索引与归档<small>让事实可检索、可追溯 · <b class="layer-token layer-tone-l7">L7</b></small></h3></div>
         <p>原始记忆留在主存储，通过人物、地点、时间、活动、环境、物品六维索引定位。</p>
         <div class="flow-metrics">
-          <div class="flow-metric"><b id="flowL7">0</b><span>L7 · 主存储记录</span></div>
+          <div class="flow-metric"><b id="flowL7">0</b><span><b class="layer-token layer-tone-l7">L7</b> · 主存储记录</span></div>
           <div class="flow-metric"><b id="flowIndex">0</b><span>六维索引键</span></div>
           <div class="flow-metric"><b id="flowDims">6</b><span>索引维度</span></div>
         </div>
       </article>
     </div>
-    <div class="flow-foot">短期层承接即时上下文；夜间整理将记录压缩并更新画像；Layer 7 保留可追溯事实并提供分类检索。</div>
+    <div class="flow-foot">短期层承接即时上下文；夜间整理将记录压缩并更新画像；<span class="layer-token layer-tone-l7">L7</span> 保留可追溯事实并提供分类检索。</div>
+  </section>
   </section>
 
-  <details class="layer-details">
-    <summary><span>展开 Layer 1—7 逐层详情</span><small>计数、摘要、画像内容与主存储记录</small></summary>
+  <section class="content-panel" data-view-panel="layers" role="tabpanel" aria-label="逐层详情">
+  <details class="layer-details" open>
+    <summary><span class="layer-legend"><b class="layer-token layer-tone-l1">L1</b><b class="layer-token layer-tone-l2">L2</b><b class="layer-token layer-tone-l3">L3</b><b class="layer-token layer-tone-l4">L4</b><b class="layer-token layer-tone-l5">L5</b><b class="layer-token layer-tone-l6">L6</b><b class="layer-token layer-tone-l7">L7</b><strong>记忆分层</strong></span><small>时间窗口 · 摘要 · 画像 · 索引归档</small></summary>
     <div class="layers" id="layers"></div>
   </details>
+  </section>
 
-  <div class="card">
-    <h2><span class="dot"></span>📋 完整记忆内容 <span class="fulltoggle" id="fullToggle" onclick="toggleFull()">[▼ 展开]</span></h2>
-    <div class="note" style="margin-bottom:8px">每步执行后，此处展示各层实际记忆条目（scene / action / location / people 等），不再只是统计数字。</div>
-    <div class="fullmem" id="fullMem"></div>
+  <section class="content-panel" data-view-panel="memory" role="tabpanel" aria-label="完整记忆">
+  <div class="card" id="fullMemoryCard">
+    <h2><span class="dot"></span>📋 完整记忆内容 <span class="fulltoggle" id="fullToggle" onclick="toggleFull()">[▲ 收起]</span></h2>
+    <div class="note" style="margin-bottom:8px"><span class="layer-token layer-tone-l1">L1</span>–<span class="layer-token layer-tone-l3">L3</span> 共用 moment 结构，是不同时间窗口；同一条记录可同时出现在多个窗口。下方会按 moment ID 去重并标出所属层，<span class="layer-token layer-tone-l7">L7</span> 保存唯一归档真身。</div>
+    <div class="fullmem open" id="fullMem"></div>
   </div>
+  </section>
 
+  <section class="content-panel" data-view-panel="index" role="tabpanel" aria-label="索引与画像">
   <div class="grid2">
     <div class="card">
-      <h2><span class="dot"></span>Layer 7 · 六维索引</h2>
+      <h2><span class="dot"></span><span class="layer-token layer-tone-l7">Layer 7</span> · 六维索引</h2>
+      <div class="layer-meaning">L7 保存每条事件原文；六维索引像目录，按人物、地点、时间、活动、环境或物品找到对应原文，不会复制记忆。</div>
       <table id="idxTable"></table>
     </div>
     <div class="card">
-      <h2><span class="dot"></span>Layer 6 · 用户画像</h2>
+      <h2><span class="dot"></span><span class="layer-token layer-tone-l6">Layer 6</span> · 用户画像</h2>
+      <div class="layer-meaning">L6 把多条有证据支持的记忆归纳成稳定特点（如长期偏好），供个性化使用；它不是单条事件记录。</div>
       <div id="profile"></div>
     </div>
   </div>
+  </section>
 
+  <section class='content-panel' data-view-panel='evaluation' role='tabpanel' aria-label='记忆评估指标'>
+    <div class='evaluation-page'>
+      <header class='eval-heading'><div><h2>评估结果：短期和长期分开看</h2><p>同一批官方视频问答分别测短期、当前缓存记忆；长期另有 Jake 的 500 道跨日选择题。</p></div></header>
+      <section class='eval-block eval-storage-projection'>
+        <div class='eval-block-heading'><h3>单人长期存储量推算</h3><span>按每天 725 条唯一记忆估算</span></div>
+        <div class='storage-projection-wrap'>
+          <table class='storage-projection-table' aria-label='单人长期记忆存储量推算'>
+            <thead><tr><th>使用时长</th><th>记忆条数</th><th>预计占用（含索引）</th><th>100 GB 用量</th><th>是否符合</th></tr></thead>
+            <tbody>
+              <tr><td>一周</td><td>5,075</td><td>15.25 MB</td><td>0.02%</td><td><strong class='storage-projection-ok'>符合</strong></td></tr>
+              <tr><td>一个月</td><td>21,750</td><td>65.38 MB</td><td>0.07%</td><td><strong class='storage-projection-ok'>符合</strong></td></tr>
+              <tr><td>半年</td><td>132,313</td><td>397.71 MB</td><td>0.40%</td><td><strong class='storage-projection-ok'>符合</strong></td></tr>
+              <tr><td>一年</td><td>264,625</td><td>0.80 GB</td><td>0.80%</td><td><strong class='storage-projection-ok'>符合</strong></td></tr>
+              <tr><td>三年</td><td>793,875</td><td>2.39 GB</td><td>2.39%</td><td><strong class='storage-projection-ok'>符合</strong></td></tr>
+              <tr><td>五年</td><td>1,323,125</td><td>3.98 GB</td><td>3.98%</td><td><strong class='storage-projection-ok'>符合</strong></td></tr>
+              <tr><td>十年</td><td>2,646,250</td><td>7.95 GB</td><td>7.95%</td><td><strong class='storage-projection-ok'>符合</strong></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class='storage-projection-note'>估算依据：长期样本的一个完整 A1_JAKE 日包含 725 条唯一记忆；容量测试实测约 3,005.85 B/条（4.36 MB/1,450 条，含索引），据此按每天同等使用量线性外推。1450 条长测标注对应 725 个唯一片段，已按唯一记忆计数。实际一天记忆文件约 1.84 MB，因此表格基准略保守。</p>
+        <p class='storage-projection-note'>按 1 个月 30 天、半年 182.5 天、1 年 365 天计算；不含原始视频。十年估算约 7.95 GB，低于 100 GB 目标。实际用量会随每天记忆条数、摘要压缩和索引变化而变化。</p>
+      </section>
+      <section class='eval-block eval-acceptance'>
+        <div class='eval-block-heading'><h3>飞书文档的三项验收标准</h3><span>问答分数不能替代基础操作准确率</span></div>
+        <div class='eval-acceptance-grid'>
+          <article class='eval-card'><h3>存储容量 · 目标 ≤100 GB</h3><div class='eval-main'>4.36 MB</div><p>1450 条容量测试记忆，含索引；不含原始视频。</p><small>单人周期推算见上表。</small><span class='eval-status'>符合验收标准</span></article>
+          <article class='eval-card'><h3>提取速度 · 目标 ≤1 秒</h3><div class='eval-main'>24.3 ms</div><p>1450 条记忆库检索 P95。</p><small>不含视频处理和 Qwen 推理。</small><span class='eval-status'>符合验收标准</span></article>
+          <article class='eval-card'><h3>记忆内容归类 · 目标 ≥95%</h3><div class='eval-main eval-warn'>70.6%</div><p>AI 抽查原始全支持 287 / 400 项（71.8%）；加权估计 70.6%。</p><small>已审 80 / 825 段；对象维度最低，为 45.2%。</small><span class='eval-status todo'>抽测低于目标</span></article>
+        </div>
+        <p class='eval-plain'>归类准确率来自 AI 视频抽查，不是人工金标准，也不能代表未审样本。</p>
+      </section>
+      <header class='eval-heading eval-person-heading'><div><h2>评测人物与说明</h2><p>选择人物切换短期与长期同题问答、短期 AI 抽查；选择总体查看 6 人汇总。飞书验收标准保持全体汇总。</p></div><div class='eval-heading-tools'><label class='eval-person-filter'><span>评测人物</span><select id='evalPersonSelect' aria-label='切换评测人物' title='切换短期与长期同题评测、短期内容抽查的人物；总体汇总选择全部' onchange='selectEvalParticipant(this.value)'><option value='all'>总体 · 全部人物</option><option value='A1_JAKE'>Jake · A1</option><option value='A2_ALICE'>Alice · A2</option><option value='A3_TASHA'>Tasha · A3</option><option value='A4_LUCIA'>Lucia · A4</option><option value='A5_KATRINA'>Katrina · A5</option><option value='A6_SHURE'>Shure · A6</option></select></label><button type='button' class='eval-help-btn' aria-haspopup='dialog' aria-controls='evalHelpModal' onclick='openEvalHelp()'>评估说明</button></div></header>
+      <p class='eval-person-note' id='evalPersonScopeNote'>人物筛选同步切换短期与长期同题问答、短期 AI 抽查；选“总体”看 6 人合计。飞书验收标准保持全体汇总。<span id='evalDataLoadState'>正在载入逐题数据…</span></p>
+      <section class='eval-block'>
+        <div class='eval-block-heading'><h3>短期记忆</h3><span>操作是否生效 · 内容是否准确</span></div>
+        <div class='eval-grid eval-summary-grid'>
+          <article class='eval-card'><h3>CRUD 操作验证</h3><div class='eval-main'>152 / 152</div><p>新增、更新、高亮、删除的预期状态均通过。</p><small id='evalShortCrudDetail'>全体 120 条样本汇总；这验证操作行为，不代表内容正确率。</small></article>
+          <article class='eval-card'><h3>内容 AI 抽查</h3><div class='eval-main eval-warn' id='evalShortReviewMain'>91 / 150 · 60.7%</div><p id='evalShortReviewText'>30 段、6 人各 5 段；完全符合 91 项，部分符合 57 项，错误 2 项。</p><small id='evalShortReviewDetail'>每人抽查 5 段；此结果与长期样本分开统计。</small></article>
+        </div>
+        <p class='eval-plain'>短期测试集共 120 段，6 人各 20 段。内容抽查只覆盖其中 30 段。</p>
+      </section>
+      <section class='eval-block eval-answer-benchmark'>
+        <div class='eval-block-heading'><h3>短期记忆 · 官方视频问答</h3><span id='shortQAHeading'>官方问答题 · 全量评测</span></div>
+        <div class='eval-grid eval-summary-grid'>
+          <button type='button' class='eval-card eval-clickable' id='shortTop5Card' onclick="openEvalDrilldown('short_term','top5')"><h3>Top 5 找到官方目标片段</h3><div class='eval-main eval-warn' id='shortTop5Main'>载入中</div><p id='shortTop5Note'>点击查看题目与 Top 5 片段。</p></button>
+          <button type='button' class='eval-card eval-clickable' id='shortAnswerCard' onclick="openEvalDrilldown('short_term','answer')"><h3>官方答案语义答对</h3><div class='eval-main eval-warn' id='shortAnswerMain'>载入中</div><p id='shortAnswerNote'>答案由独立 AI 对照官方答案判分。</p></button>
+        </div>
+        <p class='eval-scope' id='shortQAScope'>从短期样本中评测全部能匹配到的官方 EgoLifeQA 问题；没有官方问答的片段不计入答案准确率。模型先看检索到的记忆作答，再由独立 AI 对照官方答案判分。</p>
+      </section>
+      <section class='eval-block eval-answer-benchmark'>
+        <div class='eval-block-heading'><h3>长期缓存 · 官方同题问答</h3><span>与短期完全相同的题目</span></div>
+        <div class='eval-grid eval-summary-grid'>
+          <button type='button' class='eval-card eval-clickable' id='longTop5Card' onclick="openEvalDrilldown('long_term','top5')"><h3>Top 5 找到官方目标片段</h3><div class='eval-main eval-warn' id='longTop5Main'>载入中</div><p id='longTop5Note'>点击查看题目与 Top 5 片段。</p></button>
+          <button type='button' class='eval-card eval-clickable' id='longAnswerCard' onclick="openEvalDrilldown('long_term','answer')"><h3>官方答案语义答对</h3><div class='eval-main eval-warn' id='longAnswerMain'>载入中</div><p id='longAnswerNote'>答案由独立 AI 对照官方答案判分。</p></button>
+        </div>
+        <p class='eval-scope' id='longMemoryScopeNote'>这里与短期使用同一批官方题和答案。它对比当前可用缓存记忆；非 Jake 人物当前只覆盖 DAY1，不能解读为多日长期问答。</p>
+      </section>
+      <section class='eval-block eval-official'>
+        <div class='eval-block-heading'><h3>长期记忆 · 官方 Jake 跨日选择题</h3><span>500 题 · 按提问时间检索</span></div>
+        <div class='eval-grid eval-summary-grid'>
+          <button type='button' class='eval-card eval-clickable' id='multiTop5Card' onclick="openEvalDrilldown('multi_day','top5')"><h3>Top 5 找到官方目标片段</h3><div class='eval-main eval-warn' id='multiTop5Main'>127 / 500 · 25.4%</div><p id='multiTop5Note'>检索前 5 条中包含官方证据时间对应的视频片段。</p></button>
+          <button type='button' class='eval-card eval-clickable' id='multiAnswerCard' onclick="openEvalDrilldown('multi_day','answer')"><h3>官方答案答对</h3><div class='eval-main eval-warn' id='multiAnswerMain'>125 / 500 · 25.0%</div><p id='multiAnswerNote'>模型选择与官方标准答案一致才算答对。</p></button>
+          <button type='button' class='eval-card eval-clickable' id='multiCrossDayCard' onclick="openEvalDrilldown('multi_day','cross_day')"><h3>跨日题答对</h3><div class='eval-main eval-warn' id='multiCrossDayMain'>40 / 186 · 21.5%</div><p id='multiCrossDayNote'>点击查看跨日题、官方证据与检索结果。</p></button>
+        </div>
+        <p class='eval-plain' id='multiDayStaticNote'>A–D 题目使用官方选项和答案；此跨日基准目前只覆盖 Jake。</p>
+        <p class='eval-scope'>测试范围：长期记忆使用 760 段七天稀疏样本，不是完整七天视频推理；EgoLife 本地视频覆盖 21 / 42 个参与者-天。</p>
+        <p class='eval-source'>2026-09-28 字段化检索：总体 Top-5 +4 题、跨日 +6 题、DAY5 +5 题；Top-10 少 6 题。答案模型结果按单次运行解读。</p>
+      </section>
+    </div>
+  </section>
+
+  <section class="content-panel" data-view-panel="log" role="tabpanel" aria-label="操作日志">
   <div class="card">
     <h2><span class="dot"></span>操作日志</h2>
     <div class="log" id="log"></div>
   </div>
+  </section>
+  </main>
+
+<div id='evalHelpModal' class='eval-help-overlay' aria-hidden='true' onclick='if(event.target===this) closeEvalHelp()'>
+  <section class='eval-help-dialog' role='dialog' aria-modal='true' aria-labelledby='evalHelpTitle' tabindex='-1'>
+    <header class='eval-help-head'><div><h2 id='evalHelpTitle'>评估说明：这些数字怎么得来</h2><p>数据来源、计算方法和真实题目示例</p></div><button type='button' class='eval-help-close' aria-label='关闭评估说明' onclick='closeEvalHelp()'>×</button></header>
+    <div class='eval-help-content'>
+      <section class='eval-help-section'>
+        <h3>长期问答：一道题怎样变成一个分数</h3>
+        <p>题目、A–D 选项、正确答案和 target_time 时间点来自官方 EgoLifeQA A1_JAKE 题库，共 500 题。target_time 是官方给的证据时间点，不是官方直接给的 30 秒片段 ID；评测程序把它映射到本地包含该时间点的视频片段。系统按提问时间只检索当时已经发生的记忆，取前 5 条。官方每题都有 A–D 选项和标准答案，没有“证据不足”选项；因此模型必须选一个最有依据的选项，再与官方答案比对。</p>
+        <div class='eval-help-grid'>
+          <div class='eval-help-item'><b>检索命中 127 / 500</b><span>500 题中，有 127 题的前 5 条记忆包含至少一个由官方 target_time 映射出的本地片段。它衡量是否检索到目标时间附近的片段，不代表片段一定足以回答问题。</span></div>
+          <div class='eval-help-item'><b>官方答案一致 125 / 500</b><span>模型选择与官方答案字母相同才算答对；当前单次强制选择结果为 125 / 500（25.0%）；生成温度为 0.2，重复调用会有波动。</span></div>
+          <div class='eval-help-item'><b>跨日答对 40 / 186</b><span>186 道跨日题中答对 40 道（21.5%）；其中 37 道的前 5 条命中了官方目标时间映射出的片段。</span></div>
+        </div>
+      </section>
+      <section class='eval-help-section'>
+        <h3>真实题目示例</h3>
+        <div class='eval-help-example'>
+          <div><b>题目与选项</b><p>谁最先使用过螺丝刀？</p><small>Who used the screwdriver first?</small><p>A. Tasha　B. Alice　C. Shure　D. Lucia</p></div>
+          <div><b>对照结果</b><p>官方答案：<strong>B · Alice</strong></p><p>模型回答：<strong>A · Tasha</strong></p><small>官方标注给出了对应视频证据，但目标片段未进入 Top 5；模型仍按强制选择输出 A，答错计入准确率。这是检索遗漏，不代表官方题目没有答案。</small></div>
+        </div>
+        <p><a class='eval-help-link' href='https://huggingface.co/datasets/lmms-lab/EgoLife/blob/main/EgoLifeQA/EgoLifeQA_A1_JAKE.json' target='_blank' rel='noopener'>打开完整官方 500 题及答案</a></p>
+      </section>
+      <section class='eval-help-section'>
+        <h3>短期与长期同题对照</h3>
+        <p>官方问答测试集只保留有官方 EgoLifeQA 的视频：从 120 个短期样本中保留 84 段、共 810 道题；其余 36 段已从这组问答测试集移除。短期与当前缓存记忆回答完全相同的问题。Top 5 命中要求官方源视频片段出现在前五条记忆中。</p>
+        <p>这批官方题是开放式问答，不是 A–D 题。模型先根据检索记忆回答，另一轮 Qwen 再对照官方参考答案做语义判断；这属于 AI 自动判分，不是人工金标准。人物样本数不等，卡片的分母会随人物筛选变化。</p>
+        <p>长缓存对照中，除 Jake 外当前只有 DAY1 记忆；真正的跨日 A–D 官方题库仍只有 Jake 的 500 题。选“总体”时，跨日总分也只代表 Jake。</p>
+      </section>
+      <section class='eval-help-section'>
+        <h3>短期与记忆内容指标</h3>
+        <div class='eval-help-grid'>
+          <div class='eval-help-item'><b>长期内容归类 287 / 400 · 71.8%（加权估计 70.6%）</b><span>AI 抽查 80 段视频，每段检查人物、地点、活动、环境、物品 5 项；完全符合才计正确。该抽样结果不是人工金标准，也不代表未审样本。</span></div>
+          <div class='eval-help-item'><b>短期内容抽查 91 / 150 · 60.7%</b><span>从短期集抽查 30 段、每人 5 段；与长期的 80 段样本独立，不能合并成一个准确率。</span></div>
+          <div class='eval-help-item'><b>CRUD 操作验证 152 / 152</b><span>核对新增、更新、高亮、删除后的记忆状态是否符合预期；这是操作行为检查，不等于查询或内容准确率。</span></div>
+          <div class='eval-help-item'><b>提取速度 / 存储容量</b><span>提取速度只计记忆检索，不含视频处理和 Qwen 推理；容量统计记忆文件与索引，不含原始视频。验收目标分别为 ≤1 秒、≤100 GB。</span></div>
+        </div>
+      </section>
+      <p class='eval-help-section' id='evalHelpScopeText'><b>范围提醒：</b>人物筛选会切换短期/长期同题问答和短期 AI 抽查；CRUD 与飞书验收总览仍是全体汇总。500 道跨日选择题目前只覆盖 Jake。题库没有“证据不足”选项，模型必须选择 A–D；当前归类 AI 抽测原始全支持率为 71.8%，参与者/小时加权估计为 70.6%，低于飞书文档的 ≥95% 目标。</p>
+    </div>
+  </section>
+</div>
+<div id='evalDrillModal' class='eval-help-overlay' aria-hidden='true' onclick='if(event.target===this) closeEvalDrilldown()'>
+  <section class='eval-drill-dialog' role='dialog' aria-modal='true' aria-labelledby='evalDrillTitle' tabindex='-1'>
+    <header class='eval-drill-head'><div><h2 id='evalDrillTitle'>逐题评测详情</h2><p id='evalDrillSummary'></p></div><button type='button' class='eval-help-close' aria-label='关闭逐题详情' onclick='closeEvalDrilldown()'>×</button></header>
+    <div id='evalDrillList' class='eval-drill-list'></div>
+    <div class='eval-drill-pager'><button type='button' id='evalDrillPrev' onclick='moveEvalDrillPage(-1)'>上一页</button><span id='evalDrillPageLabel'></span><button type='button' id='evalDrillNext' onclick='moveEvalDrillPage(1)'>下一页</button></div>
+  </section>
+</div>
 
 </div>
 
 <script>
 const API = location.origin;
 let scenarios = [], curKey = null, snaps = [], cur = 0, timer = null, memory = null;
-let replayLoaded = false;
+let replayLoaded = false, playbackDelay = 600, selectionRequest = 0;
 
 const LAYER_META = [
-  {k:'layer1', no:'L1', ttl:'当前时刻', desc:'本次交互的原始记录（会话级）'},
-  {k:'layer2', no:'L2', ttl:'同场景历史', desc:'环境场景相同的近期记录'},
-  {k:'layer3', no:'L3', ttl:'当日全部', desc:'当天的所有记录（上限 1000）'},
-  {k:'layer4', no:'L4', ttl:'近期摘要', desc:'按天压缩的摘要与当前任务'},
-  {k:'layer5', no:'L5', ttl:'远期摘要', desc:'按周/月的关键事件与长期模式'},
-  {k:'layer6', no:'L6', ttl:'用户画像', desc:'人口统计学 / 偏好 / 常去地点 / 行为习惯', hot:true},
-  {k:'layer7', no:'L7', ttl:'索引归档', desc:'六维索引 + 记录主存储（完整内容）'},
+  {k:'layer1', no:'L1', ttl:'当前时刻', family:'raw', kind:'即时上下文窗口', desc:'新写入的 moment；供当前一轮优先读取。', scope:'最近交互 · 约 1 小时', capacity:5, trigger:'每次 add() 写入', flow:'超出 5 条：同环境进 L2，否则进 L3', use:'当前一轮上下文'},
+  {k:'layer2', no:'L2', ttl:'同场景历史', family:'raw', kind:'场景内短期窗口', desc:'只保留同一环境场景的近期 moment。', scope:'当前场景 · 最多 20 条', capacity:20, trigger:'L1 溢出且环境匹配', flow:'超出 20 条滑入 L3', use:'当前场景连续性'},
+  {k:'layer3', no:'L3', ttl:'当日窗口', family:'raw', kind:'当天滚动窗口', desc:'当天可快速读取的 moment 窗口；归档总量以 L7 为准。', scope:'当天 · 最多 1000 条', capacity:1000, trigger:'每次 add() 追加', flow:'跨天清空窗口；原记录仍在 L7', use:'当天回顾与检索'},
+  {k:'layer4', no:'L4', ttl:'近期摘要', family:'summary', kind:'日级压缩摘要', desc:'保留近期状态，不再逐条保存事件正文。', scope:'日级 · 约 30 天（建议值）', trigger:'夜间 compress()', flow:'近期任务与生活动线可并入 L5', use:'近期状态 / 当前任务'},
+  {k:'layer5', no:'L5', ttl:'远期摘要', family:'summary', kind:'跨日长期摘要', desc:'从多日证据归纳关键事件与长期模式。', scope:'周/月级 · 约 90 天（建议值）', trigger:'夜间 rollup / compress()', flow:'稳定事实经裁决后进入 L6', use:'跨日模式与关键事件'},
+  {k:'layer6', no:'L6', ttl:'用户画像', family:'profile', kind:'稳定属性画像', desc:'只放可溯源、带置信度的稳定用户属性。', scope:'长期保留 · stale 后退出检索', trigger:'夜间候选验证 → update_profile()', flow:'衰减标 stale；保留历史供审计', use:'长期个性化'},
+  {k:'layer7', no:'L7', ttl:'索引归档', family:'index', kind:'事实主存储 + 六维索引', desc:'保留文档四类核心索引（时间/活动/人物/地点），并按 Design Details 扩展环境/物品；索引只引用 L7 moment 主存储。', scope:'永久归档', trigger:'每次 add()；夜间 sort()/combine()', flow:'按维度定位事实，不重复生成副本', use:'追溯 / 精确查找'},
 ];
 
 async function init(){
   scenarios = await (await fetch(API+'/api/scenarios')).json();
-  renderTabs();
   const preferred = scenarios.find(s=>s.key==='long_term' && s.available)
     || scenarios.find(s=>s.available) || scenarios[0];
-  if(preferred && preferred.available){
-    document.getElementById('stepInfo').textContent = '正在加载 '+preferred.name+'…';
-    await select(preferred.key);
-    replayLoaded = true;
+  if(preferred){
+    curKey=preferred.key;
+    renderTabs();
+    document.getElementById('stepInfo').textContent = '正在启动 '+preferred.name+'…';
+    setMode('interactive');
+    const requestedViewAfterInit=new URLSearchParams(location.search).get('view');
+    if(['overview','interactive','layers','index','memory','evaluation','log'].includes(requestedViewAfterInit)) setContentView(requestedViewAfterInit);
   }else{
-    document.getElementById('stepInfo').textContent = '尚无可回放快照，请先运行 run_scenarios.py';
+    renderTabs();
+    document.getElementById('stepInfo').textContent = '暂无可运行的记忆场景';
   }
 }
 
@@ -340,98 +872,456 @@ async function ensureReplay(){
 function renderTabs(){
   const el = document.getElementById('tabs');
   el.innerHTML = scenarios.map(s=>
-    `<div class="tab ${s.key===curKey?'on':''}" onclick="select('${s.key}')">${s.name}${s.available?'':'（未生成）'}</div>`
+    `<div class="tab ${s.key===curKey?'on':''}" onclick="selectScenario('${s.key}')">${s.name}${s.available?'':'（未生成）'}</div>`
   ).join('');
+}
+async function selectScenario(key){
+  if(mode==='interactive'){
+    if(!intState||intState.scenario!==key){
+      curKey=key;
+      renderTabs();
+      await newSession(key);
+    }
+    return;
+  }
+  await select(key);
 }
 
 async function select(key){
-  curKey = key;
+  const request=++selectionRequest;
+  curKey=key;
   renderTabs();
-  const r = await fetch(API+'/api/snapshot?scenario='+key);
-  if(!r.ok){ document.getElementById('stepInfo').textContent='快照未生成，请先运行 run_scenarios.py'; return; }
-  const data = await r.json();
-  snaps = data.snapshots || [];
-  document.getElementById('slider').max = Math.max(0, snaps.length-1);
-  cur = snaps.length-1;
-  document.getElementById('slider').value = cur;
-
-  const mr = await fetch(API+'/api/memory?scenario='+key);
-  memory = mr.ok ? await mr.json() : null;
-
-  renderLog();
-  render();
+  stopPlayback();
+  const scenario=scenarios.find(s=>s.key===key);
+  document.getElementById('stepInfo').textContent='正在加载 '+(scenario?scenario.name:'场景')+'…';
+  try{
+    const [r,mr]=await Promise.all([
+      fetch(API+'/api/snapshot?scenario='+encodeURIComponent(key)),
+      fetch(API+'/api/memory?scenario='+encodeURIComponent(key))
+    ]);
+    if(request!==selectionRequest) return;
+    if(!r.ok){
+      document.getElementById('stepInfo').textContent='快照未生成，请先运行 run_scenarios.py';
+      return;
+    }
+    const [data,mem]=await Promise.all([
+      r.json(),
+      mr.ok?mr.json():Promise.resolve(null)
+    ]);
+    if(request!==selectionRequest) return;
+    snaps=data.snapshots||[];
+    memory=mem;
+    cur=snaps.length-1;
+    const slider=document.getElementById('slider');
+    slider.max=Math.max(0,snaps.length-1);
+    slider.value=cur;
+    updatePlaybackControls();
+    if(!snaps.length) document.getElementById('stepInfo').textContent='该场景暂无可回放步骤';
+    renderLog();
+    render();
+  }catch(err){
+    if(request===selectionRequest)
+      document.getElementById('stepInfo').textContent='加载失败：'+err.message+' · 可重试切换场景';
+  }
 }
 
 function fmtMomentMini(x, withVideo){
   if(!x) return '';
   const cls = (x.highlight?'hi ':'') + (x.stale?'stale ':'');
   const parts = [];
-  if(x.scene) parts.push(`<span class="mscene">🎬 ${esc(x.scene)}</span>`);
-  if(x.user_action) parts.push(`<span class="maction">⚡ ${esc(x.user_action)}</span>`);
+  if(x.scene) parts.push('<span class="mscene"><b>Scene:</b> '+esc(x.scene)+'</span>');
+  if(x.user_action) parts.push('<span class="maction"><b>Action:</b> '+esc(x.user_action)+'</span>');
   if(x.location) parts.push(`<span class="mtag">📍 ${esc(x.location)}</span>`);
   if(x.activity) parts.push(`<span class="mtag">🏷 ${esc(x.activity)}</span>`);
   if(x.people && x.people.length) parts.push(x.people.map(p=>`<span class="mtag">👤 ${esc(p)}</span>`).join(''));
   if(x.video && x.video.clock) parts.push(`<span class="mtag">🕐 ${esc(x.video.clock)}</span>`);
   else if(x.timestamp) parts.push(`<span class="mtag" style="color:#9ca3af">🕐 ${esc(x.timestamp.slice(0,19))}</span>`);
-  const vid = (withVideo && x.video) ? videoTag(x.video) : '';
+  const vid = ''; // 视频只在当前步骤顶部播放
   return `<div class="mrec ${cls}"><span class="mid">${esc((x.id||'').slice(-14))}</span> ${parts.join(' ')}${vid}</div>`;
 }
 
-function renderProfileFromFull(p){
-  const out = [];
-  for(const [k,v] of Object.entries(p)){
-    if(Array.isArray(v)) out.push(`<div><b>${esc(k)}</b>: ${v.map(x=>`<span class="mtag">${esc(typeof x==='string'?x:(x.value||JSON.stringify(x)))}</span>`).join('')}</div>`);
-    else if(v && typeof v==='object') out.push(`<div><b>${esc(k)}</b>: ${Object.entries(v).map(([kk,vv])=>`<span class="mtag">${esc(kk)}: ${esc(String(vv.value||''))}</span>`).join('')}</div>`);
-    else if(v) out.push(`<div><b>${esc(k)}</b>: ${esc(String(v))}</div>`);
+function collectProfileEntries(value, path, out){
+  if(value==null) return;
+  if(Array.isArray(value)){
+    value.forEach((item,i)=>collectProfileEntries(item,path+'['+(i+1)+']',out));
+    return;
   }
-  return out.join('') || '<span class="empty">（暂无画像）</span>';
+  if(typeof value==='object'){
+    if(Object.prototype.hasOwnProperty.call(value,'value')){
+      const v=value.value;
+      if(v!==null && v!==undefined && v!==''){
+        const meta=[];
+        if(value.confidence!==undefined && value.confidence!==null) meta.push('置信度 '+Math.round(Number(value.confidence)*100)+'%');
+        if(value.source) meta.push('来源 '+String(value.source));
+        if(value.last_seen) meta.push('最近观察 '+String(value.last_seen).slice(0,10));
+        if(value.observations) meta.push('观察 '+value.observations+' 次');
+        out.push({path:path,value:typeof v==='object'?JSON.stringify(v):String(v),meta:meta.join(' · ')});
+      }
+      return;
+    }
+    for(const [k,v] of Object.entries(value)){
+      collectProfileEntries(v,path?path+'.'+k:k,out);
+    }
+    return;
+  }
+  if(value!=='') out.push({path:path,value:String(value),meta:''});
+}
+function renderProfileFromFull(p, summary='', layerData={}){
+  const entries=[];
+  collectProfileEntries(p||{},'',entries);
+  let html='';
+  if(summary) html+='<div class="layer-summary-text">'+esc(summary)+'</div>';
+  if(entries.length){
+    html+=entries.map(x=>'<div class="profile-attribute"><b>'+esc(x.path)+'</b><span>'+esc(x.value)+'</span>'+(x.meta?'<small>'+esc(x.meta)+'</small>':'')+'</div>').join('');
+  }else{
+    const sourceCount=Number(layerData.source_moment_count||0);
+    html+='<div class="profile-empty">当前没有已确认的画像事实'+(sourceCount===0?'；本次画像没有关联到任何来源 moment。字段名只是数据结构，不代表已经记住了对应属性。':'。')+'</div>';
+  }
+  const source=Number(layerData.source_moment_count||0);
+  if(source) html+='<div class="layer-note">画像证据来源：'+source+' 条 moment · 更新于 '+esc(String(layerData.last_updated||'未知').slice(0,10))+'</div>';
+  return html;
+}
+function fieldText(value){
+  if(value==null || value==='') return '';
+  if(typeof value==='object' && !Array.isArray(value) && Object.prototype.hasOwnProperty.call(value,'value')){
+    value=value.value;
+  }
+  if(value==null || value==='') return '';
+  return typeof value==='object'?JSON.stringify(value):String(value);
+}
+function renderLayerField(label,value){
+  if(value==null || value==='' || (Array.isArray(value)&&!value.length)) return '';
+  const items=Array.isArray(value)?value:[value];
+  const tags=items.map(x=>fieldText(x)).filter(Boolean).map(x=>'<span class="mtag">'+esc(x)+'</span>').join('');
+  return '<div class="layer-field"><b>'+esc(label)+'</b><div class="layer-tags">'+(tags||'<span class="empty">暂无</span>')+'</div></div>';
+}
+function renderSummaryLayer(layer, kind){
+  layer=layer||{};
+  const summary=layer.summary||'（暂无摘要）';
+  const keys=kind==='l4'
+    ? [['current_tasks','当前任务'],['life_trajectory','近期生活动线']]
+    : [['key_events','关键事件'],['long_term_patterns','长期模式']];
+  let html='<div class="layer-summary-text">'+esc(summary)+'</div>';
+  let visibleFields=0;
+  for(const [key,label] of keys){
+    const field=renderLayerField(label,layer[key]);
+    if(field){ html+=field; visibleFields++; }
+  }
+  if(!visibleFields) html+='<div class="layer-empty-evidence">当前没有可展示的摘要明细。</div>';
+  if(kind==='l5' && !layer.long_term_patterns) html+='<div class="layer-note">暂无独立跨日规律；当前长期摘要显示的是这批片段中的事件频次。</div>';
+  if(layer.source_moment_count || layer.last_updated){
+    html+='<div class="layer-note">来源 '+Number(layer.source_moment_count||0)+' 条 moment · 更新于 '+esc(String(layer.last_updated||'未知').slice(0,10))+'</div>';
+  }
+  return html;
+}
+function renderMomentDetail(x, compact){
+  if(!x) return '';
+  const scene=String(x.scene||'');
+  const action=String(x.user_action||'');
+  const notes=String(x.notes||'');
+  const excerpt=(value,limit)=>esc(value.length>limit?value.slice(0,limit).trimEnd()+'…':value);
+  const tags=[];
+  const addTag=(value,label)=>{ if(value) tags.push('<span class="mtag">'+label+' '+esc(value)+'</span>'); };
+  addTag(x.location,'📍 Location');
+  addTag(x.activity,'🏷 Activity');
+  for(const person of (Array.isArray(x.people)?x.people:[])) addTag(person,'👤 Person');
+  for(const place of (Array.isArray(x.environments)?x.environments:[])) addTag(place,'Environment');
+  for(const object of (Array.isArray(x.objects)?x.objects:[])) addTag(object,'Object');
+  const id=String(x.id||'');
+  const headline=scene||action||notes||'No memory content';
+  const previewLimit=compact===false?125:96;
+  const payload=esc(JSON.stringify(x)).replace(/'/g,'&#39;');
+  let html='<article class="moment-detail" data-preview-limit="'+previewLimit+'"><div class="moment-detail-head"><b>Memory '+esc(id.slice(-14)||'Unnumbered')+'</b><time>'+esc(String(x.timestamp||'').replace('T',' ').slice(0,19))+'</time></div>';
+  if(tags.length) html+='<div class="moment-detail-tags">'+tags.join('')+'</div>';
+  if(scene) html+='<div class="moment-preview"><b>Scene:</b> '+excerpt(scene,previewLimit)+'</div>';
+  else if(action) html+='<div class="moment-preview"><b>Action:</b> '+excerpt(action,previewLimit)+'</div>';
+  else html+='<div class="moment-preview">'+excerpt(headline,previewLimit)+'</div>';
+  if(scene&&action) html+='<div class="moment-action-preview"><b>Action:</b> '+excerpt(action,64)+'</div>';
+  if(notes&&notes!==headline&&notes!==action) html+='<div class="moment-notes-preview"><b>Additional context</b> '+excerpt(notes,72)+'</div>';
+  const expandNeeded=headline.length>previewLimit||(action&&action!==headline&&action.length>64)||(notes&&notes!==headline&&notes!==action&&notes.length>72);
+  html+='<button type="button" class="memory-expand-toggle" data-expand-truncated="'+(expandNeeded?'true':'false')+'" data-memory=\''+payload+'\' aria-label="展开完整记忆" title="展开完整记忆" hidden onclick="toggleLayerMemoryDetail(this)">∨</button>';
+  return html+'</article>';
+}
+function layerMemoryContent(x){
+  const scene=String(x.scene||'');
+  const action=String(x.user_action||'');
+  const notes=String(x.notes||'');
+  const primary=scene||action||notes||'暂无记忆正文';
+  return [primary, action && action !== primary ? 'Action: ' + action : '', notes && notes !== primary && notes !== action ? 'Additional context: ' + notes : ''].filter(Boolean).join(' · ');
+}
+function renderLayerMemoryRow(x, sourceLabel){
+  if(!x) return '<div class="layer-empty-evidence">没有附带可展示的真实记忆样本。</div>';
+  const content=layerMemoryContent(x);
+  const excerpt=content.length>150?content.slice(0,150).trimEnd()+'…':content;
+  const context=[sourceLabel||'',String(x.timestamp||'').replace('T',' ').slice(0,16),x.location||'',x.activity||'',...(Array.isArray(x.people)?x.people.slice(0,2):[])].filter(Boolean).join(' · ');
+  const payload=esc(JSON.stringify(x)).replace(/'/g,'&#39;');
+  return '<div class="layer-memory-row"><div class="layer-memory-context">'+esc(context||'已归档记忆')+'</div><div class="layer-memory-copy">'+esc(excerpt)+'</div><button type="button" class="memory-expand-toggle" data-expand-truncated="'+(content.length>150?'true':'false')+'" data-memory=\''+payload+'\' aria-label="展开完整记忆" title="展开完整记忆" hidden onclick="toggleLayerMemoryDetail(this)">∨</button></div>';
+}
+function renderLayerTextButton(text,label,title){
+  const payload=esc(JSON.stringify(String(text||''))).replace(/'/g,'&#39;');
+  return '<button type="button" class="layer-text-open" data-layer-text=\''+payload+'\' data-layer-title="'+esc(title||'记忆详情')+'" onclick="openLayerText(this)">'+label+'</button>';
+}
+function toggleMemoryInline(button, html, closeLabel){
+  const current=button.nextElementSibling;
+  if(current&&current.classList.contains('memory-inline-detail')){
+    current.remove();
+    button.textContent=button.dataset.closedLabel||'查看完整记忆 →';
+    button.setAttribute('aria-expanded','false');
+    return;
+  }
+  if(!button.dataset.closedLabel) button.dataset.closedLabel=button.textContent;
+  button.insertAdjacentHTML('afterend',html);
+  button.textContent=closeLabel||'收起详情 ↑';
+  button.setAttribute('aria-expanded','true');
+}
+function openLayerText(button){
+  let text='';
+  try{ text=JSON.parse(button.dataset.layerText||'""'); }catch(_){ return; }
+  const title=button.dataset.layerTitle||'完整内容';
+  toggleMemoryInline(button,'<div class="memory-inline-detail"><div class="memory-inline-detail-title">'+esc(title)+'</div><p>'+esc(text)+'</p></div>','收起详情 ↑');
+}
+function renderCompactSummaryLayer(layer,kind){
+  layer=layer||{};
+  const summary=String(layer.summary||'（暂无摘要）');
+  const keys=kind==='l4'?[['current_tasks','当前任务'],['life_trajectory','生活动线']]:[['key_events','关键事件'],['long_term_patterns','长期模式']];
+  const chips=[];
+  for(const [key,label] of keys){
+    let value=layer[key];
+    if(value==null||value===''||(Array.isArray(value)&&!value.length)) continue;
+    const values=Array.isArray(value)?value:[value];
+    const first=values.map(fieldText).filter(Boolean)[0];
+    if(first) chips.push('<span class="layer-strip-tag"><b>'+label+'</b> '+esc(first.length>42?first.slice(0,42).trimEnd()+'…':first)+'</span>');
+  }
+  const source=Number(layer.source_moment_count||0);
+  return '<div class="layer-summary-strip"><div class="layer-summary-copy">'+esc(summary)+'</div>'+renderLayerTextButton(summary,'摘要全文 →',kind==='l4'?'Layer 4 完整摘要':'Layer 5 完整摘要')+(chips.length?'<div class="layer-strip-tags">'+chips.join('')+'</div>':'')+(source?'<small class="layer-strip-meta">来源 '+source+' 条 moment</small>':'')+'</div>';
+}
+function renderCompactProfileLayer(p,summary,layerData){
+  const entries=[];
+  collectProfileEntries(p||{},'',entries);
+  const shown=entries.slice(0,3).map(x=>'<span class="layer-strip-tag"><b>'+esc(x.path)+'</b> '+esc(x.value.length>48?x.value.slice(0,48).trimEnd()+'…':x.value)+'</span>');
+  const source=Number((layerData||{}).source_moment_count||0);
+  const content=[summary||'',...entries.map(x=>x.path+'：'+x.value+(x.meta?'（'+x.meta+'）':''))].filter(Boolean).join('\n\n');
+  let html='<div class="layer-profile-strip">';
+  if(summary) html+='<div class="layer-summary-copy">'+esc(summary)+'</div>';
+  if(shown.length) html+='<div class="layer-strip-tags">'+shown.join('')+(entries.length>3?'<span class="layer-strip-tag">另有 '+(entries.length-3)+' 项</span>':'')+'</div>';
+  else html+='<div class="layer-profile-empty">当前没有已确认的画像事实</div>';
+  if(content) html+=renderLayerTextButton(content,'画像详情 →','Layer 6 画像详情');
+  if(source) html+='<small class="layer-strip-meta">证据来源 '+source+' 条 moment</small>';
+  return html+'</div>';
+}
+function toggleLayerMemoryDetail(button){
+  let item;
+  try{ item=JSON.parse(button.dataset.memory||'{}'); }catch(_){ return; }
+  const row=button.closest('.layer-memory-row,.moment-detail');
+  if(!row) return;
+  const opening=!row.classList.contains('is-expanded');
+  if(row.classList.contains('layer-memory-row')){
+    const copy=row.querySelector('.layer-memory-copy');
+    if(copy){
+      const full=layerMemoryContent(item);
+      copy.textContent=opening?full:(full.length>150?full.slice(0,150).trimEnd()+'…':full);
+    }
+  }else{
+    const scene=String(item.scene||'');
+    const action=String(item.user_action||'');
+    const headline=scene||action||item.notes||'暂无记忆正文';
+    const notes=String(item.notes||'');
+    const limit=Number(row.dataset.previewLimit)||96;
+    const excerpt=(value,max)=>value.length>max?value.slice(0,max).trimEnd()+'…':value;
+    const preview=row.querySelector('.moment-preview');
+    if(preview){
+      const value=opening?headline:excerpt(headline,limit);
+      preview.innerHTML=scene?'<b>Scene:</b> '+esc(value):action?'<b>Action:</b> '+esc(value):esc(value);
+    }
+    const actionPreview=row.querySelector('.moment-action-preview');
+    if(actionPreview) actionPreview.innerHTML='<b>Action:</b> '+esc(opening?action:excerpt(action,64));
+    const notesPreview=row.querySelector('.moment-notes-preview');
+    if(notesPreview){
+      if(opening) notesPreview.innerHTML='<b>补充线索</b> '+esc(notes);
+      else notesPreview.innerHTML='<b>补充线索</b> '+esc(excerpt(notes,72));
+    }
+  }
+  row.classList.toggle('is-expanded',opening);
+  button.setAttribute('aria-expanded',String(opening));
+  const label=opening?'收起完整记忆':'展开完整记忆';
+  button.textContent=opening?'∧':'∨';
+  button.title=label;
+  button.setAttribute('aria-label',label);
+}
+function updateMemoryExpanders(root){
+  const scope=root||document;
+  scope.querySelectorAll('.memory-expand-toggle').forEach(button=>{
+    const row=button.closest('.layer-memory-row,.moment-detail');
+    const copies=row?row.querySelectorAll('.layer-memory-copy,.moment-preview,.moment-action-preview,.moment-notes-preview'):[];
+    let clipped=button.dataset.expandTruncated==='true';
+    for(const copy of copies){
+      if(copy.clientHeight>0&&copy.scrollHeight>copy.clientHeight+1){clipped=true;break;}
+    }
+    button.hidden=!clipped;
+  });
+}
+function renderWindowList(items, limit, mode){
+  if(!items || !items.length) return '<div class="layer-empty-evidence">此步骤未附带逐条样本；最终窗口记录可在“完整记忆”中查看。</div>';
+  const ordered=items.slice().sort((a,b)=>String(a.timestamp||'').localeCompare(String(b.timestamp||'')));
+  const item=mode==='spread'&&ordered.length>1?ordered[Math.floor((ordered.length-1)/2)]:ordered[ordered.length-1];
+  return renderLayerMemoryRow(item,mode==='spread'?'当天代表记忆':'窗口最近记忆');
+}
+function renderLayer7Archive(samples){
+  const labels={people:'人物',locations:'地点',time_nodes:'时间',activity_events:'活动',environments:'环境',objects:'物品'};
+  if(Array.isArray(samples)){
+    return samples.slice(0,6).map(x=>'<div class="archive-sample-card layer-tone-l7">'+renderMomentDetail(x,true)+'</div>').join('');
+  }
+  if(!samples || !Object.keys(samples).length) return '<div class="layer-empty-evidence">此快照只有索引统计，没有附带可展开的归档正文。</div>';
+  return Object.entries(labels).map(([key,label])=>{
+    const groups=samples[key]||[];
+    if(!groups.length) return '';
+    const cells=groups.map(group=>{
+      const moments=(group.moments||[]).map(x=>'<div class="archive-sample-card layer-tone-l7">'+renderMomentDetail(x,true)+'</div>').join('');
+      return '<div class="layer-index-cell"><b>'+esc(group.tag)+' · '+esc(label)+'</b><small>索引命中 '+Number(group.count||0)+' 条</small>'+(moments||'<div class="layer-empty-evidence">索引存在，但没有找到对应归档正文。</div>')+'</div>';
+    }).join('');
+    return '<div class="archive-dimension"><div class="archive-dimension-title">'+label+'索引命中的记忆</div><div class="layer-index-grid">'+cells+'</div></div>';
+  }).join('');
+}
+function renderLayer7Snapshot(s, full){
+  const count=Number((full&&(full.moments_count||full.layer7_total))||s.layer7_moments||0);
+  const samples=full&&(full.archive_samples||full.layer7_moments);
+  const labels={people:'人物',locations:'地点',time_nodes:'时间',activity_events:'活动',environments:'环境',objects:'物品'};
+  const chips=Object.entries(s.index_top||{}).map(([dim,items])=>{
+    const first=Array.isArray(items)?items[0]:null;
+    if(!first) return '';
+    return '<span class="layer-strip-tag"><b>'+esc(labels[dim]||dim)+'</b> '+esc(String(first[0]))+' · '+Number(first[1]||0)+'</span>';
+  }).filter(Boolean).join('');
+  let moments=[];
+  if(Array.isArray(samples)) moments=samples;
+  else if(samples&&typeof samples==='object'){
+    for(const key of Object.keys(labels)){
+      for(const group of (samples[key]||[])){
+        if(Array.isArray(group.moments)) moments.push(...group.moments);
+      }
+    }
+  }
+  const sample=moments.find(x=>x&&(x.scene||x.user_action||x.notes))||moments[0];
+  return '<div class="layer7-overview layer-tone-l7"><div class="layer7-index-chips">'+(chips||'<span class="layer-profile-empty">索引键统计见上方维度索引表</span>')+'</div>'+(sample?renderLayerMemoryRow(sample,'L7 归档样例'):'<div class="layer-empty-evidence">本步骤只有索引统计，没有附带可展示的归档正文。</div>')+'<small class="layer-strip-meta">主存储 '+count+' 条 · 正文按索引引用归档</small></div>';
 }
 
 function renderFullMemory(full){
-  if(!full){ document.getElementById('fullMem').innerHTML='<div class="note">暂无完整记忆数据</div>'; return; }
+  if(!full){ document.getElementById('fullMem').innerHTML='<div class="note">当前视图没有可显示的完整记忆数据。</div>'; return; }
   let html = '';
-  // Layer 1/2/3
-  for(const [name, label] of [['layer1','L1 当前时刻'],['layer2','L2 同场景历史'],['layer3','L3 当日全部']]){
-    const items = full[name]||[];
-    html += `<div class="sublayer">${label} <span class="scount">${items.length} 条</span></div>`;
-    html += items.map(x=>fmtMomentMini(x,true)).join('') || '<div class="note">（空）</div>';
+  const windows=[['layer1','L1 当前时刻',5],['layer2','L2 同场景历史',20],['layer3','L3 当日窗口',1000]];
+  const byId=new Map();
+  const labels={layer1:'L1',layer2:'L2',layer3:'L3'};
+  const counts=full.display_counts||{};
+  html+='<div class="window-counts">'+windows.map(([key,label,cap])=>{
+    const count=Number(counts[key]??(full[key]||[]).length);
+    return '<span class="window-count layer-tone-l'+key.slice(-1)+'"><b>'+label+'</b> '+count+' / '+cap+'</span>';
+  }).join('')+'</div>';
+  html+='<div class="window-intro"><span class="layer-token layer-tone-l1">L1</span>/<span class="layer-token layer-tone-l2">L2</span>/<span class="layer-token layer-tone-l3">L3</span> 是同一 moment 结构的不同窗口，条目可能重叠。下面按 moment ID 去重；每条记录旁的彩色标记表示它当前属于哪些窗口。滑出窗口不会删除 <span class="layer-token layer-tone-l7">L7</span> 归档事实。</div>';
+  for(const [key] of windows){
+    for(const item of (full[key]||[])){
+      const id=item.id||[item.timestamp,item.scene,item.user_action].join('|');
+      let entry=byId.get(id);
+      if(!entry){ entry={item:item,layers:[]}; byId.set(id,entry); }
+      if(!entry.layers.includes(key)) entry.layers.push(key);
+    }
   }
-  // Layer 4/5
-  html += `<div class="sublayer">L4 近期摘要</div>`;
-  html += `<div class="mrec">${esc((full.layer4&&full.layer4.summary||'').slice(0,300)||'（暂无）')}</div>`;
-  html += `<div class="sublayer">L5 远期摘要</div>`;
-  html += `<div class="mrec">${esc((full.layer5&&full.layer5.summary||'').slice(0,300)||'（暂无）')}</div>`;
-  // Layer 6
-  html += `<div class="sublayer">L6 用户画像</div>`;
-  html += renderProfileFromFull((full.layer6&&full.layer6.profile)||{});
-  // Layer 7 索引
-  html += `<div class="sublayer">L7 六维索引</div>`;
-  for(const [dim, tags] of Object.entries(full.indices||{})){
-    const tagStr = Object.entries(tags).slice(0,10).map(([t,ids])=>`<span class="mtag">${esc(t)} <b>${Array.isArray(ids)?ids.length:0}</b></span>`).join('');
-    html += `<div style="margin:4px 0"><b>${esc(dim)}</b>: ${tagStr||'<span class="empty">—</span>'}</div>`;
+  const unique=Array.from(byId.values()).sort((a,b)=>String(b.item.timestamp||'').localeCompare(String(a.item.timestamp||'')));
+  const shown=unique.slice(0,30);
+  html+='<div class="layer-section layer-tone-l1"><div class="sublayer"><span class="layer-token layer-tone-l1">L1</span><span class="layer-token layer-tone-l2">L2</span><span class="layer-token layer-tone-l3">L3</span> 去重后的短期 moment 样本 <span class="scount">'+unique.length+' 条窗口记录</span></div>';
+  html+=shown.map(entry=>{
+    const badges=entry.layers.map(key=>'<span class="layer-membership layer-tone-'+labels[key].toLowerCase()+'">'+labels[key]+'</span>').join('');
+    return fmtMomentMini(entry.item,true).replace(/<\/div>$/, '<span class="layer-memberships">'+badges+'</span></div>');
+  }).join('')||'<div class="note">（短期窗口为空）</div>';
+  if(unique.length>shown.length) html+='<div class="note">为保持页面流畅，仅展示最近 '+shown.length+' 条去重记录。</div>';
+  html+='</div>';
+
+  const l4=full.layer4||{}, l5=full.layer5||{}, l6=full.layer6||{};
+  html+='<div class="layer-section layer-tone-l4"><div class="sublayer"><span class="layer-token layer-tone-l4">L4</span> 近期摘要 · 日级任务与生活动线</div>'+renderSummaryLayer(l4,'l4')+'</div>';
+  html+='<div class="layer-section layer-tone-l5"><div class="sublayer"><span class="layer-token layer-tone-l5">L5</span> 远期摘要 · 跨日关键事件与稳定模式</div>'+renderSummaryLayer(l5,'l5')+'</div>';
+  html+='<div class="layer-section layer-tone-l6"><div class="sublayer"><span class="layer-token layer-tone-l6">L6</span> 用户画像 · 稳定属性</div>'+renderProfileFromFull(l6.profile||{},l6.summary||'',l6)+'</div>';
+
+  const indices=full.indices||{};
+  const indexLabels={people:'人物',locations:'地点',time_nodes:'时间',activity_events:'活动',environments:'环境',objects:'物品'};
+  const total=full.layer7_total??full.moments_count??0;
+  html+='<div class="layer-section layer-tone-l7"><div class="sublayer"><span class="layer-token layer-tone-l7">L7</span> 归档记忆样例 <span class="scount">主存储共 '+total+' 条</span></div>';
+  html+=renderLayer7Archive(full.archive_samples||full.layer7_moments);
+  html+='<div class="layer-note">每个样例由对应六维索引键定位到 moment_id，再回到 L7 主存储读取正文；同一条记忆不会因多个索引而复制存储。</div></div>';
+
+  const dayKeys=Object.keys((indices.time_nodes)||{}).filter(k=>/^\d{4}-\d{2}-\d{2}$/.test(k));
+  if(curKey==='long_term' && dayKeys.length<=1){
+    html+='<div class="layer-audit-note"><b>评测边界：</b>当前长期回放只覆盖 '+(dayKeys.length||1)+' 个自然日，<span class="layer-token layer-tone-l5">L5</span> 的周/月级规律没有跨日证据；所以 <span class="layer-token layer-tone-l4">L4</span> 与 <span class="layer-token layer-tone-l5">L5</span> 的摘要接近，不能据此证明远期摘要已和近期摘要拉开。</div>';
   }
-  // Layer 7 moments
-  html += `<div class="sublayer">L7 主存储 <span class="scount">共 ${full.layer7_total} 条</span></div>`;
-  html += (full.layer7_moments||[]).map(x=>fmtMomentMini(x,true)).join('');
+  const activeProfile=[];
+  collectProfileEntries(l6.profile||{},'',activeProfile);
+  if(activeProfile.length===0){
+    html+='<div class="layer-audit-note"><b>画像边界：</b>当前这份回放中 L6 没有非空画像属性；页面显示的是画像字段骨架，不能当作已生成的用户画像。</div>';
+  }
   document.getElementById('fullMem').innerHTML = html;
+  requestAnimationFrame(()=>updateMemoryExpanders(document.getElementById('fullMem')));
   bindClips();
 }
-
+function renderCurrentMemory(){
+  const snapshot=snaps[cur];
+  if(snapshot&&snapshot.full){ renderFullMemory(snapshot.full); return; }
+  if(!memory){ renderFullMemory(null); return; }
+  const display_counts={};
+  for(const key of ['layer1','layer2','layer3']) display_counts[key]=(memory[key]||[]).length;
+  renderFullMemory({
+    ...memory,
+    layer7_total:memory.moments_count??(snapshot&&snapshot.total_moments)??0,
+    layer7_moments:[],
+    display_counts,
+  });
+}
 function toggleFull(){
   const el=document.getElementById('fullMem');
   const tog=document.getElementById('fullToggle');
   const open = el.classList.toggle('open');
   tog.textContent = open?'[▲ 收起]':'[▼ 展开]';
-  if(open && snaps[cur] && snaps[cur].full) renderFullMemory(snaps[cur].full);
+  if(open) renderCurrentMemory();
 }
 
 function renderLog(){
-  const el = document.getElementById('log');
-  const msgs = (mode==='interactive' && intState) ? intState.log.map(l=>l.msg) : null;
-  el.innerHTML = snaps.map((s,i)=>
-    `<div class="row"><span class="idx">${i}</span>`+
-    `<span class="act ${s.action||''}">${s.action||'-'}</span>`+
-    `<span>${s.label}${msgs&&msgs[i]?' — '+esc(msgs[i]):''}</span></div>`
+  const el=document.getElementById('log');
+  if(mode==='interactive' && intState){
+    const operations=intState.operations||[];
+    if(operations.length){
+      const groups=[];
+      for(const op of operations){
+        const previous=groups[groups.length-1];
+        if(op.operation==='add' && previous && previous.operation==='add'
+            && previous.step===op.step && previous.status===op.status){
+          previous.count++;
+          if(previous.examples.length<2) previous.examples.push(op.summary);
+          previous.lastTime=op.time;
+        }else{
+          groups.push({...op,count:1,examples:[op.summary],lastTime:op.time});
+        }
+      }
+      el.innerHTML=groups.map((op,i)=>{
+        const label=KIND_CN[op.operation]||op.operation;
+        const summary=op.count>1
+          ? op.count+' 条实际写入；例如：'+op.examples[0]
+          : op.summary;
+        const step=op.step?'第 '+op.step+' 步 · ':'';
+        const status=op.status==='blocked'?'（被保护/未执行）':op.status==='failed'?'（失败）':'';
+        return '<div class="row"><span class="idx">'+esc(op.time||String(i+1))+'</span>'+
+          '<span class="act '+esc(op.operation)+'">'+esc(label)+'</span>'+
+          '<span>'+esc(step+(op.step_title||''))+' — '+esc(summary+status)+'</span></div>';
+      }).join('');
+      return;
+    }
+    const events=intState.log||[];
+    el.innerHTML=events.map((event,i)=>
+      '<div class="row"><span class="idx">'+i+'</span>'+
+      '<span class="act '+esc(event.kind||'')+'">'+esc(KIND_CN[event.kind]||event.kind||'-')+'</span>'+
+      '<span>'+esc((event.title||'')+(event.msg?' — '+event.msg:''))+'</span></div>'
+    ).join('');
+    return;
+  }
+  el.innerHTML=snaps.map((s,i)=>
+    '<div class="row"><span class="idx">'+i+'</span>'+
+    '<span class="act '+esc(s.action||'')+'">'+esc(KIND_CN[s.action]||s.action||'-')+'</span>'+
+    '<span>'+esc(s.label||'')+'</span></div>'
   ).join('');
 }
 
@@ -444,7 +1334,7 @@ function renderFlow(s){
   set('flowL3',layers.layer3||0);
   set('flowL4',(s.layer4_summary||'').length);
   set('flowL5',(s.layer5_summary||'').length);
-  set('flowL6',Object.keys(s.profile_fields||{}).length);
+  set('flowL6',Object.values(s.profile_fields||{}).reduce((sum,n)=>sum+(Number(n)||0),0));
   set('flowL7',s.layer7_moments||0);
   set('flowIndex',idxTotal);
   const action=s.action||'init';
@@ -465,49 +1355,55 @@ function render(){
   const prev=cur>0?snaps[cur-1]:null;
   const idxTotal=Object.values(s.indices||{}).reduce((a,b)=>a+(Number(b)||0),0);
   const prevIdx=prev?Object.values(prev.indices||{}).reduce((a,b)=>a+(Number(b)||0),0):0;
-  const totalEpisodes=(s.layers.layer1||0)+(s.layers.layer2||0)+(s.layers.layer3||0);
-  const prevEpisodes=prev?(prev.layers.layer1||0)+(prev.layers.layer2||0)+(prev.layers.layer3||0):0;
-  const profileCount=Object.keys(s.profile_fields||{}).length;
-  const prevProfile=prev?Object.keys(prev.profile_fields||{}).length:0;
-  const delta=(now,before)=>prev?((now-before)>0?'+'+(now-before):String(now-before)):'基准';
+  const totalEpisodes=Number(s.step_metrics?.episodic_moments ?? ((s.layers.layer1||0)+(s.layers.layer2||0)+(s.layers.layer3||0)));
+  const prevEpisodes=prev?Number(prev.step_metrics?.episodic_moments ?? ((prev.layers.layer1||0)+(prev.layers.layer2||0)+(prev.layers.layer3||0))):0;
+  const profileCount=Object.values(s.profile_fields||{}).reduce((sum,n)=>sum+(Number(n)||0),0);
+  const prevProfile=prev?Object.values(prev.profile_fields||{}).reduce((sum,n)=>sum+(Number(n)||0),0):0;
+  const delta=(now,before)=>prev?((now-before)>0?'+'+(now-before):String(now-before)):'0';
   document.getElementById('kpis').innerHTML = [
-    ['时间轴步骤', (cur+1)+' / '+snaps.length],
-    ['短期记录变化', delta(totalEpisodes,prevEpisodes)],
-    ['画像字段变化', delta(profileCount,prevProfile)],
-    ['索引键变化', delta(idxTotal,prevIdx)],
+    ['步骤', (cur+1)+' / '+snaps.length],
+    ['记忆变化', delta(totalEpisodes,prevEpisodes)],
+    ['画像变化', delta(profileCount,prevProfile)],
+    ['索引变化', delta(idxTotal,prevIdx)],
   ].map(([l,n])=>'<div class="kpi"><div class="num">'+esc(n)+'</div><div class="lbl">'+l+'</div></div>').join('');
   renderFlow(s);
 
-  // 各层
+  // 各层：明确显示时间范围、容量、写入触发、层间去向与用途。
   const full = s.full || null;
-  document.getElementById('layers').innerHTML = LAYER_META.map(m=>{
-    let cnt, body='';
-    if(m.k==='layer1'){ cnt = s.layers.layer1;
-      if(full) body = full.layer1.map(x=>fmtMomentMini(x)).join('') || '<span class="empty">（空）</span>'; }
-    else if(m.k==='layer2'){ cnt = s.layers.layer2;
-      if(full) body = full.layer2.map(x=>fmtMomentMini(x)).join('') || '<span class="empty">（空）</span>'; }
-    else if(m.k==='layer3'){ cnt = s.layers.layer3;
-      if(full) body = full.layer3.map(x=>fmtMomentMini(x)).join('') || '<span class="empty">（空）</span>'; }
-    else if(m.k==='layer4'){ cnt='—';
-      body = full ? esc((full.layer4.summary||'').slice(0,200)) : (s.layer4_summary||'');
-      if(!body) body = '<span class="empty">（暂无）</span>'; }
-    else if(m.k==='layer5'){ cnt='—';
-      body = full ? esc((full.layer5.summary||'').slice(0,200)) : (s.layer5_summary||'');
-      if(!body) body = '<span class="empty">（暂无）</span>'; }
-    else if(m.k==='layer6'){ cnt = Object.keys(s.profile_fields||{}).length;
-      if(full && full.layer6.profile) body = renderProfileFromFull(full.layer6.profile);
-      else body = Object.entries(s.profile_fields||{}).map(([k,v])=>`${k}: ${v}`).join('，'); }
-    else { cnt = s.layer7_moments;
-      if(full && full.layer7_moments){
-        body = `<div class="sublayer">主存储（${full.layer7_total} 条，展示前 ${full.layer7_moments.length} 条）</div>`
-          + full.layer7_moments.map(x=>fmtMomentMini(x)).join('');
-      } else { body = Object.entries(s.indices||{}).map(([k,v])=>`${k}: ${v}`).join('，'); } }
-    return `<div class="layer ${m.hot?'hot':''}">
-      <div class="hd"><span class="no">${m.no}</span><span class="ttl">${m.ttl}</span><span class="cnt">${cnt}</span></div>
-      <div class="desc">${m.desc}</div>
-      <div class="body">${body||'<span class="empty">（暂无内容）</span>'}</div>
-    </div>`;
+  const detailMemory = full || (cur===snaps.length-1 ? memory : null);
+  const layerCards=LAYER_META.map(m=>{
+    let cnt='—', body='';
+    const layerCounts=s.layers||{};
+    if(m.k==='layer1' || m.k==='layer2' || m.k==='layer3'){
+      const n=Number(layerCounts[m.k]||0);
+      cnt=n+' / '+m.capacity;
+      const items=detailMemory?(detailMemory[m.k]||[]):[];
+      body=renderWindowList(items,1,m.k==='layer3'?'spread':'recent');
+      const pct=Math.max(0,Math.min(100,Math.round(n/m.capacity*100)));
+      body+='<div class="layer-window"><div class="layer-window-track" title="窗口占用 '+n+' / '+m.capacity+'"><i style="width:'+pct+'%"></i></div></div>';
+    }else if(m.k==='layer4'){
+      const data=detailMemory?detailMemory.layer4:{summary:s.layer4_summary||''};
+      cnt=(s.layer4_summary||'')?'已生成':'待整理';
+      body=renderCompactSummaryLayer(data,'l4');
+    }else if(m.k==='layer5'){
+      const data=detailMemory?detailMemory.layer5:{summary:s.layer5_summary||''};
+      cnt=(s.layer5_summary||'')?'已生成':'待整理';
+      body=renderCompactSummaryLayer(data,'l5');
+    }else if(m.k==='layer6'){
+      const groups=s.profile_fields||{};
+      const slots=Object.values(groups).reduce((sum,n)=>sum+(Number(n)||0),0);
+      const p=detailMemory&&detailMemory.layer6?detailMemory.layer6.profile:{};
+      const attrs=[]; collectProfileEntries(p||{},'',attrs);
+      cnt=slots+' 槽 / '+attrs.length+' 个有效值';
+      body='<div class="layer-meaning">L6 是从多条有证据支持的记忆归纳出的长期画像，不是单条事件；需要足够证据才应写入。</div>'+(detailMemory?renderCompactProfileLayer(p,detailMemory.layer6.summary||'',detailMemory.layer6):'<div class="layer-profile-empty">当前步骤快照只记录属性槽数量；属性正文见“完整记忆”的最终状态。</div>');
+    }else{
+      cnt=Number(s.layer7_moments||0)+' 条';
+      body='<div class="layer-meaning">L7 保存事件原文；六维索引像目录，按人物、地点、时间、活动、环境或物品定位原文，不复制记忆。</div>'+renderLayer7Snapshot(s,detailMemory);
+    }
+    return '<div class="layer family-'+m.family+' layer-tone-'+m.no.toLowerCase()+'"><div class="hd"><span class="no">'+m.no+'</span><span class="ttl">'+m.ttl+'</span><span class="cnt">'+cnt+'</span></div><div class="body">'+(body||'<span class="empty">（暂无内容）</span>')+'</div></div>';
   }).join('');
+  document.getElementById('layers').innerHTML=layerCards;
+  requestAnimationFrame(()=>updateMemoryExpanders(document.getElementById('layers')));
 
   // 索引表
   const rows = Object.entries(s.index_top||{}).map(([dim,items])=>{
@@ -522,32 +1418,15 @@ function render(){
     Object.entries(s.profile_fields||{}).map(([k,v])=>`<span class="tag">${k} <b>${v}</b></span>`).join('') || '<span class="empty">暂无画像</span>';
 
   // 完整记忆面板（已展开则同步更新）
-  if(document.getElementById('fullMem').classList.contains('open') && s.full){
-    renderFullMemory(s.full);
+  if(document.getElementById('fullMem').classList.contains('open') && document.querySelector('[data-view-panel="memory"]').classList.contains('active')){
+    renderCurrentMemory();
   }
+  updatePlaybackControls();
 }
 
 function renderProfile(){
-  const p = (memory.layer6||{}).profile || {};
-  const out = [];
-  for(const [k,v] of Object.entries(p)){
-    if(Array.isArray(v)){
-      out.push(`<div style="margin-bottom:8px"><b>${k}</b><br>`+
-        v.filter(x=>x!=null).map(x=>{
-          const label=x&&typeof x==='object'?(x.value??JSON.stringify(x)):x;
-          return `<span class="tag">${esc(label)}</span>`;
-        }).join('')+
-        `</div>`);
-    } else if(v && typeof v==='object'){
-      out.push(`<div style="margin-bottom:8px"><b>${k}</b><br>`+
-        Object.entries(v).filter(([,vv])=>vv!=null).map(([kk,vv])=>{
-          const label=vv&&typeof vv==='object'?(vv.value??JSON.stringify(vv)):vv;
-          return `<span class="tag">${esc(kk)}: ${esc(label)}</span>`;
-        }).join('')+
-        `</div>`);
-    }
-  }
-  return out.join('') || '<span class="empty">暂无画像</span>';
+  const layer=memory.layer6||{};
+  return renderProfileFromFull(layer.profile||{},layer.summary||'',layer);
 }
 
 function esc(s){ return String(s==null?'':s).replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c])); }
@@ -558,42 +1437,348 @@ let curStep=null, inputsExpanded=false, curInputs=null;
 
 const KIND_CN={add:'写入片段',add_batch:'批量写入',query:'检索',update:'更新字段',
   highlight:'标记重点',delete:'删除',sort:'归类',combine:'合并',compress:'压缩',
-  update_profile:'画像更新',init:'初始'};
+  update_profile:'画像更新',update_feedback:'反馈修正',query_hierarchical:'检索',init:'初始'};
 
-function setMode(m){
+function updateModeChrome(m){
   mode=m;
-  document.getElementById('modeReplay').classList.toggle('on',m==='replay');
-  document.getElementById('modeInt').classList.toggle('on',m==='interactive');
-  document.getElementById('interactivePane').style.display = m==='interactive'?'':'none';
-  document.getElementById('tabs').style.display = m==='interactive'?'none':'';
-  document.getElementById('replayTitle').textContent = m==='interactive'?'步骤时间轴（已执行步骤）':'时间轴回放';
-  document.getElementById('replayNote').textContent = m==='interactive'
+  const replayCard=document.getElementById('replayCard');
+  const intSummary=document.getElementById('intSummary');
+  const kpis=document.getElementById('kpis');
+  const replayNote=document.getElementById('replayNote');
+  if(m==='interactive'){
+    intSummary.append(kpis);
+    replayCard.hidden=true;
+  }else{
+    replayCard.hidden=false;
+    replayCard.insertBefore(kpis,replayNote);
+  }
+  const replayMode=document.getElementById('modeReplay');
+  if(replayMode) replayMode.classList.toggle('on',m==='replay');
+  const interactiveMode=document.getElementById('modeInt');
+  if(interactiveMode) interactiveMode.classList.toggle('on',m==='interactive');
+  document.getElementById('tabs').style.display='';
+  document.querySelector('.view-tabs').style.display='';
+  document.getElementById('replayTitle').textContent=m==='interactive'?'步骤时间轴（已执行步骤）':'时间轴回放';
+  document.getElementById('replayNote').textContent=m==='interactive'
     ? '每执行一步自动更新到最新快照；拖动滑块可回看之前每一步的记忆状态。'
     : '拖动滑块或点击播放，观察记忆随时间的演化（各层数量、索引维度、画像字段的变化）。';
-  if(m==='interactive' && !intState){
-    const s = scenarios.find(x=>x.available) || scenarios[0];
-    newSession(s ? s.key : 'short_term');
+}
+
+const SHORT_TERM_PERSON_STATS = {"all":{"clips":120,"queries":132,"hits":100,"retrieval_by_dimension":{"activity_events":[22,26],"environments":[15,23],"locations":[5,6],"objects":[22,41],"people":[36,36]},"review_clips":30,"review_total":150,"review_full":91,"review_partial":57,"review_incorrect":2,"review_by_dimension":{"people":[19,30],"locations":[25,30],"activity_events":[18,30],"environments":[17,30],"objects":[12,30]}},"A1_JAKE":{"clips":20,"queries":20,"hits":18,"retrieval_by_dimension":{"activity_events":[4,4],"environments":[2,3],"locations":[1,2],"objects":[5,5],"people":[6,6]},"review_clips":5,"review_total":25,"review_full":17,"review_partial":8,"review_incorrect":0,"review_by_dimension":{"people":[4,5],"locations":[5,5],"activity_events":[4,5],"environments":[2,5],"objects":[2,5]}},"A2_ALICE":{"clips":20,"queries":19,"hits":16,"retrieval_by_dimension":{"activity_events":[4,5],"environments":[2,2],"objects":[4,6],"people":[6,6]},"review_clips":5,"review_total":25,"review_full":16,"review_partial":9,"review_incorrect":0,"review_by_dimension":{"people":[2,5],"locations":[4,5],"activity_events":[4,5],"environments":[4,5],"objects":[2,5]}},"A3_TASHA":{"clips":20,"queries":24,"hits":16,"retrieval_by_dimension":{"activity_events":[5,5],"environments":[2,5],"locations":[2,2],"objects":[1,6],"people":[6,6]},"review_clips":5,"review_total":25,"review_full":10,"review_partial":14,"review_incorrect":1,"review_by_dimension":{"people":[3,5],"locations":[3,5],"activity_events":[2,5],"environments":[1,5],"objects":[1,5]}},"A4_LUCIA":{"clips":20,"queries":18,"hits":14,"retrieval_by_dimension":{"activity_events":[2,4],"environments":[2,2],"objects":[4,6],"people":[6,6]},"review_clips":5,"review_total":25,"review_full":17,"review_partial":8,"review_incorrect":0,"review_by_dimension":{"people":[2,5],"locations":[5,5],"activity_events":[4,5],"environments":[3,5],"objects":[3,5]}},"A5_KATRINA":{"clips":20,"queries":23,"hits":17,"retrieval_by_dimension":{"activity_events":[4,4],"environments":[3,4],"objects":[4,9],"people":[6,6]},"review_clips":5,"review_total":25,"review_full":17,"review_partial":7,"review_incorrect":1,"review_by_dimension":{"people":[4,5],"locations":[4,5],"activity_events":[3,5],"environments":[4,5],"objects":[2,5]}},"A6_SHURE":{"clips":20,"queries":28,"hits":19,"retrieval_by_dimension":{"activity_events":[3,4],"environments":[4,7],"locations":[2,2],"objects":[4,9],"people":[6,6]},"review_clips":5,"review_total":25,"review_full":14,"review_partial":11,"review_incorrect":0,"review_by_dimension":{"people":[4,5],"locations":[4,5],"activity_events":[1,5],"environments":[3,5],"objects":[2,5]}}};
+const EVAL_PERSON_NAMES = {A1_JAKE:'Jake · A1_JAKE',A2_ALICE:'Alice · A2_ALICE',A3_TASHA:'Tasha · A3_TASHA',A4_LUCIA:'Lucia · A4_LUCIA',A5_KATRINA:'Katrina · A5_KATRINA',A6_SHURE:'Shure · A6_SHURE'};
+const EVAL_DIM_NAMES = {people:'人物',locations:'地点',activity_events:'活动',environments:'环境',objects:'物品'};
+function evalDimensionSummary(values){
+  return Object.entries(values||{}).filter(entry=>entry[1]&&entry[1][1]>0).map(entry=>EVAL_DIM_NAMES[entry[0]]+' '+entry[1][0]+'/'+entry[1][1]).join(' · ');
+}
+function evalPercent(n,d){
+  if(!d) return '0%';
+  const value=Math.round(1000*n/d)/10;
+  return (Number.isInteger(value)?String(value):value.toFixed(1))+'%';
+}
+function setEvalText(id,value){const el=document.getElementById(id);if(el) el.textContent=value;}
+let EVAL_DATA = null;
+let evalDrillReturnFocus = null;
+let evalDrillRows = [];
+let evalDrillMetric = 'top5';
+let evalDrillPage = 0;
+const EVAL_PAGE_SIZE = 10;
+function evalSelectedKey(){return document.getElementById('evalPersonSelect')?.value||'all';}
+function evalDataFor(scope,person){
+  const group=EVAL_DATA&&EVAL_DATA[scope];
+  if(!group)return null;
+  return person==='all'?group.overall:(group.by_participant||{})[person]||null;
+}
+function evalSetCardDisabled(id,disabled){
+  const el=document.getElementById(id);
+  if(el){el.disabled=!!disabled;el.setAttribute('aria-disabled',disabled?'true':'false');}
+}
+function evalMetricText(summary,key){
+  if(!summary||!summary.questions)return '暂无数据';
+  const n=key==='top5'?Number(summary.top5_hit||0):Number(summary.answer_correct||0);
+  return n+' / '+summary.questions+' · '+evalPercent(n,summary.questions);
+}
+function selectEvalParticipant(person){
+  const key=SHORT_TERM_PERSON_STATS[person]?person:'all';
+  const data=SHORT_TERM_PERSON_STATS[key];
+  const all=key==='all';
+  const personName=EVAL_PERSON_NAMES[key]||key;
+  setEvalText('evalShortCrudDetail',all
+    ? '全体 120 条样本汇总；这验证操作行为，不代表内容正确率。'
+    : '仍是全体 120 条样本汇总；人物筛选不改变 CRUD 结果。');
+  setEvalText('evalShortReviewMain',data.review_full+' / '+data.review_total+' · '+evalPercent(data.review_full,data.review_total));
+  setEvalText('evalShortReviewText',all
+    ? data.review_clips+' 段、6 人各 5 段；完全符合 '+data.review_full+' 项，部分符合 '+data.review_partial+' 项，错误 '+data.review_incorrect+' 项。'
+    : personName+'：'+data.review_clips+' 段抽查；完全符合 '+data.review_full+' 项，部分符合 '+data.review_partial+' 项，错误 '+data.review_incorrect+' 项。');
+  setEvalText('evalShortReviewDetail','AI 抽查完全符合才计入分子；每人仅抽查 5 段，不代表全量。');
+  setEvalText('evalPersonScopeNote',all
+    ? '人物筛选同步应用于短期、长期同题问答和短期 AI 抽查；“总体”汇总 6 人。CRUD 与飞书验收标准保持全体汇总。'
+    : '当前人物：'+personName+'。筛选同步应用于短期、长期同题问答和短期 AI 抽查；CRUD 与飞书验收标准保持全体汇总。');
+  const modalReview=document.getElementById('evalHelpShortReviewValue');
+  if(modalReview) modalReview.textContent=data.review_full+' / '+data.review_total+' · '+evalPercent(data.review_full,data.review_total);
+
+  const loading=document.getElementById('evalDataLoadState');
+  if(!EVAL_DATA){if(loading)loading.textContent='逐题数据载入中…';return;}
+  const coverage=EVAL_DATA.sample_coverage||{};
+  if(loading)loading.textContent='已评测官方问答测试集 '+(coverage.official_qa_questions||0)+' 道题、'+(coverage.official_qa_clips||0)+' 段视频；无官方问答的片段已从此测试集移除。';
+  const shortScope=document.getElementById('shortQAScope');
+  if(shortScope)shortScope.textContent='官方问答测试集保留 '+(coverage.official_qa_clips||0)+' 段有官方问答的视频、共 '+(coverage.official_qa_questions||0)+' 道题；没有官方问答的视频已从这组测试中移除。短期与当前缓存记忆对相同问题作答，再由独立 AI 对照官方答案判分。';
+  for(const scope of ['short_term','long_term']){
+    const summary=evalDataFor(scope,key);
+    const prefix=scope==='short_term'?'short':'long';
+    const count=summary?.questions||0;
+    setEvalText(prefix+'Top5Main',evalMetricText(summary,'top5'));
+    setEvalText(prefix+'AnswerMain',evalMetricText(summary,'answer'));
+    setEvalText(prefix+'Top5Note',count?summary.top5_hit+' 道命中目标片段；'+(count-summary.top5_hit)+' 道未命中。点击查看逐题检索结果。':'此人物暂无匹配的官方题目。');
+    setEvalText(prefix+'AnswerNote',count?summary.answer_correct+' 道经 AI 语义判定与官方答案一致。点击查看题目、答案与片段。':'此人物暂无匹配的官方题目。');
+    evalSetCardDisabled(prefix+'Top5Card',!count);
+    evalSetCardDisabled(prefix+'AnswerCard',!count);
   }
+  const sharedCount=(evalDataFor('short_term',key)||{}).questions||0;
+  const shortRows=(EVAL_DATA.short_term?.details||[]).filter(r=>key==='all'||r.participant===key);
+  const matchedClips=new Set(shortRows.map(r=>r.id).filter(Boolean)).size;
+  setEvalText('shortQAHeading',all
+    ? '全量官方问题 · '+sharedCount+' 道 · '+matchedClips+' 段测试视频'
+    : '全量官方问题 · '+sharedCount+' 道 · '+matchedClips+' 段视频 · '+personName);
+  const longScope=document.getElementById('longMemoryScopeNote');
+  if(longScope){
+    longScope.textContent=all
+      ? '与短期使用同一批题目、官方答案和提问时刻。总体汇总当前可用的 6 人缓存；其中只有 Jake 当前包含多日缓存，其他人物覆盖 DAY1。'
+      : personName+' 与短期用同一批题目、官方答案和提问时刻；当前此人物的长期缓存片段数见逐题详情。其他人物是否有多日数据请勿据此分数推断。';
+  }
+  const multi=EVAL_DATA.multi_day;
+  const multiAvailable=all||key==='A1_JAKE';
+  ['multiTop5Card','multiAnswerCard','multiCrossDayCard'].forEach(id=>evalSetCardDisabled(id,!multiAvailable));
+  if(!multiAvailable){
+    setEvalText('multiTop5Main','此人物暂无官方跨日题库');
+    setEvalText('multiAnswerMain','此人物暂无官方跨日题库');
+    setEvalText('multiCrossDayMain','此人物暂无官方跨日题库');
+    setEvalText('multiTop5Note','官方 A–D 跨日题目前只覆盖 Jake。');
+    setEvalText('multiAnswerNote','官方 A–D 跨日题目前只覆盖 Jake。');
+    setEvalText('multiCrossDayNote','官方 A–D 跨日题目前只覆盖 Jake。');
+  }else{
+    const rows=multi.details||[];
+    const cross=rows.filter(r=>r.temporal_relation==='cross_day');
+    const hit=rows.filter(r=>r.top5_hit).length;
+    const correct=rows.filter(r=>r.answer_correct).length;
+    const crossCorrect=cross.filter(r=>r.answer_correct).length;
+    const crossHit=cross.filter(r=>r.top5_hit).length;
+    setEvalText('multiTop5Main',hit+' / '+rows.length+' · '+evalPercent(hit,rows.length));
+    setEvalText('multiAnswerMain',correct+' / '+rows.length+' · '+evalPercent(correct,rows.length));
+    setEvalText('multiCrossDayMain',crossCorrect+' / '+cross.length+' · '+evalPercent(crossCorrect,cross.length));
+    setEvalText('multiTop5Note','官方 Jake 多日题库；检索前 5 条命中官方 target_time 对应片段。点击看题目与片段。');
+    setEvalText('multiAnswerNote','官方 A–D 字母精确匹配；总体中目前只有 Jake 有跨日题库。');
+    setEvalText('multiCrossDayNote',crossHit+' / '+cross.length+' 道跨日题检索到了官方目标片段。');
+  }
+}
+function evalCompactFields(fields){
+  if(!fields)return '无缓存记忆文本';
+  const labels={scene:'Scene',user_action:'Action',people:'People',location:'Location',activity:'Activity',environments:'Environment',objects:'Objects'};
+  return Object.entries(labels).map(([k,label])=>{
+    let v=fields[k];
+    if(Array.isArray(v))v=v.join(', ');
+    return v?label+': '+String(v):'';
+  }).filter(Boolean).join('\n');
+}
+function evalAttr(v){return String(v==null?'':v).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+function evalSegmentHtml(seg,label,targets){
+  const isTarget=(targets||[]).includes(seg.id)||seg.is_target;
+  const text=evalCompactFields(seg.fields);
+  const play=seg.video
+    ? '<button type="button" class="eval-segment-play" data-video="'+evalAttr(seg.video)+'" onclick="toggleEvalSegment(this)">播放视频片段</button>'
+    : '<span class="eval-segment-copy">本地未找到该片段视频</span>';
+  return '<div class="eval-segment '+(isTarget?'target':'')+'"><div class="eval-segment-title">'+(seg.rank?'Top '+seg.rank+' · ':'')+label+'：'+esc(seg.id||'')+(isTarget?' <span class="eval-segment-hit">✓ 官方目标</span>':'')+'</div>'
+    +'<div class="eval-segment-copy">'+esc(text)+'</div>'+play+'</div>';
+}
+function evalQuestionHtml(row,index,metric,scope){
+  const participant=EVAL_PERSON_NAMES[row.participant]||row.participant||'Jake · A1';
+  const top=row.top5_hit?'命中目标片段':'未命中目标片段';
+  const ans=row.answer_correct?'答案正确':'答案错误';
+  const status=metric==='top5'?top:ans;
+  let answerHtml='';
+  if(row.choices){
+    const official=row.official_choice||'—',model=row.model_choice||'未解析';
+    answerHtml='<div class="eval-q-box"><strong>官方答案 / 模型选择</strong><div>官方答案：'+esc(official)+' · '+esc(row.choices[official]||'')+'</div><div>模型选择：'+esc(model)+' · '+esc(row.choices[model]||'未解析')+'</div><div class="eval-options">'
+      +['A','B','C','D'].map(letter=>'<div class="eval-option '+(letter===official?'correct ':'')+(letter===model?'predicted':'')+'">'+letter+'. '+esc(row.choices[letter]||'')+(letter===official?' · 官方答案':'')+(letter===model?' · 模型选择':'')+'</div>').join('')
+      +'</div></div>';
+  }else{
+    answerHtml='<div class="eval-q-box"><strong>官方答案与模型回答 · '+(row.answer_correct?'语义一致':'语义不一致')+'</strong><div>官方答案：'+esc(row.official_answer||'—')+'</div><div style="margin-top:5px">模型回答：'+esc(row.model_answer||'—')+'</div></div>';
+  }
+  const targets=row.target_segments||[];
+  const retrieved=row.retrieved_segments||[];
+  const targetHtml=targets.map(seg=>evalSegmentHtml(seg,'官方目标片段',row.target_ids)).join('')||'<div class="eval-q-box">没有可映射的官方目标片段。</div>';
+  const retrievedHtml=retrieved.map(seg=>evalSegmentHtml(seg,'模型检索片段',row.target_ids)).join('')||'<div class="eval-q-box">Top 5 没有检索到记忆片段。</div>';
+  const when=row.question_day?'DAY'+row.question_day+' · '+(row.question_time||''):'DAY1 · '+String(row.id||'').match(/\d{8}(?=_en$)/)?.[0];
+  const ordinal=row.source_question_ordinal?' · 同片第 '+row.source_question_ordinal+' 题':'';
+  const note=row.causal_memory_count!=null?'提问时可用记忆 '+row.causal_memory_count+' 段（未来片段已排除）。':'';
+  return '<details class="eval-question"><summary>#'+(index+1)+' · '+esc(participant)+' · '+esc(when||'')+esc(ordinal)+' · '+esc(status)+'<br>'+esc(row.question||'')+'</summary>'
+    +'<div class="eval-question-body"><div class="eval-q-grid"><div class="eval-q-box"><strong>题目</strong>'+esc(row.question||'')+'</div>'+answerHtml+'</div>'
+    +'<div class="eval-q-box"><strong>检索结果</strong>'+esc(top)+' · '+esc(ans)+'。'+(row.temporal_relation==='cross_day'?' 跨日题。':'')+' '+esc(note)+'</div>'
+    +'<div><strong style="font-size:10px;color:#345">官方目标视频片段</strong><div class="eval-segment-list">'+targetHtml+'</div></div>'
+    +'<div><strong style="font-size:10px;color:#345">模型检索到的 Top 5 片段</strong><div class="eval-segment-list">'+retrievedHtml+'</div></div></div></details>';
+}
+function renderEvalDrillPage(){
+  const list=document.getElementById('evalDrillList');
+  const pageCount=Math.max(1,Math.ceil(evalDrillRows.length/EVAL_PAGE_SIZE));
+  const start=evalDrillPage*EVAL_PAGE_SIZE;
+  const rows=evalDrillRows.slice(start,start+EVAL_PAGE_SIZE);
+  list.innerHTML=rows.map((r,i)=>evalQuestionHtml(r,start+i,evalDrillMetric,'')).join('')||'<div class="eval-drill-empty">当前筛选没有题目。</div>';
+  document.getElementById('evalDrillPageLabel').textContent=evalDrillRows.length?((evalDrillPage+1)+' / '+pageCount+' 页 · '+evalDrillRows.length+' 道题'):'0 道题';
+  document.getElementById('evalDrillPrev').disabled=evalDrillPage<=0;
+  document.getElementById('evalDrillNext').disabled=evalDrillPage>=pageCount-1;
+}
+function moveEvalDrillPage(delta){
+  const count=Math.max(1,Math.ceil(evalDrillRows.length/EVAL_PAGE_SIZE));
+  evalDrillPage=Math.max(0,Math.min(count-1,evalDrillPage+delta));
+  renderEvalDrillPage();
+  document.querySelector('.eval-drill-dialog')?.scrollTo({top:0,behavior:'smooth'});
+}
+function openEvalDrilldown(scope,metric){
+  if(!EVAL_DATA)return;
+  const key=evalSelectedKey();
+  let rows=[];
+  let title='';
+  if(scope==='multi_day'){
+    rows=(EVAL_DATA.multi_day.details||[]).slice();
+    if(key!=='all'&&key!=='A1_JAKE')return;
+    if(metric==='cross_day')rows=rows.filter(r=>r.temporal_relation==='cross_day');
+    title=metric==='top5'?'长期官方题：Top 5 目标片段命中':'长期官方题：官方答案与模型选择';
+    if(metric==='cross_day')title='长期跨日题：官方答案与检索证据';
+  }else{
+    rows=(EVAL_DATA[scope]?.details||[]).filter(r=>key==='all'||r.participant===key);
+    title=(scope==='short_term'?'短期记忆':'长期缓存')+(metric==='top5'?'：Top 5 官方目标片段':'：官方答案判分');
+  }
+  evalDrillRows=rows;
+  evalDrillMetric=metric;
+  evalDrillPage=0;
+  const modal=document.getElementById('evalDrillModal');
+  document.getElementById('evalDrillTitle').textContent=title;
+  document.getElementById('evalDrillSummary').textContent='每题展开后查看官方答案、模型回答/选择、官方目标视频和模型 Top 5 检索片段。';
+  modal.classList.add('open');
+  modal.setAttribute('aria-hidden','false');
+  renderEvalDrillPage();
+  evalDrillReturnFocus=document.activeElement;
+  modal.querySelector('.eval-help-close').focus();
+}
+function closeEvalDrilldown(){
+  const modal=document.getElementById('evalDrillModal');
+  if(!modal)return;
+  modal.classList.remove('open');
+  modal.setAttribute('aria-hidden','true');
+  if(evalDrillReturnFocus&&typeof evalDrillReturnFocus.focus==='function')evalDrillReturnFocus.focus();
+}
+function toggleEvalSegment(button){
+  const wrap=button.parentElement;
+  let video=wrap.querySelector('video');
+  if(!video){
+    video=document.createElement('video');
+    video.controls=true;
+    video.preload='none';
+    video.playsInline=true;
+    video.src=API+'/api/video?p='+encodeURIComponent(button.dataset.video||'');
+    wrap.appendChild(video);
+    button.textContent='隐藏视频';
+  }else{
+    video.remove();
+    button.textContent='播放视频片段';
+  }
+}
+let evalHelpReturnFocus = null;
+function openEvalHelp(){
+  const modal=document.getElementById('evalHelpModal');
+  if(!modal) return;
+  evalHelpReturnFocus=document.activeElement;
+  modal.classList.add('open');
+  modal.setAttribute('aria-hidden','false');
+  const close=modal.querySelector('.eval-help-close');
+  if(close) close.focus();
+}
+function closeEvalHelp(){
+  const modal=document.getElementById('evalHelpModal');
+  if(!modal) return;
+  modal.classList.remove('open');
+  modal.setAttribute('aria-hidden','true');
+  if(evalHelpReturnFocus && typeof evalHelpReturnFocus.focus==='function') evalHelpReturnFocus.focus();
+}
+document.addEventListener('keydown',e=>{
+  const modal=document.getElementById('evalHelpModal');
+  if(e.key==='Escape'){const drill=document.getElementById('evalDrillModal');if(drill&&drill.classList.contains('open'))closeEvalDrilldown();else if(modal&&modal.classList.contains('open'))closeEvalHelp();}
+});
+
+function setContentView(view){
+  document.querySelectorAll('.view-tab').forEach(tab=>{
+    const active=tab.dataset.view===view;
+    tab.setAttribute('aria-selected',String(active));
+    tab.tabIndex=active?0:-1;
+  });
+  document.querySelectorAll('[data-view-panel]').forEach(panel=>{
+    const active=panel.dataset.viewPanel===view;
+    panel.classList.toggle('active',active);
+    panel.setAttribute('aria-hidden',String(!active));
+  });
+  if(view==='memory'){
+    const full=document.getElementById('fullMem');
+    full.classList.add('open');
+    document.getElementById('fullToggle').textContent='[▲ 收起]';
+    renderCurrentMemory();
+  }
+}
+
+function setMode(m){
+  if(timer) stopPlayback();
+  updateModeChrome(m);
+  setContentView(m==='interactive'?'interactive':'overview');
   if(m==='interactive'){
-    // 交互模式默认展开完整记忆：批量写入的多段视频可直接在记忆条目上播放
+    const sessionKey=curKey||(scenarios.find(x=>x.available)||scenarios[0]||{}).key||'short_term';
+    if(!intState||intState.scenario!==sessionKey) newSession(sessionKey);
     const fm=document.getElementById('fullMem'), tg=document.getElementById('fullToggle');
     if(!fm.classList.contains('open')){ fm.classList.add('open'); if(tg) tg.textContent='[▲ 收起]'; }
   }
   if(m==='replay') ensureReplay();
 }
 
-async function newSession(key){
+function selectView(view){
+  if(view==='interactive'){ setMode('interactive'); return; }
+  if(mode==='interactive' && timer) stopPlayback();
+  setContentView(view);
+}
+
+async function newSession(key, participant=null, dataset='base'){
   stopAuto();
   const btn=document.getElementById('runStepBtn');
+  const picker=document.getElementById('interactiveDataset');
   btn.disabled=true; btn.textContent='⏳ 创建会话中…';
-  const r=await fetch(API+'/api/interactive/new?scenario='+key);
-  intState=await r.json();
-  if(intState.error){
-    document.getElementById('stepDetail').innerHTML='<div class="note" style="color:#e5484d">'+esc(intState.error)+'</div>';
-    btn.textContent='▶ 运行此步'; return;
+  if(picker) picker.disabled=true;
+  const params=new URLSearchParams({scenario:key});
+  if(participant) params.set('participant',participant);
+  if(dataset) params.set('dataset',dataset);
+  try{
+    const r=await fetch(API+'/api/interactive/new?'+params.toString());
+    const next=await r.json();
+    if(!r.ok || next.error){
+      document.getElementById('stepDetail').innerHTML='<div class="note" style="color:#e5484d">'+esc(next.message||next.error||'创建会话失败')+'</div>';
+      btn.textContent='▶ 运行此步';
+      return;
+    }
+    intState=next;
+    curKey=key;
+    renderTabs();
+    memory=null;
+    renderInt();
+  }catch(e){
+    document.getElementById('stepDetail').innerHTML='<div class="note" style="color:#e5484d">无法创建会话：'+esc(e.message||e)+'</div>';
+    btn.textContent='▶ 运行此步';
+  }finally{
+    if(picker) picker.disabled=false;
   }
-  memory=null;
-  renderInt();
+}
+
+async function changeInteractiveDataset(value){
+  const option=(intState&&intState.dataset_options||[]).find(x=>x.value===value);
+  if(!option) return;
+  const current=intState && intState.dataset_id;
+  if(value===current) return;
+  curKey=option.scenario;
+  await newSession(option.scenario,option.participant,option.dataset);
 }
 
 async function runStep(force){
@@ -601,11 +1786,16 @@ async function runStep(force){
   const btn=document.getElementById('runStepBtn');
   const live=document.getElementById('liveBtn');
   btn.disabled=true; if(live) live.disabled=true;
-  btn.textContent = force?'⏳ Qwen 推理中…（约 5-8 秒）':'⏳ 执行中…';
+  btn.textContent = force?'⏳ Qwen 实时推理中…（GPU 空闲约 5 秒，被占用时可能数分钟，请勿刷新）':'⏳ 执行中…';
   autoBusy=true;
   try{
     const r=await fetch(API+'/api/interactive/step'+(force?'?force=1':''));
     const st=await r.json();
+    if(st.error==='busy'){
+      const d=document.getElementById('stepDetail');
+      if(d) d.innerHTML='<div class="note" style="color:#f59e0b">'+esc(st.message||'上一步仍在执行')+'</div>';
+      return;
+    }
     if(st.error){ alert(st.error); return; }
     intState=st;
     renderInt();
@@ -617,9 +1807,14 @@ async function runStep(force){
 
 async function prewarm(){
   const sc = intState ? intState.scenario : 'short_term';
+  const params=new URLSearchParams({scenario:sc});
+  if(intState && intState.dataset_key) params.set('dataset',intState.dataset_key);
+  if(intState && intState.participant) params.set('participant',intState.participant);
   const b=document.getElementById('prewarmBtn');
-  b.disabled=true; b.textContent='🔥 预热中…';
-  await fetch(API+'/api/interactive/prewarm?scenario='+sc);
+  const note=document.getElementById('prewarmNote');
+  b.disabled=true; b.textContent='检查中…';
+  note.textContent='检查缓存；已有结果会跳过模型，缺失项才会重新推理。';
+  await fetch(API+'/api/interactive/prewarm?'+params.toString());
   pollPrewarm();
 }
 
@@ -630,27 +1825,28 @@ function pollPrewarm(){
     const note=document.getElementById('prewarmNote');
     const b=document.getElementById('prewarmBtn');
     if(p.running){
-      note.textContent=`预热中 ${p.done}/${p.total} 条（每条约 5 秒），完成后执行步骤即可秒开`;
+      note.textContent='检查 '+p.done+'/'+p.total+' 条 · 命中缓存 '+(p.cache_hits||0)+' · 新推理 '+(p.inferred||0)+' · 失败 '+(p.failed||0);
     }else{
       clearInterval(t);
-      b.disabled=false; b.textContent='🔥 预热 Qwen 缓存';
-      note.textContent = p.error ? ('预热出错：'+p.error)
-        : `预热完成：${p.done}/${p.total} 条已缓存`;
+      b.disabled=false; b.textContent='🔎 检查/补齐缓存';
+      note.textContent = p.error ? ('缓存检查失败：'+p.error)
+        : '检查完成：命中缓存 '+(p.cache_hits||0)+' 条 · 新推理 '+(p.inferred||0)+' 条 · 失败 '+(p.failed||0)+' 条';
       updateQstat();
     }
   },1000);
 }
-
 function updateQstat(){
   const el=document.getElementById('qstat');
   if(!el||!intState||!intState.qwen) return;
   const q=intState.qwen;
+  const gpu=String(q.gpu||'').replace('NVIDIA GeForce ','');
+  el.title=q.ok?((q.gpu||'GPU')+' · 已缓存 '+q.cached+' 条'):'Qwen 服务未就绪';
   el.innerHTML = q.ok
-    ? `Qwen3-VL <b>在线</b> · ${q.gpu||''} · 已缓存 <b>${q.cached}</b> 条`
+    ? 'Qwen3-VL <b>在线</b> · '+esc(gpu||'GPU')+' · 缓存 <b>'+(Number(q.cached)||0)+'</b>'
     : '<span style="color:#e5484d">Qwen 服务未就绪</span>';
 }
 
-// ===== Qwen 感知产出 vs Golden 对照 =====
+// ===== Qwen 感知产出与自动标签诊断 =====
 function renderPerception(p){
   const box=document.getElementById('percBox');
   if(!p){ box.innerHTML=''; return; }
@@ -667,9 +1863,11 @@ function renderPerception(p){
     }
     let html=`<div class="percbox"><h4>🤖 Qwen3-VL 批量感知
       <span class="srctag cache">${p.ok}/${p.n} 条成功</span></h4>`;
+    const dimNames={people:'人物',activity_events:'活动',objects:'物品',environments:'环境',locations:'地点'};
     const parts=Object.entries(agg).map(([d,a])=>
-      `${d} ${a.hit}/${a.tot}${a.tot?` (${Math.round(100*a.hit/a.tot)}%)`:''}`);
-    html+=`<div class="prec-sum">Golden 对照（合计命中）：${parts.join(' · ')||'该批次 golden 标注为空'}</div>`;
+      `${dimNames[d]||d}：${a.hit}/${a.tot} · ${a.tot?Math.round(100*a.hit/a.tot):0}%`);
+    html+=`<div class="prec-sum"><b>和数据集自动标签对照</b>：${parts.join(' · ')||'该批次缺少参考标签'}</div>`;
+    html+=cmpLegend();
     const live=items.filter(i=>i.source==='qwen').length;
     if(live) html+=`<div class="prec-sum" style="color:#f59e0b">其中 ${live} 条为本次实时推理，其余来自缓存</div>`;
     for(const it of items.slice(0,3)) html+=percRow(it);
@@ -686,15 +1884,36 @@ function renderPerception(p){
       <div class="prec-sum" style="color:#e5484d">${esc(p.error)}</div></div>`;
     box.innerHTML=html; return;
   }
-  html+=percRow(p)+'</div>';
+  html+=percRow(p,true)+'</div>';
   box.innerHTML=html;
 }
 
-function percRow(p){
+const ACTIVITY_LABEL_EN = {
+  '\u996e\u98df': 'Eating / drinking',
+  '\u79fb\u52a8': 'Movement',
+  '\u793e\u4ea4': 'Social interaction',
+  '\u89c2\u5bdf': 'Observation',
+  '\u64cd\u4f5c\u7269\u54c1': 'Object manipulation',
+  '\u6e05\u6d01': 'Cleaning',
+  '\u7535\u5b50\u8bbe\u5907': 'Electronic-device use'
+};
+function referenceLabel(dim, value){
+  return dim==='activity_events' ? (ACTIVITY_LABEL_EN[value] || value) : value;
+}
+
+function cmpLegend(){
+  return `<div class="cmp-legend">
+    <span class="tag hit">✓ 模型提到了</span>
+    <span class="tag miss">✗ 模型没提到</span>
+    <span class="tag extra">模型另外提到</span>
+  </div><div class="cmp-note">数字表示模型对上了几个自动参考标签。活动标签由中文关键词规则生成并翻译为英文展示，可能把物品线索误当活动；灰色只表示对照表没列，不代表模型一定错。</div>`;
+}
+
+function percRow(p,showLegend=false){
   const q=p.qwen||{};
   const live = p.source==='qwen';
   let h=`<h4>🤖 Qwen3-VL 感知产出
-    <span class="srctag ${live?'live':'cache'}">${live?'实时推理':'缓存'} · ${p.elapsed_ms!=null?p.elapsed_ms+'ms':'—'}</span>
+    <span class="srctag ${live?'live':'cache'}">${live?'实时推理 · '+(p.elapsed_ms!=null?p.elapsed_ms+'ms':'耗时未知'):'缓存命中 · 未调用模型'}</span>
     <span class="srctag cache">${p.num_frames||0} 帧</span></h4>`;
   h+=`<div class="perc-row"><b>Scene</b>${esc(q.scene||'—')}</div>`;
   h+=`<div class="perc-row"><b>Action</b>${esc(q.user_action||'—')}</div>`;
@@ -702,23 +1921,25 @@ function percRow(p){
   h+=`<div class="perc-row"><b>Activity</b>${esc(q.activity||'—')}</div>`;
   h+=`<div class="perc-row"><b>Objects</b>${esc((q.objects||[]).join('、')||'—')}</div>`;
 
-  // Golden 对照
+  // 自动标签诊断对照
   const ev=p.eval||{};
   let any=false;
   let c='<div class="cmp">';
+  if(showLegend) c+=cmpLegend();
   for(const [dim,e] of Object.entries(ev)){
     if(!e.golden||!e.golden.length) continue;
     any=true;
     const pct = e.golden.length?Math.round(100*e.hit.length/e.golden.length):0;
-    c+=`<div class="cmp-dim"><span class="dn">${dim} ${pct}%</span>`;
-    for(const g of e.golden) c+=`<span class="tag ${e.hit.includes(g)?'hit':'miss'}">${esc(g)}${e.hit.includes(g)?' ✓':' ✗'}</span>`;
-    for(const x of (e.extra||[]).slice(0,4)) c+=`<span class="tag extra">${esc(x)}（多）</span>`;
+    const dimNames={people:'人物',activity_events:'活动',objects:'物品',environments:'环境',locations:'地点'};
+    c+=`<div class="cmp-dim"><span class="dn">${dimNames[dim]||dim}：${e.hit.length}/${e.golden.length} · ${pct}%</span>`;
+    for(const g of e.golden) c+=`<span class="tag ${e.hit.includes(g)?'hit':'miss'}">${esc(referenceLabel(dim,g))}${e.hit.includes(g)?' ✓':' ✗'}</span>`;
+    for(const x of (e.extra||[]).slice(0,4)) c+=`<span class="tag extra">模型另外提到：${esc(x)}</span>`;
     c+='</div>';
   }
   c+='</div>';
   if(any) h+=c;
-  else h+='<div class="cmp"><div class="cmp-dim">该条 golden 标注为空，无法对照</div></div>';
-  h+=`<details style="margin-top:8px"><summary style="cursor:pointer;font-size:12px;color:var(--muted)">查看 Qwen 原始输出</summary>
+  else h+='<div class="cmp"><div class="cmp-dim">数据集没有提供这类对照词</div></div>';
+  h+=`<details style="margin-top:8px"><summary style="cursor:pointer;font-size:12px;color:var(--muted)">展开完整 Qwen 原始输出</summary>
     <div class="prec-raw">${esc(p.raw||'')}</div></details>`;
   return h;
 }
@@ -751,9 +1972,18 @@ function updateRunBtn(){
 }
 
 function renderInt(){
+  if(timer) stopPlayback();
   const st=intState;
+  const picker=document.getElementById('interactiveDataset');
+  if(picker){
+    const options=(st.dataset_options||[]).filter(x=>x.scenario===st.scenario);
+    picker.innerHTML=options.map(x=>'<option value="'+esc(x.value)+'">'+esc(x.label)+'</option>').join('');
+    picker.value=st.dataset_id||'';
+    picker.disabled=false;
+  }
+  const datasetNote=document.getElementById('interactiveDatasetNote');
+  if(datasetNote) datasetNote.textContent=st.dataset_note||'';
   document.getElementById('intName').textContent=st.name;
-  document.getElementById('intDesc').textContent=st.desc+(st.participant?(' · 参与者 '+st.participant):'');
   document.getElementById('intProgress').innerHTML = st.finished
     ? '✅ 已执行 <b>'+st.total+'</b> / '+st.total+' 步'
     : '已执行 <b>'+st.pos+'</b> / '+st.total+' 步';
@@ -786,40 +2016,58 @@ function renderInputs(inputs, expand){
   if(!inputs||!inputs.length) return '';
   curInputs=inputs;
   const shown = expand ? inputs : inputs.slice(0,6);
-  let html=shown.map(m=>'<div class="minput '+(m.video_url?'':'novid')+'"><div class="mhead">'
-    +'<span class="tag">📹 '+esc(m.video||m.id)+'</span>'
-    +'<span class="tag">🕐 '+(m.clock||(m.hour?m.hour+':00':''))
-      +(m.start_time!=null?(' · 片内 '+m.start_time+'s ~ '+m.end_time+'s'):'')+'</span>'
-    +(m.people&&m.people.length?'<span class="tag">👥 '+esc(m.people.join('、'))+'</span>':'')
-    +(m.location?'<span class="tag">📍 '+esc(m.location)+'</span>':'')
-    +(m.video_url?'':'<span class="tag" style="color:#e8930c">视频未下载</span>')
-    +'</div><div class="mact">'+esc(m.action)+'</div>'
-    +videoTag(m)+'</div>').join('');
+  const firstVideo=inputs.find(m=>m.video_url);
+  const player=firstVideo?videoTag(firstVideo,'memoryClipTop'):'';
+  let html=shown.map(m=>{
+    return '<div class="minput '+(m.video_url?'':'novid')+'"><div class="mhead">'
+      +'<span class="tag">📹 '+esc(m.video||m.id)+'</span>'
+      +'<span class="tag">🕐 记忆时间 '+esc(m.clock||(m.hour?m.hour+':00':'未标注'))+'</span>'
+      +(m.people&&m.people.length?'<span class="tag">👥 '+esc(m.people.join('、'))+'</span>':'')
+      +(m.location?'<span class="tag">📍 '+esc(m.location)+'</span>':'')
+      +(m.video_url?'':'<span class="tag" style="color:#e8930c">视频未下载</span>')
+      +'</div><div class="mact">'+(m.scene?'<div><b>Scene:</b> '+esc(m.scene)+'</div>':'')+'<div><b>Action:</b> '+esc(m.action||'—')+'</div></div></div>';
+  }).join('');
   if(!expand && inputs.length>6) html+='<div class="note">… 以及其余 '+(inputs.length-6)+' 条（共 '+inputs.length+' 条），点击「运行此步」全部写入。</div>';
-  return html;
+  const topToggle=expand&&inputs.length>6
+    ? '<div class="input-toggle input-toggle-top"><button class="btn" onclick="toggleInputs()">▲ 收起全部 '+inputs.length+' 条</button></div>'
+    : '';
+  return player+topToggle+html;
 }
 
 function renderStepCard(){
   const sd=document.getElementById('stepDetail');
+  const actions=document.getElementById('stepActions');
+  if(actions&&actions.parentElement===sd) actions.remove();
   if(!curStep){
-    sd.innerHTML='<div class="note">🎉 所有步骤执行完毕。点击「新建」重新开始，或拖动下方时间轴回看每一步。</div>';
+    sd.innerHTML='<div class="note">🎉 所有步骤执行完毕。点击「重开当前会话」重新开始。</div>';
+    if(actions) sd.appendChild(actions);
     return;
   }
   const c=curStep;
   let html='<div class="stepbox"><div class="st-title">'
     +'<span class="kbadge '+c.kind+'">'+(KIND_CN[c.kind]||c.kind)+'</span>'
-    +esc(c.title)+'</div>';
+    +'<span class="step-title-text">'+esc(c.title)+'</span></div>';
   const d=c.detail||{};
   if(d.query) html+='<div class="note" style="margin-bottom:6px">检索词：<b>'+esc(d.query)+'</b>（top '+d.top_k+'）</div>';
   if(d.field) html+='<div class="note" style="margin-bottom:6px">更新 <b>'+esc(d.id)+'</b> 的 <b>'+esc(d.field)+'</b> → <b>'+esc(String(d.new_value))+'</b></div>';
   if(d.note) html+='<div class="note" style="margin-bottom:6px">'+esc(d.note)+'</div>';
   html+=renderInputs(c.inputs, inputsExpanded);
   if(c.inputs&&c.inputs.length>6){
-    html+='<div style="text-align:center;margin-top:4px"><button class="btn" onclick="toggleInputs()">'
-      +(inputsExpanded?'▲ 收起':'▼ 展开全部 '+c.inputs.length+' 条（可逐条看视频）')+'</button></div>';
+    const toggleLabel=inputsExpanded
+      ? '▲ 收起全部 '+c.inputs.length+' 条'
+      : '▼ 展开全部 '+c.inputs.length+' 条';
+    html+='<div class="input-toggle input-toggle-bottom"><button class="btn" onclick="toggleInputs()">'+toggleLabel+'</button></div>';
   }
   html+='</div>';
   sd.innerHTML=html;
+  const title=sd.querySelector('.st-title');
+  const videoActions=sd.querySelector('.video-actions');
+  if(title&&videoActions) title.appendChild(videoActions);
+  const player=sd.querySelector('.video-shell');
+  if(actions){
+    if(player) player.after(actions);
+    else sd.appendChild(actions);
+  }
   bindClips();
 }
 
@@ -829,7 +2077,7 @@ function toggleInputs(){
 }
 
 // ===== 视频内嵌播放：每个条目直接带 <video>，片段区间自动循环 =====
-function videoTag(m){
+function videoTag(m, shellId){
   if(!m||!m.video_url) return '';
   const previewParams=new URLSearchParams({quality:'preview'});
   if(m.clip_start!=null&&m.clip_end!=null){
@@ -837,16 +2085,14 @@ function videoTag(m){
     previewParams.set('end',m.clip_end);
   }
   const previewUrl=m.video_url+(m.video_url.includes('?')?'&':'?')+previewParams.toString();
-  return '<div class="video-shell">'+
-    '<div class="video-placeholder"><span class="preview-icon">▶</span>'+
-    '<div><strong>视频尚未加载</strong><small>只生成当前片段的轻量预览，减少隧道传输量</small></div></div>'+
-    '<div class="video-actions">'+
-    '<button type="button" class="btn preview-load">⚡ 快速预览</button>'+
-    '<button type="button" class="btn original-load">原始画质</button></div>'+
-    '<video class="clipvid" controls preload="none" playsinline hidden'+
-    ' data-original-url="'+esc(m.video_url)+'" data-preview-url="'+esc(previewUrl)+'"'+
-    ' data-cs="'+(m.clip_start||0)+'" data-ce="'+(m.clip_end!=null?m.clip_end:'')+'"></video>'+
-    '<div class="video-status" aria-live="polite">首次预览会在服务器生成并缓存，原视频可随时切换。</div></div>';
+  return '<div class="video-shell" id="'+shellId+'" data-autoload="1">'
+    +'<div class="video-actions" data-shell-id="'+esc(shellId)+'">'
+    +'<button type="button" class="btn preview-load">⚡ 快速预览</button>'
+    +'<button type="button" class="btn original-load">原始画质</button></div>'
+    +'<video class="clipvid" controls preload="none" playsinline muted autoplay hidden'
+    +' data-original-url="'+esc(m.video_url)+'" data-preview-url="'+esc(previewUrl)+'"'
+    +' data-cs="'+(m.clip_start||0)+'" data-ce="'+(m.clip_end!=null?m.clip_end:'')+'"></video>'
+    +'<div class="video-status" aria-live="polite"></div></div>';
 }
 
 function bindClips(){
@@ -855,9 +2101,9 @@ function bindClips(){
     shell.dataset.bound='1';
     const v=shell.querySelector('video');
     const status=shell.querySelector('.video-status');
-    const placeholder=shell.querySelector('.video-placeholder');
-    const fast=shell.querySelector('.preview-load');
-    const original=shell.querySelector('.original-load');
+    const actionRow=document.querySelector('.video-actions[data-shell-id="'+shell.id+'"]');
+    const fast=(actionRow||shell).querySelector('.preview-load');
+    const original=(actionRow||shell).querySelector('.original-load');
     v._cs=parseFloat(v.dataset.cs)||0;
     v._ce=v.dataset.ce!==''&&v.dataset.ce!=null?parseFloat(v.dataset.ce):null;
     v._originalCs=v._cs;
@@ -868,11 +2114,19 @@ function bindClips(){
       if(Math.abs(v.currentTime-start)>.25) v.currentTime=start;
     };
     v.ontimeupdate=()=>{if(v._ce!=null&&v.currentTime>=v._ce) v.currentTime=v._cs;};
-    v.onloadeddata=()=>{status.textContent=v.dataset.usingOriginal==='1'?'原始视频已就绪':'低清预览已就绪（服务器已缓存）';};
-    v.onerror=()=>{placeholder.hidden=false;status.textContent='视频加载失败；可重试快速预览，或切换原始画质。';fast.disabled=false;};
+    v.onloadeddata=()=>{
+      fast.disabled=false;
+      status.textContent=v.dataset.usingOriginal==='1'?'原始视频已就绪':'低清预览已就绪（服务器已缓存）';
+      if(v.dataset.autoPreview==='1'){
+        v.muted=true;
+        const playing=v.play();
+        if(playing) playing.then(()=>{status.textContent='';})
+          .catch(()=>{status.textContent='预览已就绪，点击播放器上的播放按钮开始观看。';});
+      }
+    };
+    v.onerror=()=>{v.hidden=true;status.textContent='视频加载失败；可重试快速预览，或切换原始画质。';fast.disabled=false;};
     async function load(useOriginal){
       fast.disabled=true;
-      placeholder.hidden=true;
       fast.textContent=useOriginal?'⏳ 加载原片…':'⏳ 准备快速预览…';
       status.textContent=useOriginal?'正在通过 SSH 隧道读取原始视频…':'正在准备低清预览；首次生成会稍等，之后直接读取缓存…';
       try{
@@ -883,25 +2137,31 @@ function bindClips(){
             statusUrl.searchParams.set('start',v._originalCs);
             statusUrl.searchParams.set('end',v._originalCe);
           }
-          while(true){
+          const deadline=Date.now()+250000;
+          let delay=500;
+          while(Date.now()<deadline){
             const r=await fetch(statusUrl.toString(),{cache:'no-store'});
             if(!r.ok) throw new Error('预览服务返回 '+r.status);
             const state=await r.json();
             if(state.state==='ready') break;
             if(state.state==='error') throw new Error(state.message||'预览生成失败');
             status.textContent=state.state==='queued'?'预览任务排队中…':'服务器正在生成轻量预览，页面可继续使用…';
-            await new Promise(resolve=>setTimeout(resolve,700));
+            await new Promise(resolve=>setTimeout(resolve,delay));
+            delay=Math.min(2000,Math.round(delay*1.4));
           }
+          if(Date.now()>=deadline) throw new Error('预览生成超时，请稍后重试');
         }
         v.dataset.usingOriginal=useOriginal?'1':'0';
+        v.dataset.autoPreview=(!useOriginal&&shell.dataset.autoload==='1')?'1':'0';
         v._cs=useOriginal?v._originalCs:0;
         v._ce=useOriginal?v._originalCe:null;
         v.src=useOriginal?v.dataset.originalUrl:v.dataset.previewUrl;
         v.hidden=false;
         v.load();
+        if(v.dataset.autoPreview==='1') v.muted=true;
         fast.textContent=useOriginal?'⚡ 快速预览':'✓ 预览已缓存';
       }catch(err){
-        placeholder.hidden=false;
+        v.hidden=true;
         status.textContent='快速预览暂不可用：'+err.message+'。可以切换原始画质。';
         fast.disabled=false;
         fast.textContent='↻ 重试预览';
@@ -909,22 +2169,107 @@ function bindClips(){
     }
     fast.addEventListener('click',()=>load(false));
     original.addEventListener('click',()=>load(true));
+    if(shell.dataset.autoload==='1') load(false);
   });
 }
 
-document.getElementById('slider').addEventListener('input', e=>{
-  cur = +e.target.value; render();
+function updatePlaybackControls(){
+  const hasSteps=snaps.length>0;
+  document.getElementById('prevBtn').disabled=!hasSteps||cur<=0;
+  document.getElementById('nextBtn').disabled=!hasSteps||cur>=snaps.length-1;
+  document.getElementById('playBtn').disabled=!hasSteps;
+  document.getElementById('slider').disabled=!hasSteps;
+}
+
+function stopPlayback(){
+  if(timer){clearInterval(timer);timer=null;}
+  const button=document.getElementById('playBtn');
+  if(button){button.textContent='▶ 播放';button.setAttribute('aria-pressed','false');}
+}
+
+function advancePlayback(){
+  if(cur>=snaps.length-1){stopPlayback();return;}
+  cur++;
+  document.getElementById('slider').value=cur;
+  render();
+}
+
+function startPlayback(){
+  if(!snaps.length) return;
+  if(cur>=snaps.length-1){
+    cur=0;
+    document.getElementById('slider').value=cur;
+    render();
+  }
+  const button=document.getElementById('playBtn');
+  button.textContent='⏸ 暂停';
+  button.setAttribute('aria-pressed','true');
+  timer=setInterval(advancePlayback,playbackDelay);
+}
+
+function stepTimeline(delta){
+  if(timer) stopPlayback();
+  if(!snaps.length) return;
+  cur=Math.max(0,Math.min(snaps.length-1,cur+delta));
+  document.getElementById('slider').value=cur;
+  render();
+}
+
+const viewTabs=[...document.querySelectorAll('.view-tab')];
+viewTabs.forEach((tab,index)=>{
+  tab.addEventListener('click',()=>selectView(tab.dataset.view));
+  tab.addEventListener('keydown',e=>{
+    let next=index;
+    if(e.key==='ArrowRight') next=(index+1)%viewTabs.length;
+    else if(e.key==='ArrowLeft') next=(index+viewTabs.length-1)%viewTabs.length;
+    else if(e.key==='Home') next=0;
+    else if(e.key==='End') next=viewTabs.length-1;
+    else return;
+    e.preventDefault();
+    viewTabs[next].focus();
+    selectView(viewTabs[next].dataset.view);
+  });
 });
-document.getElementById('playBtn').addEventListener('click', ()=>{
-  if(timer){ clearInterval(timer); timer=null; document.getElementById('playBtn').textContent='▶ 播放'; return; }
-  cur = 0; document.getElementById('slider').value = 0; render();
-  document.getElementById('playBtn').textContent='⏸ 暂停';
-  timer = setInterval(()=>{
-    if(cur >= snaps.length-1){ clearInterval(timer); timer=null; document.getElementById('playBtn').textContent='▶ 播放'; return; }
-    cur++; document.getElementById('slider').value = cur; render();
-  }, 600);
+const requestedView=new URLSearchParams(location.search).get('view');
+setContentView(viewTabs.some(tab=>tab.dataset.view===requestedView)?requestedView:'overview');
+
+document.getElementById('slider').addEventListener('input',e=>{
+  if(timer) stopPlayback();
+  cur=+e.target.value;
+  render();
+});
+document.getElementById('prevBtn').addEventListener('click',()=>stepTimeline(-1));
+document.getElementById('nextBtn').addEventListener('click',()=>stepTimeline(1));
+document.getElementById('playBtn').addEventListener('click',()=>{
+  if(timer) stopPlayback();
+  else startPlayback();
+});
+document.getElementById('playbackSpeed').addEventListener('change',e=>{
+  playbackDelay=Number(e.target.value)||600;
+  if(timer){
+    clearInterval(timer);
+    timer=setInterval(advancePlayback,playbackDelay);
+  }
+});
+document.addEventListener('keydown',e=>{
+  const target=e.target;
+  if(e.altKey||e.ctrlKey||e.metaKey) return;
+  if(target instanceof Element && (target.isContentEditable||target.matches('input,select,textarea,.view-tab'))) return;
+  if(mode==='interactive') return;
+  if(e.code==='Space'){
+    e.preventDefault();
+    if(timer) stopPlayback(); else startPlayback();
+  }else if(e.key==='ArrowLeft'){
+    e.preventDefault();stepTimeline(-1);
+  }else if(e.key==='ArrowRight'){
+    e.preventDefault();stepTimeline(1);
+  }
 });
 
+fetch(API+'/api/evaluation-data',{cache:'no-store'})
+  .then(response=>{if(!response.ok)throw new Error('HTTP '+response.status);return response.json();})
+  .then(data=>{EVAL_DATA=data;selectEvalParticipant(evalSelectedKey());})
+  .catch(error=>{setEvalText('evalDataLoadState','逐题评测数据暂不可用：'+error.message);});
 init();
 </script>
 </body>
