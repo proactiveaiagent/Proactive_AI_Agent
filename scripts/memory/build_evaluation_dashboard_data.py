@@ -1,14 +1,30 @@
 #!/usr/bin/env python3
+import argparse
 import json,re
 from pathlib import Path
+
 ROOT=Path("/data/cxr25/zhx/Proactive_AI_Agent")
 DATA=ROOT/"data/egolife"
 RUNS=DATA/"runs"
-REPORT=json.load(open(RUNS/"short_long_official_qa_all_20260928.json",encoding="utf-8"))
-CACHE=json.load(open(RUNS/"qwen_cache_expanded_eval.json",encoding="utf-8"))
-QA=json.load(open(DATA/"testset/long_term/egolifeqa_official_a1_jake.json",encoding="utf-8"))
-RET=json.load(open(RUNS/"egolifeqa_memory_retrieval_qwen_multiday_20260928_115121.json",encoding="utf-8"))
-ANS=json.load(open(RUNS/"egolifeqa_answer_accuracy_forced_choice_multiday_760_20260928_fieldaware.json",encoding="utf-8"))
+
+def parse_args():
+    parser=argparse.ArgumentParser(description="Build the visualization payload from saved memory evaluation reports.")
+    parser.add_argument("--short-long-report",type=Path,default=RUNS/"short_long_official_qa_all_20260928.json")
+    parser.add_argument("--cache",type=Path,default=RUNS/"qwen_cache_expanded_eval.json")
+    parser.add_argument("--qa",type=Path,default=DATA/"testset/long_term/egolifeqa_official_a1_jake.json")
+    parser.add_argument("--retrieval-report",type=Path,default=RUNS/"egolifeqa_memory_retrieval_qwen_multiday_20260928_115121.json")
+    parser.add_argument("--answer-report",type=Path,default=RUNS/"egolifeqa_answer_accuracy_forced_choice_multiday_760_20260928_fieldaware.json")
+    parser.add_argument("--output",type=Path,default=RUNS/"evaluation_dashboard_data_20260928.json")
+    return parser.parse_args()
+
+args=parse_args()
+CACHE_MANIFEST_PATH=args.cache.with_suffix(".manifest.json")
+CACHE_MANIFEST=json.load(open(CACHE_MANIFEST_PATH,encoding="utf-8")) if CACHE_MANIFEST_PATH.exists() else {}
+REPORT=json.load(open(args.short_long_report,encoding="utf-8"))
+CACHE=json.load(open(args.cache,encoding="utf-8"))
+QA=json.load(open(args.qa,encoding="utf-8"))
+RET=json.load(open(args.retrieval_report,encoding="utf-8"))
+ANS=json.load(open(args.answer_report,encoding="utf-8"))
 QA_BY={str(x.get("ID","")):x for x in QA}
 ANS_BY={str(x.get("id","")):x for x in ANS.get("details",[])}
 RET_BY={str(x.get("id","")):x for x in RET.get("details",[])}
@@ -114,6 +130,7 @@ for r in RET.get("details",[]):
 payload={
   "created_at":REPORT.get("completed_at"),
   "sample_coverage":REPORT.get("sample_coverage",{}),
+  "evaluation_sources":{"short_long_report":str(args.short_long_report),"memory_cache":str(args.cache),"memory_cache_manifest":CACHE_MANIFEST,"retrieval_report":str(args.retrieval_report),"answer_report":str(args.answer_report)},
   "participant_names":NAMES,
   "short_term":scopes["short_term"],
   "long_term":scopes["long_term"],
@@ -125,7 +142,8 @@ payload={
     "scope":"official A1_JAKE multi-day 500-question multiple-choice benchmark"
   },
 }
-out=ROOT/"data/egolife/runs/evaluation_dashboard_data_20260928.json"
+out=args.output
+out.parent.mkdir(parents=True,exist_ok=True)
 out.write_text(json.dumps(payload,ensure_ascii=False,separators=(",",":")),encoding="utf-8")
 print("wrote",out,"bytes",out.stat().st_size,"short",len(payload["short_term"]["details"]),"long",len(payload["long_term"]["details"]),"multiday",len(multi))
 print("available videos short",sum(bool(s["video"]) for r in payload["short_term"]["details"] for s in r["target_segments"]))
