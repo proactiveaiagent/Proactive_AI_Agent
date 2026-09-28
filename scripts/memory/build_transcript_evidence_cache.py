@@ -15,6 +15,7 @@ DEFAULT_CACHE = RUNS / "qwen_cache_expanded_eval.json"
 DEFAULT_MOMENTS = [
     ROOT / "data/egolife/structured/moments.jsonl",
     ROOT / "data/egolife/testset/long_term/multiday_qa_clipset.jsonl",
+    ROOT / "data/egolife/testset/long_term/multiday_qa_clipset_v1_520.jsonl",
     ROOT / "data/egolife/testset/short_term/moments_scattered_v2_120.jsonl",
     ROOT / "data/egolife/testset/short_term/moments_scattered.jsonl",
 ]
