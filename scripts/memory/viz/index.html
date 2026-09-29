@@ -441,6 +441,11 @@ body{height:100vh;height:100dvh;min-height:0;display:flex;flex-direction:column}
 .eval-help-head p{font-size:10px;color:#6d7890;margin:2px 0 0}
 .eval-help-close{width:30px;height:30px;border:1px solid #dbe2ec;border-radius:50%;background:#fff;color:#49566e;font-size:19px;line-height:1;cursor:pointer}
 .eval-help-content{display:grid;gap:9px}
+.eval-help-tabs{display:flex;gap:6px;margin:0 0 9px;padding-bottom:7px;border-bottom:1px solid #e1e7f0}
+.eval-help-tab{border:1px solid #d7e0ef;border-radius:8px;padding:6px 10px;background:#fff;color:#53627d;font:inherit;font-size:10px;font-weight:800;cursor:pointer}
+.eval-help-tab[aria-selected='true']{border-color:#9aace8;background:#eef2ff;color:#3654a6}
+.eval-help-tab:focus-visible{outline:2px solid #8299df;outline-offset:1px}
+.eval-help-tab-panel[hidden]{display:none!important}
 .eval-drill-dialog{width:min(1040px,100%);max-height:calc(100vh - 28px);overflow:auto;border:1px solid #dce4f1;border-radius:16px;background:#f8faff;box-shadow:0 24px 80px rgba(10,20,45,.28);padding:14px}
 .eval-drill-head{position:sticky;top:-14px;z-index:3;display:flex;justify-content:space-between;align-items:center;gap:12px;margin:-14px -14px 10px;padding:11px 14px;background:rgba(248,250,255,.96);border-bottom:1px solid #e2e8f2;backdrop-filter:blur(8px)}
 .eval-drill-head h2{font-size:15px;margin:0;color:#25324a}.eval-drill-head p{font-size:10px;color:#6d7890;margin:3px 0 0}
@@ -728,9 +733,9 @@ body{height:100vh;height:100dvh;min-height:0;display:flex;flex-direction:column}
         <div class='eval-acceptance-grid'>
           <article class='eval-card'><h3>存储容量 · 目标 ≤100 GB</h3><div class='eval-main'>4.36 MB</div><p>1450 条容量测试记忆，含索引；不含原始视频。</p><small>单人周期推算见上表。</small><span class='eval-status'>符合验收标准</span></article>
           <article class='eval-card'><h3>提取速度 · 目标 ≤1 秒</h3><div class='eval-main'>24.3 ms</div><p>1450 条记忆库检索 P95。</p><small>不含视频处理和 Qwen 推理。</small><span class='eval-status'>符合验收标准</span></article>
-          <article class='eval-card'><h3>记忆内容归类 · 目标 ≥95%</h3><div class='eval-main eval-warn'>70.6%</div><p>AI 抽查原始全支持 287 / 400 项（71.8%）；加权估计 70.6%。</p><small>已审 80 / 825 段；对象维度最低，为 45.2%。</small><span class='eval-status todo'>抽测低于目标</span></article>
+          <article class='eval-card'><h3>记忆内容准确率 · 目标 ≥95%</h3><div class='eval-main eval-warn'>70.6%</div><p>旧缓存抽查：80 段 × 5 字段，287 / 400 项完全符合（71.8%）。</p><small>加权估计 70.6%；v5 新缓存尚未复审。</small><span class='eval-status todo'>抽测低于目标</span></article>
         </div>
-        <p class='eval-plain'>归类准确率来自 AI 视频抽查，不是人工金标准，也不能代表未审样本。</p>
+        <p class='eval-plain'>这是 AI 小样本抽查，不是人工金标准；不能据此证明未审记忆达到目标。</p>
       </section>
       <header class='eval-heading eval-person-heading'><div><h2>评测人物与说明</h2><p>选择人物切换短期与长期同题问答、短期 AI 抽查；选择总体查看 6 人汇总。飞书验收标准保持全体汇总。</p></div><div class='eval-heading-tools'><label class='eval-person-filter'><span>评测人物</span><select id='evalPersonSelect' aria-label='切换评测人物' title='切换短期与长期同题评测、短期内容抽查的人物；总体汇总选择全部' onchange='selectEvalParticipant(this.value)'><option value='all'>总体 · 全部人物</option><option value='A1_JAKE'>Jake · A1</option><option value='A2_ALICE'>Alice · A2</option><option value='A3_TASHA'>Tasha · A3</option><option value='A4_LUCIA'>Lucia · A4</option><option value='A5_KATRINA'>Katrina · A5</option><option value='A6_SHURE'>Shure · A6</option></select></label><button type='button' class='eval-help-btn' aria-haspopup='dialog' aria-controls='evalHelpModal' onclick='openEvalHelp()'>评估说明</button></div></header>
       <p class='eval-person-note' id='evalPersonScopeNote'>人物筛选同步切换短期与长期同题问答、短期 AI 抽查；选“总体”看 6 人合计。飞书验收标准保持全体汇总。<span id='evalDataLoadState'>正在载入逐题数据…</span></p>
@@ -783,6 +788,11 @@ body{height:100vh;height:100dvh;min-height:0;display:flex;flex-direction:column}
 <div id='evalHelpModal' class='eval-help-overlay' aria-hidden='true' onclick='if(event.target===this) closeEvalHelp()'>
   <section class='eval-help-dialog' role='dialog' aria-modal='true' aria-labelledby='evalHelpTitle' tabindex='-1'>
     <header class='eval-help-head'><div><h2 id='evalHelpTitle'>评估说明：这些数字怎么得来</h2><p>数据来源、计算方法和真实题目示例</p></div><button type='button' class='eval-help-close' aria-label='关闭评估说明' onclick='closeEvalHelp()'>×</button></header>
+    <div class='eval-help-tabs' role='tablist' aria-label='评估说明页面'>
+      <button type='button' class='eval-help-tab' id='evalHelpTabMetrics' role='tab' aria-selected='true' aria-controls='evalHelpPanelMetrics' tabindex='0' onclick="selectEvalHelpTab('metrics')" onkeydown='handleEvalHelpTabKey(event)'>问答与其他指标</button>
+      <button type='button' class='eval-help-tab' id='evalHelpTabReview' role='tab' aria-selected='false' aria-controls='evalHelpPanelReview' tabindex='-1' onclick="selectEvalHelpTab('review')" onkeydown='handleEvalHelpTabKey(event)'>AI抽样评审原理</button>
+    </div>
+    <div class='eval-help-tab-panel' id='evalHelpPanelMetrics' role='tabpanel' aria-labelledby='evalHelpTabMetrics'>
     <div class='eval-help-content'>
       <section class='eval-help-section'>
         <h3>长期问答：一道题怎样变成一个分数</h3>
@@ -817,6 +827,38 @@ body{height:100vh;height:100dvh;min-height:0;display:flex;flex-direction:column}
         </div>
       </section>
       <p class='eval-help-section' id='evalHelpScopeText'><b>范围提醒：</b>人物筛选会切换短期/长期同题问答和短期 AI 抽查；CRUD 与飞书验收总览仍是全体汇总。500 道跨日选择题目前只覆盖 Jake。题库没有“证据不足”选项，模型必须选择 A–D；当前归类 AI 抽测原始全支持率为 71.8%，参与者/小时加权估计为 70.6%，低于飞书文档的 ≥95% 目标。</p>
+    </div>
+    </div>
+    <div class='eval-help-tab-panel' id='evalHelpPanelReview' role='tabpanel' aria-labelledby='evalHelpTabReview' hidden>
+      <div class='eval-help-content'>
+        <section class='eval-help-section'>
+          <h3>评审在判断什么</h3>
+          <p>EgoLife 官方问答提供问题、答案和目标时间，但没有为每段视频提供“人物、地点、活动、环境、物品”五类记忆字段的标准标签。因此这项抽查不是和官方字段答案逐字对比，而是检查 Qwen 写入的字段能否被视频证据支持。当前 70.6% / 71.8% 来自旧缓存 qwen_cache_expanded_eval.json；v5 新缓存还没有完成同样的复审。</p>
+        </section>
+        <section class='eval-help-section'>
+          <h3>样本怎么选</h3>
+          <div class='eval-help-grid'>
+            <div class='eval-help-item'><b>长期内容：80 / 825 段</b><span>Jake 55 段；Alice、Tasha、Lucia、Katrina、Shure 各 5 段。Jake 样本按时段抽取；所有已审片段都来自 DAY1。每段检查 5 类字段，共 400 项。</span></div>
+            <div class='eval-help-item'><b>短期内容：30 / 120 段</b><span>6 人各抽 5 段；每段检查同样的 5 类字段，共 150 项。短期、长期样本分开计分，不能合并成一个比例。</span></div>
+          </div>
+        </section>
+        <section class='eval-help-section'>
+          <h3>证据和判分规则</h3>
+          <p>每段抽看约第 2、8、15、22、28 秒的五帧，并核对双语字幕。每个字段分成三种结果：</p>
+          <div class='eval-help-grid'>
+            <div class='eval-help-item'><b>完全符合 · 计 1</b><span>主要内容有视频或字幕依据，且没有重要遗漏或错误。</span></div>
+            <div class='eval-help-item'><b>部分符合 · 计 0</b><span>大意有依据，但有明显遗漏、过度具体或歧义。</span></div>
+            <div class='eval-help-item'><b>错误 / 无依据 · 计 0</b><span>重要内容与证据矛盾，或证据不支持。</span></div>
+          </div>
+          <p>长期原始严格分：287 项完全符合 ÷ 400 项 = 71.8%；100 项部分符合和 13 项错误/无依据都不计正确。短期原始严格分：91 ÷ 150 = 60.7%（57 项部分符合、2 项错误/无依据）。</p>
+          <p>长期另按各人物和时段在总体样本中的占比加权：把每一层的完全符合率乘以该层总体占比后求和，得到 70.6%。这是对当前样本组成做的加权估计，不是另一批独立的 70.6% 正确项。</p>
+        </section>
+        <section class='eval-help-section'>
+          <h3>结果能说明到什么程度</h3>
+          <p>这是 Codex AI 对视频证据和记忆字段做的语义评审，不是人工金标准。部分复核阶段看过 Qwen 输出，存在评审锚定可能，因此不是严格盲审。</p>
+          <p>长期只审了 80 / 825 段，且样本都在 DAY1；短期只审了 30 / 120 段。上述分数对应旧缓存，不是当前 v5 缓存的准确率；v5 尚未复审。结果只能描述已抽查样本并作有限估计，不能当作全量或多日记忆的准确率认证。按当前严格规则，旧缓存抽样低于飞书文档的 ≥95% 目标。</p>
+        </section>
+      </div>
     </div>
   </section>
 </div>
@@ -1688,9 +1730,31 @@ function toggleEvalSegment(button){
   }
 }
 let evalHelpReturnFocus = null;
+function selectEvalHelpTab(name){
+  const review=name==='review';
+  const tabMetrics=document.getElementById('evalHelpTabMetrics');
+  const tabReview=document.getElementById('evalHelpTabReview');
+  const panelMetrics=document.getElementById('evalHelpPanelMetrics');
+  const panelReview=document.getElementById('evalHelpPanelReview');
+  if(!tabMetrics||!tabReview||!panelMetrics||!panelReview) return;
+  tabMetrics.setAttribute('aria-selected',String(!review));
+  tabReview.setAttribute('aria-selected',String(review));
+  tabMetrics.tabIndex=review?-1:0;
+  tabReview.tabIndex=review?0:-1;
+  panelMetrics.hidden=review;
+  panelReview.hidden=!review;
+}
+function handleEvalHelpTabKey(event){
+  if(event.key!=='ArrowLeft'&&event.key!=='ArrowRight') return;
+  event.preventDefault();
+  const next=event.currentTarget.id==='evalHelpTabMetrics'?'review':'metrics';
+  selectEvalHelpTab(next);
+  document.getElementById(next==='review'?'evalHelpTabReview':'evalHelpTabMetrics').focus();
+}
 function openEvalHelp(){
   const modal=document.getElementById('evalHelpModal');
   if(!modal) return;
+  selectEvalHelpTab('metrics');
   evalHelpReturnFocus=document.activeElement;
   modal.classList.add('open');
   modal.setAttribute('aria-hidden','false');
