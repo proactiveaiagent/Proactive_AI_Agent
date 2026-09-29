@@ -390,17 +390,19 @@ class Handler(BaseHTTPRequestHandler):
             if SESSION is None:
                 return self._send(404, {"error": "no session"})
             force = (qs.get("force") or ["0"])[0] in ("1", "true", "True")
+            automatic = (qs.get("automatic") or ["0"])[0] in ("1", "true", "True")
             if not STEP_LOCK.acquire(blocking=False):
                 return self._send(409, {"error": "busy",
                                         "message": "上一步仍在执行（实时推理可能需要数分钟），请稍候"})
             try:
                 try:
-                    msg = SESSION.run_step(force=force)
+                    msg = SESSION.run_step(force=force, automatic=automatic)
                 except Exception as e:
                     return self._send(500, {"error": f"执行失败: {e}"})
                 st = SESSION.state()
                 st["last_result"] = msg
                 st["last_force"] = force
+                st["auto_paused"] = SESSION.auto_paused
                 return self._send(200, st)
             finally:
                 STEP_LOCK.release()

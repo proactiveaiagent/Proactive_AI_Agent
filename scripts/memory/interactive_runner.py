@@ -217,6 +217,7 @@ class InteractiveSession:
         self.participant = participant
         self.dataset_key = dataset
         self.pos = 0            # 已执行步数 = 下一步索引
+        self.auto_paused = False  # 连续运行只允许执行写入步骤
         self.log = []           # [{kind, title, msg, snapshot, perception}]
         self.perceiver = perceiver or site_perceiver()
         self.qwen_health = self.perceiver.health()
@@ -263,6 +264,10 @@ class InteractiveSession:
                           error=None, before_highlighted=None):
         """Append a compact, factual audit event; never stores full memory payloads."""
         status = "failed" if error else ("blocked" if result is False else "success")
+        if name == "update" and result is False:
+            mid = str(args[0] if args else "")
+            exists = mid in self.mem.memory.get("layer7", {}).get("moments", {})
+            status = "no_change" if exists else "blocked"
         summary = self._operation_summary(name, args, kwargs, result, error,
                                           before_highlighted)
         self.operation_log.append({
@@ -295,6 +300,9 @@ class InteractiveSession:
             mid = str(arg0 or "")
             updates = args[1] if len(args) > 1 else kwargs.get("updates", {})
             fields = ", ".join(str(x) for x in updates) if isinstance(updates, dict) else ""
+            exists = mid in self.mem.memory.get("layer7", {}).get("moments", {})
+            if result is False:
+                return f"更新记忆 {mid} · 字段未变化" if exists else f"更新记忆 {mid} · 未找到"
             return f"更新记忆 {mid}" + (f" · 字段 {fields}" if fields else "")
         if name == "update_feedback":
             return f"修正记忆 {arg0 or ''} · 反馈已保存"
@@ -324,7 +332,21 @@ class InteractiveSession:
             return f"压缩整理摘要 · 更新 {layers or '长期摘要'}"
         if name == "update_profile":
             fields = list(arg0) if isinstance(arg0, dict) else []
-            return "更新用户画像" + (f" · 字段 {'、'.join(map(str, fields[:8]))}" if fields else "")
+            profile = result if isinstance(result, (dict, list)) else self.mem.memory.get("layer6", {}).get("profile", {})
+            def count_attrs(node):
+                if isinstance(node, dict):
+                    if "value" in node and "stale" in node:
+                        return (1, int(bool(node.get("stale"))))
+                    totals = [count_attrs(value) for value in node.values()]
+                elif isinstance(node, list):
+                    totals = [count_attrs(value) for value in node]
+                else:
+                    return (0, 0)
+                return (sum(x[0] for x in totals), sum(x[1] for x in totals))
+            total, stale = count_attrs(profile)
+            detail = f"画像 {total} 项 · 过时 {stale} 项" if total else "暂无画像字段 · 衰减状态已检查"
+            names = f" · 字段 {chr(12289).join(map(str, fields[:8]))}" if fields else ""
+            return f"更新用户画像 · {detail}{names}"
         return name
 
     # ------------------------------------------------------------------
@@ -480,6 +502,12 @@ class InteractiveSession:
             moments = all_moments
             plan = all_plan
 
+        # CRUD 演示只写入明确标注的演示备注，不把官方参考标签写回记忆。
+        plan = dict(plan)
+        plan["update"] = [
+            {**case, "field": "notes", "new_value": "CRUD field update demo"}
+            for case in plan.get("update", [])
+        ]
         self.moments = moments
         self.plan = plan
         self.dataset_options = interactive_dataset_options()
@@ -535,7 +563,41 @@ class InteractiveSession:
                 "run": run,
             })
 
-        # 4) highlight
+        # 4) update_feedback：在独立交互演示库模拟纠错、确认与评分，不使用评测标签。
+        update_ids = {case.get("id") for case in plan.get("update", [])}
+        protected_ids = set(plan.get("highlight", [])) | {
+            case.get("id") for case in plan.get("delete", [])
+        }
+        feedback_moment = next(
+            (m for m in moments if m.get("id") not in update_ids | protected_ids),
+            moments[0] if moments else None,
+        )
+        def run_feedback(force=False, m=feedback_moment):
+            if not m:
+                return "没有可反馈的记忆", None
+            mid = self.id_map.get(m.get("id"))
+            if not mid:
+                return f"未找到 {m.get('id')}，反馈未保存", None
+            ok = self.mem.update_feedback(
+                mid,
+                corrections={"notes": "CRUD feedback correction demo"},
+                confirmed=True,
+                user_rating=5,
+            )
+            result = "已保存模拟纠错、确认和 5 星评分" if ok else "模拟反馈保存失败"
+            return result, None
+        steps.append({
+            "kind": "update_feedback",
+            "title": "模拟反馈 · 纠错、确认与评分",
+            "detail": {
+                "id": feedback_moment.get("id", "") if feedback_moment else "",
+                "note": "仅写入交互演示库的演示备注；不读取官方参考标签。确认和评分为模拟输入，不代表真实用户评价。",
+            },
+            "inputs": [],
+            "run": run_feedback,
+        })
+
+        # 5) highlight
         hl_ids = plan.get("highlight", [])
         def run_highlight(force=False):
             n = 0
@@ -552,7 +614,7 @@ class InteractiveSession:
             "run": run_highlight,
         })
 
-        # 5) delete（含 highlight 保护验证）
+        # 6) delete（含 highlight 保护验证）
         del_cases = plan.get("delete", [])
         def run_delete(force=False):
             cleared = self.daytime.end_scene()
@@ -648,8 +710,8 @@ class InteractiveSession:
             return msg, {"kind": "nightly", "result": result}
         steps.append({
             "kind": "nightly",
-            "title": "夜间整理 · 汇总、归类与画像更新",
-            "detail": {"note": "按真实 Qwen 感知结果整理 Layer 4~7，不读取 ground-truth"},
+            "title": "夜间整理 · sort 归类、combine 合并、compress 压缩、update_profile 画像更新",
+            "detail": {"note": "按真实 Qwen 感知结果执行归类、同义项合并、L4/L5 摘要压缩和画像更新；画像更新同时重算置信度并标记过时属性。不读取 ground-truth。"},
             "inputs": [],
             "run": run_nightly,
         })
@@ -722,11 +784,16 @@ class InteractiveSession:
         self.log.append({"kind": kind, "title": title, "msg": msg,
                          "snapshot": snap, "perception": perception})
 
-    def run_step(self, force=False):
-        """执行当前步；force=True 强制实时调用 Qwen（忽略缓存）。"""
+    def run_step(self, force=False, automatic=False):
+        """执行当前步；连续模式只执行写入，其他记忆操作停在当前步前。"""
+        self.auto_paused = False
         if self.pos >= len(self.steps):
             return "所有步骤已执行完毕"
         step = self.steps[self.pos]
+        if automatic and step["kind"] not in ("add", "add_batch"):
+            self.auto_paused = True
+            return (f"连续运行已暂停：下一步是“{step['title']}”。"
+                    "该操作尚未执行；请点「运行此步」，完成后可再次连续运行。")
         self._active_step_no = self.pos + 1
         self._active_step_title = step["title"]
         try:
@@ -796,6 +863,7 @@ class InteractiveSession:
             "pos": self.pos,
             "finished": self.pos >= total,
             "current": cur,
+            "auto_paused": self.auto_paused,
             "log": slim,
             "operations": [dict(event) for event in self.operation_log[-2000:]],
             "snapshot": self.log[-1]["snapshot"] if self.log else None,

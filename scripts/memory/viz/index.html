@@ -633,7 +633,7 @@ body{height:100vh;height:100dvh;min-height:0;display:flex;flex-direction:column}
       <div class="toolbar" id="stepActions" style="margin-top:10px">
         <button class="btn primary" id="runStepBtn" onclick="runStep(false)" disabled>▶ 运行此步</button>
         <button class="btn" id="liveBtn" onclick="runStep(true)" disabled>⚡ 实时推理此步</button>
-        <button class="btn" id="autoBtn" onclick="toggleAuto()" disabled>⏩ 自动连续运行</button>
+        <button class="btn" id="autoBtn" title="连续模式仅执行写入；遇到检索、更新、整理或删除会先暂停" onclick="toggleAuto()" disabled>⏩ 连续运行</button>
       </div>
       <div class="lastres" id="lastRes"></div>
       <div id="percBox"></div>
@@ -1350,7 +1350,7 @@ function renderLog(){
           ? op.count+' 条实际写入；例如：'+op.examples[0]
           : op.summary;
         const step=op.step?'第 '+op.step+' 步 · ':'';
-        const status=op.status==='blocked'?'（被保护/未执行）':op.status==='failed'?'（失败）':'';
+        const status=op.status==='blocked'?'（被保护/未执行）':op.status==='no_change'?'（字段未变化）':op.status==='failed'?'（失败）':'';
         return '<div class="row"><span class="idx">'+esc(op.time||String(i+1))+'</span>'+
           '<span class="act '+esc(op.operation)+'">'+esc(label)+'</span>'+
           '<span>'+esc(step+(op.step_title||''))+' — '+esc(summary+status)+'</span></div>';
@@ -1484,7 +1484,7 @@ let curStep=null, inputsExpanded=false, curInputs=null;
 
 const KIND_CN={add:'写入片段',add_batch:'批量写入',query:'检索',update:'更新字段',
   highlight:'标记重点',delete:'删除',sort:'归类',combine:'合并',compress:'压缩',
-  update_profile:'画像更新',update_feedback:'反馈修正',query_hierarchical:'检索',init:'初始'};
+  update_profile:'画像更新',update_feedback:'反馈修正',query_hierarchical:'检索',nightly:'夜间整理',init:'初始'};
 
 function updateModeChrome(m){
   mode=m;
@@ -1855,15 +1855,19 @@ async function changeInteractiveDataset(value){
   await newSession(option.scenario,option.participant,option.dataset);
 }
 
-async function runStep(force){
+async function runStep(force, automatic=false){
   if(!intState||intState.finished) return;
   const btn=document.getElementById('runStepBtn');
   const live=document.getElementById('liveBtn');
   btn.disabled=true; if(live) live.disabled=true;
-  btn.textContent = force?'⏳ Qwen 实时推理中…（GPU 空闲约 5 秒，被占用时可能数分钟，请勿刷新）':'⏳ 执行中…';
+  btn.textContent = force?'⏳ Qwen 实时推理中…（GPU 空闲约 5 秒，被占用时可能数分钟，请勿刷新）':(automatic?'⏳ 连续写入中…':'⏳ 执行中…');
   autoBusy=true;
   try{
-    const r=await fetch(API+'/api/interactive/step'+(force?'?force=1':''));
+    const params=new URLSearchParams();
+    if(force) params.set('force','1');
+    if(automatic) params.set('automatic','1');
+    const suffix=params.toString()?'?'+params.toString():'';
+    const r=await fetch(API+'/api/interactive/step'+suffix);
     const st=await r.json();
     if(st.error==='busy'){
       const d=document.getElementById('stepDetail');
@@ -1872,6 +1876,7 @@ async function runStep(force){
     }
     if(st.error){ alert(st.error); return; }
     intState=st;
+    if(st.auto_paused) stopAuto();
     renderInt();
   }finally{
     autoBusy=false;
@@ -2025,24 +2030,29 @@ function toggleAuto(){
   autoTimer=setInterval(async ()=>{
     if(autoBusy) return;
     if(!intState||intState.finished){ stopAuto(); updateRunBtn(); return; }
-    await runStep();
+    await runStep(false,true);
   },350);
 }
 function stopAuto(){
   if(autoTimer){ clearInterval(autoTimer); autoTimer=null; }
   const b=document.getElementById('autoBtn');
-  if(b) b.textContent='⏩ 自动连续运行';
+  if(b) b.textContent='⏩ 连续运行';
 }
 
 function updateRunBtn(){
   const btn=document.getElementById('runStepBtn');
   const live=document.getElementById('liveBtn');
   const ok = intState && !intState.finished;
+  const isAdd = !!(intState && intState.current && ['add','add_batch'].includes(intState.current.kind));
   btn.disabled=!ok;
   btn.textContent = ok?'▶ 运行此步':'✅ 全部完成';
-  if(live) live.disabled=!ok;
+  if(live){ live.disabled=!ok||!isAdd; live.style.display=ok&&isAdd?'':'none'; }
   const ab=document.getElementById('autoBtn');
-  if(ab) ab.disabled=!ok;
+  if(ab){
+    const canAuto=ok&&isAdd;
+    ab.disabled=!ok||(!isAdd&&!autoTimer);
+    if(!autoTimer) ab.textContent=canAuto?'⏩ 连续运行':'⏸ 先手动运行';
+  }
 }
 
 function renderInt(){

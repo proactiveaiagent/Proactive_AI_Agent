@@ -188,20 +188,28 @@ Slice {i}/{total}:
                  "layer5": old.get("layer5", {}),
                  "layer6_summary": old.get("layer6", {}).get("summary", ""),
                  "profile": old.get("layer6", {}).get("profile", {})}
-        tags = {k: sorted(v)[:250] for k, v in sort_data.items() if k in _COMBINABLE}
+        tags = {k: sorted(v)[:80] for k, v in sort_data.items() if k in _COMBINABLE}
         prompt = f"""TASK: NIGHTLY_ROLLUP
 Update recent and long-term memory using {day}'s summaries. Keep supported
 prior long-term patterns. Layer 4 is the recent daily view; Layer 5 retains
 durable events and patterns. Profile is extracted separately.
-Return JSON only:
+Return one valid JSON object only; do not add markdown or repeat source data.
+Keep the response concise to avoid truncation:
+- layer4.summary: at most 100 words; current_tasks: at most 5 short items;
+  life_trajectory: at most 80 words.
+- layer5.summary: at most 120 words; key_events: at most 8 short items;
+  long_term_patterns: at most 5 short items.
+- layer6_summary: at most 80 words; profile_evidence: at most 250 words.
+- combine must contain the five maps shown below, with no more than 10 alias
+  pairs total. Leave maps empty unless an alias is clearly supported.
+Do not echo the tag lists or enumerate source memories.
 {{
  "layer4":{{"summary":"...","current_tasks":["..."],"life_trajectory":"..."}},
  "layer5":{{"summary":"...","key_events":["..."],"long_term_patterns":"..."}},
  "layer6_summary":"brief stable profile overview",
- "profile_evidence":"evidence-grounded text for profile extraction",
+ "profile_evidence":"brief evidence-grounded text for profile extraction",
  "combine":{{"people":{{}},"locations":{{}},"activity_events":{{}},"environments":{{}},"objects":{{}}}}
 }}
-Combine only obvious aliases as old_tag to canonical_tag; otherwise return empty maps.
 Never merge distinct people or places.
 Prior memory: {json.dumps(prior, ensure_ascii=False, separators=(',', ':'))}
 Today's summaries: {json.dumps(summaries, ensure_ascii=False, separators=(',', ':'))}
@@ -302,13 +310,14 @@ Today's tags: {json.dumps(tags, ensure_ascii=False, separators=(',', ':'))}
 
             # Finish all model calls and validation before persistent mutations.
             self.memory.sort(sort_data)
-            if combine:
-                self.memory.combine(combine)
+            # Call both APIs even when there are no aliases/new profile fields:
+            # the operation audit should record the attempted maintenance action,
+            # and update_profile also recomputes confidence decay / stale flags.
+            self.memory.combine(combine)
             self.memory.compress(self._compress_payload(rollup))
-            if has_any_value(profile):
-                self.memory.update_profile(
-                    profile, moment_id=f"nightly:{day}",
-                    timestamp=datetime.now().astimezone().isoformat())
+            self.memory.update_profile(
+                profile, moment_id=f"nightly:{day}",
+                timestamp=datetime.now().astimezone().isoformat())
 
             completed = self.memory.memory["metadata"].setdefault(
                 "nightly_processed_days", {})
