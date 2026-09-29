@@ -633,7 +633,7 @@ body{height:100vh;height:100dvh;min-height:0;display:flex;flex-direction:column}
       <div class="toolbar" id="stepActions" style="margin-top:10px">
         <button class="btn primary" id="runStepBtn" onclick="runStep(false)" disabled>▶ 运行此步</button>
         <button class="btn" id="liveBtn" onclick="runStep(true)" disabled>⚡ 实时推理此步</button>
-        <button class="btn" id="autoBtn" title="连续模式仅执行写入；遇到检索、更新、整理或删除会先暂停" onclick="toggleAuto()" disabled>⏩ 连续运行</button>
+        <button class="btn" id="autoBtn" title="连续执行相邻的同类步骤，遇到另一种操作时自动停止" onclick="toggleAuto()" disabled>⏩ 连续运行当前类型</button>
       </div>
       <div class="lastres" id="lastRes"></div>
       <div id="percBox"></div>
@@ -1479,7 +1479,7 @@ function renderProfile(){
 function esc(s){ return String(s==null?'':s).replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c])); }
 
 // ===== 交互执行模式：人看视频/时间点 → 手工点击运行 → 走下一步 =====
-let mode='replay', intState=null, autoTimer=null, autoBusy=false;
+let mode='replay', intState=null, autoTimer=null, autoBusy=false, autoKind=null;
 let curStep=null, inputsExpanded=false, curInputs=null;
 
 const KIND_CN={add:'写入片段',add_batch:'批量写入',query:'检索',update:'更新字段',
@@ -1855,17 +1855,19 @@ async function changeInteractiveDataset(value){
   await newSession(option.scenario,option.participant,option.dataset);
 }
 
-async function runStep(force, automatic=false){
+async function runStep(force, automatic=false, continuousKind=null){
   if(!intState||intState.finished) return;
   const btn=document.getElementById('runStepBtn');
   const live=document.getElementById('liveBtn');
   btn.disabled=true; if(live) live.disabled=true;
-  btn.textContent = force?'⏳ Qwen 实时推理中…（GPU 空闲约 5 秒，被占用时可能数分钟，请勿刷新）':(automatic?'⏳ 连续写入中…':'⏳ 执行中…');
+  const kindLabel=KIND_CN[continuousKind]||continuousKind||'当前类型';
+  btn.textContent = force?'⏳ Qwen 实时推理中…（GPU 空闲约 5 秒，被占用时可能数分钟，请勿刷新）':(automatic?'⏳ 连续执行「'+kindLabel+'」…':'⏳ 执行中…');
   autoBusy=true;
   try{
     const params=new URLSearchParams();
     if(force) params.set('force','1');
     if(automatic) params.set('automatic','1');
+    if(automatic && continuousKind) params.set('continuous_kind',continuousKind);
     const suffix=params.toString()?'?'+params.toString():'';
     const r=await fetch(API+'/api/interactive/step'+suffix);
     const st=await r.json();
@@ -1929,6 +1931,52 @@ function updateQstat(){
 function renderPerception(p){
   const box=document.getElementById('percBox');
   if(!p){ box.innerHTML=''; return; }
+
+  if(p.kind==='operation_result'){
+    const opNames={query:'检索结果',update:'字段更新',update_feedback:'反馈修正',highlight:'重点标记',delete:'删除'};
+    const valueText=v=>{
+      if(v===null||v===undefined||v==='') return '—';
+      return esc(typeof v==='string'?v:JSON.stringify(v));
+    };
+    let html='<div class="percbox operation-result"><h4>'+esc(p.title||opNames[p.operation]||'记忆操作结果')+'</h4>';
+    if(p.query) html+='<div class="prec-sum">检索问题：'+esc(p.query)+' · 命中 '+(Number(p.count)||0)+' 条</div>';
+    if(p.simulated) html+='<div class="prec-sum" style="color:#9a6700">演示输入：模拟纠错、确认和评分，不代表真实用户反馈。</div>';
+    const items=p.items||[];
+    if(!items.length) html+='<div class="note">没有找到可展示的记忆内容。</div>';
+    for(const item of items){
+      const heading=[item.id||item.dataset_id, item.timestamp].filter(Boolean).join(' · ');
+      html+='<div class="cmp" style="padding:8px 0"><div class="prec-sum"><b>'+esc(heading||'目标记忆')+'</b>';
+      if(p.operation==='query' && item.layer) html+=' · L'+esc(item.layer);
+      if(p.operation==='query' && item.score!==undefined) html+=' · 匹配分 '+esc(item.score);
+      if(p.operation==='highlight') html+=' · '+(item.marked?'已标记重点':'标记失败');
+      if(p.operation==='delete') html+=' · '+(item.deleted?'已删除':'未删除/未找到');
+      if(p.operation==='update_feedback') html+=' · 确认 '+(item.confirmed?'是':'否')+' · 评分 '+esc(item.user_rating??'未评分');
+      html+='</div>';
+      if(item.scene) html+='<div class="perc-row"><b>Scene</b>'+esc(item.scene)+'</div>';
+      if(item.action) html+='<div class="perc-row"><b>Action</b>'+esc(item.action)+'</div>';
+      if(item.people&&item.people.length) html+='<div class="perc-row"><b>People</b>'+esc(Array.isArray(item.people)?item.people.join('、'):item.people)+'</div>';
+      if(item.location) html+='<div class="perc-row"><b>Location</b>'+esc(item.location)+'</div>';
+      if(item.activity) html+='<div class="perc-row"><b>Activity</b>'+esc(item.activity)+'</div>';
+      if(item.objects&&item.objects.length) html+='<div class="perc-row"><b>Objects</b>'+esc(Array.isArray(item.objects)?item.objects.join('、'):item.objects)+'</div>';
+      if(item.changes) for(const change of item.changes){
+        html+='<div class="perc-row"><b>更新字段</b>'+esc(change.field)+' · 更新前：'+valueText(change.before)+' · 更新后：'+valueText(change.after)+'</div>';
+      }
+      if(item.corrections) for(const correction of item.corrections){
+        html+='<div class="perc-row"><b>修正内容</b>'+esc(correction.field)+' · 原内容：'+valueText(correction.before)+' · 修正为：'+valueText(correction.after)+'</div>';
+      }
+      if(item.reason) html+='<div class="perc-row"><b>删除原因</b>'+esc(item.reason)+'</div>';
+      if(p.operation==='highlight') html+='<div class="perc-row"><b>重点内容</b>'+esc(item.scene||item.action||'（该记忆没有 Scene/Action 文本）')+'</div>';
+      html+='</div>';
+    }
+    for(const item of p.protection_checks||[]){
+      html+='<div class="prec-sum">保护验证：'+esc(item.id||'记忆')+' · '+esc(item.scene||item.action||'')+
+        ' · 普通删除 '+(item.default_delete_blocked?'已拦截':'未拦截')+
+        ' · 强制删除 '+(item.force_deleted?'已执行':'未执行')+'</div>';
+    }
+    html+='</div>';
+    box.innerHTML=html;
+    return;
+  }
 
   if(p.kind==='batch'){
     const items=(p.items||[]).filter(i=>i&&i.qwen);
@@ -2025,18 +2073,21 @@ function percRow(p,showLegend=false){
 
 function toggleAuto(){
   if(autoTimer){ stopAuto(); updateRunBtn(); return; }
-  if(!intState||intState.finished) return;
-  document.getElementById('autoBtn').textContent='⏹ 停止自动';
+  if(!intState||intState.finished||!intState.current) return;
+  autoKind=intState.current.kind;
+  const label=KIND_CN[autoKind]||autoKind;
+  document.getElementById('autoBtn').textContent='⏹ 停止「'+label+'」';
   autoTimer=setInterval(async ()=>{
     if(autoBusy) return;
     if(!intState||intState.finished){ stopAuto(); updateRunBtn(); return; }
-    await runStep(false,true);
+    await runStep(false,true,autoKind);
   },350);
 }
 function stopAuto(){
   if(autoTimer){ clearInterval(autoTimer); autoTimer=null; }
+  autoKind=null;
   const b=document.getElementById('autoBtn');
-  if(b) b.textContent='⏩ 连续运行';
+  if(b) b.textContent='⏩ 连续运行当前类型';
 }
 
 function updateRunBtn(){
@@ -2049,9 +2100,9 @@ function updateRunBtn(){
   if(live){ live.disabled=!ok||!isAdd; live.style.display=ok&&isAdd?'':'none'; }
   const ab=document.getElementById('autoBtn');
   if(ab){
-    const canAuto=ok&&isAdd;
-    ab.disabled=!ok||(!isAdd&&!autoTimer);
-    if(!autoTimer) ab.textContent=canAuto?'⏩ 连续运行':'⏸ 先手动运行';
+    ab.disabled=!ok;
+    if(!autoTimer) ab.textContent=ok?'⏩ 连续运行当前类型':'⏸ 已无待执行步骤';
+    ab.title=ok?'连续执行相邻的同类步骤，遇到另一种操作时自动停止':'当前场景已执行完毕';
   }
 }
 

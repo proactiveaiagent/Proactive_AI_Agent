@@ -13,6 +13,7 @@ interactive_runner.py — 交互式步进执行器
     session.run_step()                 执行当前步，返回结果消息
 """
 
+import copy
 import json
 import os
 import sys
@@ -240,36 +241,44 @@ class InteractiveSession:
             def audited(*args, __name=name, __original=original, **kwargs):
                 started = time.perf_counter()
                 before_highlighted = None
+                before_moment = None
                 if __name == "combine":
                     moments = self.mem.memory.get("layer7", {}).get("moments", {})
                     before_highlighted = {
                         mid for mid, item in moments.items()
                         if isinstance(item, dict) and item.get("highlighted")
                     }
+                if __name in ("update", "update_feedback", "highlight", "delete"):
+                    mid = str(args[0] if args else kwargs.get("moment_id", ""))
+                    item = self.mem.memory.get("layer7", {}).get("moments", {}).get(mid)
+                    before_moment = copy.deepcopy(item) if isinstance(item, dict) else None
                 try:
                     result = __original(*args, **kwargs)
                 except Exception as exc:
                     self._append_operation(__name, args, kwargs, None,
-                                           started, error=exc)
+                                           started, error=exc,
+                                           before_moment=before_moment)
                     raise
                 self._append_operation(
                     __name, args, kwargs, result, started,
                     before_highlighted=before_highlighted,
+                    before_moment=before_moment,
                 )
                 return result
 
             setattr(self.mem, name, audited)
 
     def _append_operation(self, name, args, kwargs, result, started,
-                          error=None, before_highlighted=None):
-        """Append a compact, factual audit event; never stores full memory payloads."""
+                          error=None, before_highlighted=None, before_moment=None):
+        """Append a factual audit event with the affected memory content."""
         status = "failed" if error else ("blocked" if result is False else "success")
         if name == "update" and result is False:
-            mid = str(args[0] if args else "")
+            mid = str(args[0] if args else kwargs.get("moment_id", ""))
             exists = mid in self.mem.memory.get("layer7", {}).get("moments", {})
             status = "no_change" if exists else "blocked"
-        summary = self._operation_summary(name, args, kwargs, result, error,
-                                          before_highlighted)
+        summary = self._operation_summary(
+            name, args, kwargs, result, error, before_highlighted, before_moment
+        )
         self.operation_log.append({
             "seq": len(self.operation_log) + 1,
             "time": time.strftime("%H:%M:%S"),
@@ -281,11 +290,36 @@ class InteractiveSession:
             "elapsed_ms": round((time.perf_counter() - started) * 1000),
         })
 
+    @staticmethod
+    def _brief_value(value, limit=110):
+        if isinstance(value, (dict, list)):
+            text = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+        else:
+            text = str(value if value is not None else "—")
+        return " ".join(text.split())[:limit]
+
+    def _moment_detail(self, moment):
+        """Return the visible, factual fields of a memory without mutating it."""
+        if not isinstance(moment, dict):
+            return {}
+        return {
+            "id": str(moment.get("id") or ""),
+            "timestamp": moment.get("timestamp") or "",
+            "scene": moment.get("scene") or "",
+            "action": moment.get("user_action") or "",
+            "people": moment.get("people") or [],
+            "location": moment.get("location") or "",
+            "activity": moment.get("activity") or "",
+            "objects": moment.get("objects") or [],
+            "notes": moment.get("notes") or "",
+            "highlighted": bool(moment.get("highlighted")),
+        }
+
     def _operation_summary(self, name, args, kwargs, result, error,
-                           before_highlighted=None):
+                           before_highlighted=None, before_moment=None):
         if error:
             return f"{name} 失败：{str(error)[:140]}"
-        arg0 = args[0] if args else None
+        arg0 = args[0] if args else kwargs.get("moment_id")
         if name == "add":
             mid = str(result or "")
             item = self.mem.memory.get("layer7", {}).get("moments", {}).get(mid, {})
@@ -295,22 +329,60 @@ class InteractiveSession:
         if name in ("query", "query_hierarchical"):
             query = str(arg0 if arg0 is not None else kwargs.get("query_text", ""))[:80]
             hits = result if isinstance(result, list) else []
-            return f"检索「{query}」· 命中 {len(hits)} 条"
+            examples = []
+            for hit in hits[:3]:
+                if not isinstance(hit, dict):
+                    continue
+                moment = hit.get("moment") if isinstance(hit.get("moment"), dict) else hit
+                mid = str(moment.get("id") or "无 ID")
+                content = str(moment.get("scene") or moment.get("user_action") or "").replace("\n", " ")
+                layer = f"L{hit['layer']} · " if hit.get("layer") else ""
+                examples.append(f"{layer}{mid}: {content[:100]}")
+            detail = "；命中：" + "；".join(examples) if examples else ""
+            return f"检索「{query}」· 命中 {len(hits)} 条{detail}"
         if name == "update":
             mid = str(arg0 or "")
             updates = args[1] if len(args) > 1 else kwargs.get("updates", {})
-            fields = ", ".join(str(x) for x in updates) if isinstance(updates, dict) else ""
             exists = mid in self.mem.memory.get("layer7", {}).get("moments", {})
             if result is False:
                 return f"更新记忆 {mid} · 字段未变化" if exists else f"更新记忆 {mid} · 未找到"
-            return f"更新记忆 {mid}" + (f" · 字段 {fields}" if fields else "")
+            after = self.mem.memory.get("layer7", {}).get("moments", {}).get(mid, {})
+            changes = []
+            if isinstance(updates, dict):
+                for field, new_value in updates.items():
+                    old_value = (before_moment or {}).get(field)
+                    actual_value = after.get(field)
+                    changes.append(
+                        f"{field}：{self._brief_value(old_value)} → {self._brief_value(actual_value)}"
+                    )
+            return f"更新记忆 {mid}" + (" · " + "；".join(changes) if changes else "")
         if name == "update_feedback":
-            return f"修正记忆 {arg0 or ''} · 反馈已保存"
+            mid = str(arg0 or "")
+            corrections = kwargs.get("corrections", {})
+            if len(args) > 1 and isinstance(args[1], dict):
+                corrections = args[1]
+            detail = "；".join(
+                f"{key}：{self._brief_value((before_moment or {}).get(key))} → {self._brief_value(value)}"
+                for key, value in corrections.items()
+            ) if isinstance(corrections, dict) else ""
+            confirmed = kwargs.get("confirmed", False)
+            rating = kwargs.get("user_rating")
+            return f"反馈修正 {mid}" + (f" · {detail}" if detail else "") + (
+                f" · 确认={'是' if confirmed else '否'} · 评分={rating if rating is not None else '未评分'}"
+            )
         if name == "highlight":
-            return f"重点标记 {arg0 or ''}" if result else f"重点标记失败 {arg0 or ''}"
+            mid = str(arg0 or "")
+            item = before_moment or self.mem.memory.get("layer7", {}).get("moments", {}).get(mid, {})
+            content = str(item.get("scene") or item.get("user_action") or "").replace("\n", " ")[:100]
+            result_text = "已标记重点" if result else "标记失败"
+            return f"{result_text} {mid}" + (f" · {content}" if content else "")
         if name == "delete":
+            mid = str(arg0 or "")
             reason = kwargs.get("reason", "manual")
-            return f"删除记忆 {arg0 or ''} · {'成功' if result else '被保护/未找到'} · {reason}"
+            item = before_moment or {}
+            content = str(item.get("scene") or item.get("user_action") or "").replace("\n", " ")[:100]
+            result_text = "已删除" if result else "被保护/未找到"
+            return f"{result_text} {mid} · 原因：{reason}" + (f" · 内容：{content}" if content else "")
         if name == "sort":
             analysis = arg0 if isinstance(arg0, dict) else {}
             tags = sum(len(v) for v in analysis.values() if isinstance(v, dict))
@@ -537,7 +609,13 @@ class InteractiveSession:
         for q in plan.get("query", []):
             def run(q=q, force=False):
                 hits = self.daytime.query(q["query"], top_k=3)
-                return f"检索「{q['query']}」命中 {len(hits)} 条", None
+                items = [self._moment_detail(hit) for hit in hits]
+                result = {
+                    "kind": "operation_result", "operation": "query",
+                    "title": "检索命中内容", "query": q["query"],
+                    "count": len(hits), "items": items,
+                }
+                return f"检索「{q['query']}」命中 {len(hits)} 条", result
             steps.append({
                 "kind": "query",
                 "title": f"检索「{q['query']}」",
@@ -551,9 +629,25 @@ class InteractiveSession:
             def run(case=case, force=False):
                 mid = self.id_map.get(case["id"])
                 if not mid:
-                    return f"未找到 {case['id']}，跳过", None
-                ok = self.mem.update(mid, {case["field"]: case["new_value"]})
-                return f"更新 {case['id']}.{case['field']} → {case['new_value']}（{'成功' if ok else '失败'}）", None
+                    return f"未找到 {case['id']}，跳过", {
+                        "kind": "operation_result", "operation": "update",
+                        "title": "更新对象未找到", "items": [],
+                    }
+                before = self.mem.memory.get("layer7", {}).get("moments", {}).get(mid, {})
+                field = case["field"]
+                old_value = copy.deepcopy(before.get(field))
+                ok = self.mem.update(mid, {field: case["new_value"]})
+                after = self.mem.memory.get("layer7", {}).get("moments", {}).get(mid, {})
+                item = self._moment_detail(after)
+                item["changes"] = [{
+                    "field": field, "before": old_value,
+                    "after": copy.deepcopy(after.get(field)),
+                }]
+                result = {
+                    "kind": "operation_result", "operation": "update",
+                    "title": "字段更新前后", "items": [item],
+                }
+                return f"更新 {case['id']}.{field}（{'成功' if ok else '字段未变化'}）", result
             steps.append({
                 "kind": "update",
                 "title": f"更新字段 {case['field']}",
@@ -578,14 +672,28 @@ class InteractiveSession:
             mid = self.id_map.get(m.get("id"))
             if not mid:
                 return f"未找到 {m.get('id')}，反馈未保存", None
-            ok = self.mem.update_feedback(
-                mid,
-                corrections={"notes": "CRUD feedback correction demo"},
-                confirmed=True,
-                user_rating=5,
+            corrections = {"notes": "CRUD feedback correction demo"}
+            before = copy.deepcopy(
+                self.mem.memory.get("layer7", {}).get("moments", {}).get(mid, {})
             )
+            ok = self.mem.update_feedback(
+                mid, corrections=corrections, confirmed=True, user_rating=5,
+            )
+            after = self.mem.memory.get("layer7", {}).get("moments", {}).get(mid, {})
+            item = self._moment_detail(after)
+            item["corrections"] = [
+                {"field": field, "before": copy.deepcopy(before.get(field)), "after": value}
+                for field, value in corrections.items()
+            ]
+            item["confirmed"] = after.get("feedback", {}).get("confirmed")
+            item["user_rating"] = after.get("feedback", {}).get("user_rating")
+            result_detail = {
+                "kind": "operation_result", "operation": "update_feedback",
+                "title": "模拟反馈修正内容", "simulated": True,
+                "items": [item],
+            }
             result = "已保存模拟纠错、确认和 5 星评分" if ok else "模拟反馈保存失败"
-            return result, None
+            return result, result_detail
         steps.append({
             "kind": "update_feedback",
             "title": "模拟反馈 · 纠错、确认与评分",
@@ -600,12 +708,24 @@ class InteractiveSession:
         # 5) highlight
         hl_ids = plan.get("highlight", [])
         def run_highlight(force=False):
-            n = 0
+            items, n = [], 0
+            moments = self.mem.memory.get("layer7", {}).get("moments", {})
             for sid in hl_ids:
                 mid = self.id_map.get(sid)
-                if mid and self.mem.highlight(mid):
+                before = copy.deepcopy(moments.get(mid, {})) if mid else {}
+                ok = bool(mid and self.mem.highlight(mid))
+                after = moments.get(mid, before) if mid else before
+                if ok:
                     n += 1
-            return f"标记重要记忆 {n} 条", None
+                item = self._moment_detail(after)
+                item.update({"dataset_id": sid, "marked": ok,
+                             "was_highlighted": bool(before.get("highlighted"))})
+                items.append(item)
+            result = {
+                "kind": "operation_result", "operation": "highlight",
+                "title": "已标记为重点的记忆", "items": items,
+            }
+            return f"标记重要记忆 {n}/{len(hl_ids)} 条", result
         steps.append({
             "kind": "highlight",
             "title": "标记重要记忆",
@@ -617,24 +737,49 @@ class InteractiveSession:
         # 6) delete（含 highlight 保护验证）
         del_cases = plan.get("delete", [])
         def run_delete(force=False):
-            cleared = self.daytime.end_scene()
-            msgs = [f"场景结束：清理 Layer1/2 {cleared} 条"]
-            ok_n = 0
+            targets = []
             for case in del_cases:
                 mid = self.id_map.get(case["id"])
+                moment = self.mem.memory.get("layer7", {}).get("moments", {}).get(mid) if mid else None
+                targets.append((case, mid, copy.deepcopy(moment) if isinstance(moment, dict) else None))
+            cleared = self.daytime.end_scene()
+            msgs = [f"场景结束：清理 Layer1/2 {cleared} 条"]
+            items, ok_n = [], 0
+            for case, mid, before in targets:
                 if not mid:
+                    items.append({"dataset_id": case.get("id"), "deleted": False,
+                                  "reason": case.get("reason", "manual"), "memory": {}})
                     continue
-                if self.mem.delete(mid, reason=case.get("reason", "manual")):
+                ok = self.mem.delete(mid, reason=case.get("reason", "manual"))
+                if ok:
                     ok_n += 1
+                items.append({
+                    **self._moment_detail(before or {}),
+                    "dataset_id": case.get("id"),
+                    "deleted": bool(ok),
+                    "reason": case.get("reason", "manual"),
+                })
             msgs.append(f"清理短期记忆：删除 {ok_n} 条")
-            # 验证 highlight 保护
+            protection = []
+            # 验证 highlight 保护，并把被验证的目标也明确展示出来。
             prot = [self.id_map[s] for s in hl_ids if self.id_map.get(s)]
             if prot:
+                protected_moment = self.mem.memory.get("layer7", {}).get("moments", {}).get(prot[0], {})
+                protected_detail = self._moment_detail(copy.deepcopy(protected_moment))
                 blocked = not self.mem.delete(prot[0], reason="验证保护")
                 forced = self.mem.delete(prot[0], reason="验证强制删除", force=True)
+                protection.append({
+                    **protected_detail, "default_delete_blocked": bool(blocked),
+                    "force_deleted": bool(forced),
+                })
                 msgs.append(f"highlight 保护：默认删除被拒绝 {'✅' if blocked else '❌'}；"
                             f"force 强删 {'成功 ✅' if forced else '失败 ❌'}")
-            return "；".join(msgs), None
+            result = {
+                "kind": "operation_result", "operation": "delete",
+                "title": "删除对象及保护验证", "items": items,
+                "protection_checks": protection,
+            }
+            return "；".join(msgs), result
         steps.append({
             "kind": "delete",
             "title": "清理短期记忆（含保护验证）",
@@ -784,16 +929,18 @@ class InteractiveSession:
         self.log.append({"kind": kind, "title": title, "msg": msg,
                          "snapshot": snap, "perception": perception})
 
-    def run_step(self, force=False, automatic=False):
-        """执行当前步；连续模式只执行写入，其他记忆操作停在当前步前。"""
+    def run_step(self, force=False, automatic=False, continuous_kind=None):
+        """执行当前步；连续模式仅跨越相邻的同类步骤。"""
         self.auto_paused = False
         if self.pos >= len(self.steps):
             return "所有步骤已执行完毕"
         step = self.steps[self.pos]
-        if automatic and step["kind"] not in ("add", "add_batch"):
-            self.auto_paused = True
-            return (f"连续运行已暂停：下一步是“{step['title']}”。"
-                    "该操作尚未执行；请点「运行此步」，完成后可再次连续运行。")
+        if automatic:
+            expected_kind = continuous_kind or step["kind"]
+            if step["kind"] != expected_kind:
+                self.auto_paused = True
+                return (f"连续运行已暂停：当前操作类型已从“{expected_kind}”切换为“{step['kind']}”。"
+                        f"下一步“{step['title']}”未执行；可继续运行该类操作。")
         self._active_step_no = self.pos + 1
         self._active_step_title = step["title"]
         try:
