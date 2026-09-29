@@ -4,6 +4,7 @@ This benchmark currently uses only cached Qwen clips. It supports query dates
 DAY1-DAY7 and only adds a memory clip when its full 30-second interval ended
 before the question timestamp, preventing within-clip future leakage.
 """
+import argparse
 import json
 import os
 import re
@@ -115,9 +116,21 @@ def summarize(rows):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--cache", type=Path, default=CACHE_PATH)
+    parser.add_argument("--qa", type=Path, default=QA_PATH)
+    parser.add_argument(
+        "--source-evidence-weight", type=float,
+        default=float(os.environ.get("MEMORY_SOURCE_EVIDENCE_WEIGHT", "1.4")),
+        help="BM25 weight for transcript sidecar evidence; set 0 for memory-fields-only evaluation",
+    )
+    args = parser.parse_args()
+    os.environ["MEMORY_SOURCE_EVIDENCE_WEIGHT"] = str(args.source_evidence_weight)
+    cache_path = args.cache
+    qa_path = args.qa
     RUNS.mkdir(parents=True, exist_ok=True)
-    qa = json.loads(QA_PATH.read_text(encoding="utf-8"))
-    cache = json.loads(CACHE_PATH.read_text(encoding="utf-8"))
+    qa = json.loads(qa_path.read_text(encoding="utf-8"))
+    cache = json.loads(cache_path.read_text(encoding="utf-8"))
     clipset_path = ROOT / "data/egolife/testset/long_term/multiday_qa_clipset.jsonl"
     selected_later_ids = {
         json.loads(line)["id"] for line in clipset_path.open(encoding="utf-8")
@@ -271,13 +284,15 @@ def main():
         "eligible_query_count_by_day": {k: v["query_count"] for k, v in by_day.items()},
         "excluded": dict(excluded),
         "target_reference_coverage": dict(refs),
-        "memory_cache_file": str(CACHE_PATH),
+        "memory_cache_file": str(cache_path),
         "transcript_evidence_clip_count": sum(
             bool(c["fields"].get("source_evidence")) for c in clips),
         "memory_cached_clips_by_day": {f"DAY{k}": v for k, v in sorted(cache_counts.items())},
         "memory_cached_clips_total": len(clips),
         "method": {
-            "memory_source": "Cached Qwen3-VL perception fields; exact-ID speaker-labelled source transcript evidence is included when present. Official answers, choices, and dense captions are never inserted as memories.",
+            "memory_source": "Cached Qwen3-VL structured memory fields; official answers, choices, and dense captions are never inserted as memories.",
+            "source_evidence_search_weight": args.source_evidence_weight,
+            "transcript_evidence_active_in_ranking": args.source_evidence_weight > 0,
             "causal_cutoff": "A 30-second clip is available only after its full interval ends at or before the question timestamp. All earlier days are eligible.",
             "target_mapping": "Official target_time points are mapped to the cached 30-second source clip containing each timestamp; malformed/missing timestamps are counted separately.",
             "metrics_scope": "Evidence retrieval Hit/Recall/MRR only; this run does not score answer generation or a fully populated seven-day Qwen memory.",
