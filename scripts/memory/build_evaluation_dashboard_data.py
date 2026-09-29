@@ -82,7 +82,7 @@ def enrich_common(row):
       "question":row.get("question",""),
       "official_answer":row.get("official_answer",""),
       "model_answer":row.get("model_answer",""),
-      "answer_correct":row.get("answer_correct") is True,
+      "answer_correct":row.get("answer_correct") if isinstance(row.get("answer_correct"),bool) else None,
       "top5_hit":bool(set(targets)&set(retrieved)),
       "target_ids":targets,"target_points":row.get("target_points",[]),
       "retrieved_ids":retrieved,

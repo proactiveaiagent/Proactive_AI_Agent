@@ -1493,9 +1493,10 @@ function evalSetCardDisabled(id,disabled){
   if(el){el.disabled=!!disabled;el.setAttribute('aria-disabled',disabled?'true':'false');}
 }
 function evalMetricText(summary,key){
-  if(!summary||!summary.questions)return '暂无数据';
-  const n=key==='top5'?Number(summary.top5_hit||0):Number(summary.answer_correct||0);
-  return n+' / '+summary.questions+' · '+evalPercent(n,summary.questions);
+  if(!summary||!summary.questions)return "暂无数据";
+  if(key!=="top5"&&summary.answer_correct==null)return "本轮未评";
+  const n=key==="top5"?Number(summary.top5_hit||0):Number(summary.answer_correct||0);
+  return n+" / "+summary.questions+" · "+evalPercent(n,summary.questions);
 }
 function selectEvalParticipant(person){
   const key=SHORT_TERM_PERSON_STATS[person]?person:'all';
@@ -1521,7 +1522,7 @@ function selectEvalParticipant(person){
   const coverage=EVAL_DATA.sample_coverage||{};
   if(loading)loading.textContent='已评测官方问答测试集 '+(coverage.official_qa_questions||0)+' 道题、'+(coverage.official_qa_clips||0)+' 段视频；无官方问答的片段已从此测试集移除。';
   const shortScope=document.getElementById('shortQAScope');
-  if(shortScope)shortScope.textContent='官方问答测试集保留 '+(coverage.official_qa_clips||0)+' 段有官方问答的视频、共 '+(coverage.official_qa_questions||0)+' 道题；没有官方问答的视频已从这组测试中移除。短期与当前缓存记忆对相同问题作答，再由独立 AI 对照官方答案判分。';
+  if(shortScope)shortScope.textContent='官方问答测试集保留 '+(coverage.official_qa_clips||0)+' 段有官方问答的视频、共 '+(coverage.official_qa_questions||0)+' 道题；没有官方问答的视频已从这组测试中移除。'+((evalDataFor('short_term',key)||{}).answer_correct==null?'本轮只复评检索是否命中官方目标片段，未重新评估答案正确率。':'短期与当前缓存记忆对相同问题作答，再由独立 AI 对照官方答案判分。');
   for(const scope of ['short_term','long_term']){
     const summary=evalDataFor(scope,key);
     const prefix=scope==='short_term'?'short':'long';
@@ -1529,9 +1530,9 @@ function selectEvalParticipant(person){
     setEvalText(prefix+'Top5Main',evalMetricText(summary,'top5'));
     setEvalText(prefix+'AnswerMain',evalMetricText(summary,'answer'));
     setEvalText(prefix+'Top5Note',count?summary.top5_hit+' 道命中目标片段；'+(count-summary.top5_hit)+' 道未命中。点击查看逐题检索结果。':'此人物暂无匹配的官方题目。');
-    setEvalText(prefix+'AnswerNote',count?summary.answer_correct+' 道经 AI 语义判定与官方答案一致。点击查看题目、答案与片段。':'此人物暂无匹配的官方题目。');
-    evalSetCardDisabled(prefix+'Top5Card',!count);
-    evalSetCardDisabled(prefix+'AnswerCard',!count);
+    setEvalText(prefix+"AnswerNote",count?(summary.answer_correct==null?"本轮只复评了记忆检索，未重新评估答案正确率。":"有 "+summary.answer_correct+" 道题与官方答案一致。点击查看题目、答案与片段。"):"此人物暂无匹配的官方题目。");
+    evalSetCardDisabled(prefix+"Top5Card",!count);
+    evalSetCardDisabled(prefix+"AnswerCard",!count||summary.answer_correct==null);
   }
   const sharedCount=(evalDataFor('short_term',key)||{}).questions||0;
   const shortRows=(EVAL_DATA.short_term?.details||[]).filter(r=>key==='all'||r.participant===key);
@@ -1541,9 +1542,10 @@ function selectEvalParticipant(person){
     : '全量官方问题 · '+sharedCount+' 道 · '+matchedClips+' 段视频 · '+personName);
   const longScope=document.getElementById('longMemoryScopeNote');
   if(longScope){
-    longScope.textContent=all
+    const answerStatus=(evalDataFor('long_term',key)||{}).answer_correct==null?'本轮只复评检索，长期答案正确率未重新评估。':'答案由独立 AI 对照官方参考答案判定。';
+    longScope.textContent=(all
       ? '与短期使用同一批题目、官方答案和提问时刻。总体汇总当前可用的 6 人缓存；其中只有 Jake 当前包含多日缓存，其他人物覆盖 DAY1。'
-      : personName+' 与短期用同一批题目、官方答案和提问时刻；当前此人物的长期缓存片段数见逐题详情。其他人物是否有多日数据请勿据此分数推断。';
+      : personName+' 与短期用同一批题目、官方答案和提问时刻；当前此人物的长期缓存片段数见逐题详情。其他人物是否有多日数据请勿据此分数推断。')+' '+answerStatus;
   }
   const multi=EVAL_DATA.multi_day;
   const multiAvailable=all||key==='A1_JAKE';
@@ -1592,7 +1594,8 @@ function evalSegmentHtml(seg,label,targets){
 function evalQuestionHtml(row,index,metric,scope){
   const participant=EVAL_PERSON_NAMES[row.participant]||row.participant||'Jake · A1';
   const top=row.top5_hit?'命中目标片段':'未命中目标片段';
-  const ans=row.answer_correct?'答案正确':'答案错误';
+  const hasAnswerScore=typeof row.answer_correct==="boolean";
+  const ans=hasAnswerScore?(row.answer_correct?"答案正确":"答案错误"):"本轮未评答案";
   const status=metric==='top5'?top:ans;
   let answerHtml='';
   if(row.choices){
@@ -1600,6 +1603,8 @@ function evalQuestionHtml(row,index,metric,scope){
     answerHtml='<div class="eval-q-box"><strong>官方答案 / 模型选择</strong><div>官方答案：'+esc(official)+' · '+esc(row.choices[official]||'')+'</div><div>模型选择：'+esc(model)+' · '+esc(row.choices[model]||'未解析')+'</div><div class="eval-options">'
       +['A','B','C','D'].map(letter=>'<div class="eval-option '+(letter===official?'correct ':'')+(letter===model?'predicted':'')+'">'+letter+'. '+esc(row.choices[letter]||'')+(letter===official?' · 官方答案':'')+(letter===model?' · 模型选择':'')+'</div>').join('')
       +'</div></div>';
+  }else if(!hasAnswerScore){
+    answerHtml="<div class='eval-q-box'><strong>答案评测</strong><div>本轮只复评记忆检索，未重新生成答案；答案正确率未统计。</div></div>";
   }else{
     answerHtml='<div class="eval-q-box"><strong>官方答案与模型回答 · '+(row.answer_correct?'语义一致':'语义不一致')+'</strong><div>官方答案：'+esc(row.official_answer||'—')+'</div><div style="margin-top:5px">模型回答：'+esc(row.model_answer||'—')+'</div></div>';
   }
