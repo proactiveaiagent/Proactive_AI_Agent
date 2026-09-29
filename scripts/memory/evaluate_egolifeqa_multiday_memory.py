@@ -121,7 +121,7 @@ def main():
     parser.add_argument("--qa", type=Path, default=QA_PATH)
     parser.add_argument(
         "--source-evidence-weight", type=float,
-        default=float(os.environ.get("MEMORY_SOURCE_EVIDENCE_WEIGHT", "1.4")),
+        default=float(os.environ.get("MEMORY_SOURCE_EVIDENCE_WEIGHT", "0.0")),
         help="BM25 weight for transcript sidecar evidence; set 0 for memory-fields-only evaluation",
     )
     args = parser.parse_args()

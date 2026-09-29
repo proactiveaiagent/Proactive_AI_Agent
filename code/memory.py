@@ -402,6 +402,10 @@ def _rank_memory_docs(query_text: str, documents: list) -> list:
     if not query_terms:
         return []
 
+    # Keep the full transcript sidecar in L7 for audit, but exclude it from
+    # default retrieval: long, noisy speech can outrank the structured memory
+    # fields that are actually passed to the answer model. Experiments may
+    # enable it with MEMORY_SOURCE_EVIDENCE_WEIGHT.
     field_weights = {
         "scene": 1.0,
         "user_action": 1.0,
@@ -416,7 +420,7 @@ def _rank_memory_docs(query_text: str, documents: list) -> list:
         "time_occasion": 0.7,
         "extra_notes": 0.6,
         "normalized": 0.5,
-        "source_evidence": float(os.environ.get("MEMORY_SOURCE_EVIDENCE_WEIGHT", "1.4")),
+        "source_evidence": float(os.environ.get("MEMORY_SOURCE_EVIDENCE_WEIGHT", "0.0")),
     }
     metadata = {
         "id", "timestamp", "created_at", "updated_at", "last_used",
