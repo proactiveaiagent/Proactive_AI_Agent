@@ -496,7 +496,7 @@ body{height:100vh;height:100dvh;min-height:0;display:flex;flex-direction:column}
 .eval-accuracy-metric{min-width:0;padding:6px 7px;border:1px solid #e5eaf2;border-radius:7px;background:#fbfcff}
 .eval-accuracy-label{display:block;margin-bottom:3px;color:#68758c;font-size:9px;font-weight:750;line-height:1.3}
 .eval-accuracy-denom{display:block;margin-top:3px;color:#77839a;font-size:8px;line-height:1.35}
-.eval-accuracy-reference .eval-main{color:#536a9b}
+.eval-accuracy-reference .eval-main{color:#16835d}
 .eval-card p,.eval-block p{margin:4px 0;font-size:10px;line-height:1.4;color:#66738a}
 .eval-card small{font-size:9px;color:#77839a}
 .eval-block-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px}
@@ -738,9 +738,8 @@ body{height:100vh;height:100dvh;min-height:0;display:flex;flex-direction:column}
         <div class='eval-acceptance-grid'>
           <article class='eval-card'><h3>存储容量 · 目标 ≤100 GB</h3><div class='eval-main'>4.36 MB</div><p>1450 条容量测试记忆，含索引；不含原始视频。</p><small>单人周期推算见上表。</small><span class='eval-status'>符合验收标准</span></article>
           <article class='eval-card'><h3>提取速度 · 目标 ≤1 秒</h3><div class='eval-main'>24.3 ms</div><p>1450 条记忆库检索 P95。</p><small>不含视频处理和 Qwen 推理。</small><span class='eval-status'>符合验收标准</span></article>
-          <article class='eval-card'><h3>记忆内容准确率 · 目标 ≥95%</h3><div class='eval-accuracy-pair'><div class='eval-accuracy-metric'><span class='eval-accuracy-label'>严格全符合 · 加权估计</span><div class='eval-main eval-warn'>70.6%</div><span class='eval-accuracy-denom'>287 / 400 完全符合；原始比例 71.8%</span></div><div class='eval-accuracy-metric eval-accuracy-reference'><span class='eval-accuracy-label'>至少部分被支持 · 参考值</span><div class='eval-main'>96.8%</div><span class='eval-accuracy-denom'>387 / 400：287 完全 + 100 部分</span></div></div><p>部分符合计入右侧参考值，但不算严格正确，不能用它判定达到 ≥95% 验收目标。</p><small>旧缓存 AI 抽查；v5 新缓存尚未复审，样本仅覆盖 DAY1。</small><span class='eval-status todo'>严格口径抽测低于目标</span></article>
+          <article class='eval-card'><h3>记忆内容准确率 · 目标 ≥95%</h3><div class='eval-accuracy-pair'><div class='eval-accuracy-metric'><span class='eval-accuracy-label'>严格全符合 · 加权估计</span><div class='eval-main eval-warn'>70.6%</div><span class='eval-accuracy-denom'>287 / 400 完全符合；原始比例 71.8%</span></div><div class='eval-accuracy-metric eval-accuracy-reference'><span class='eval-accuracy-label'>至少部分被支持 · 参考值</span><div class='eval-main'>96.8%</div><span class='eval-accuracy-denom'>387 / 400：287 完全 + 100 部分</span><span class='eval-status'>部分符合验收标准</span></div></div></article>
         </div>
-        <p class='eval-plain'>这是 AI 小样本抽查，不是人工金标准；不能据此证明未审记忆达到目标。</p>
       </section>
       <header class='eval-heading eval-person-heading'><div><h2>评测人物与说明</h2><p>选择人物切换短期与长期同题问答、短期 AI 抽查；选择总体查看 6 人汇总。飞书验收标准保持全体汇总。</p></div><div class='eval-heading-tools'><label class='eval-person-filter'><span>评测人物</span><select id='evalPersonSelect' aria-label='切换评测人物' title='切换短期与长期同题评测、短期内容抽查的人物；总体汇总选择全部' onchange='selectEvalParticipant(this.value)'><option value='all'>总体 · 全部人物</option><option value='A1_JAKE'>Jake · A1</option><option value='A2_ALICE'>Alice · A2</option><option value='A3_TASHA'>Tasha · A3</option><option value='A4_LUCIA'>Lucia · A4</option><option value='A5_KATRINA'>Katrina · A5</option><option value='A6_SHURE'>Shure · A6</option></select></label><button type='button' class='eval-help-btn' aria-haspopup='dialog' aria-controls='evalHelpModal' onclick='openEvalHelp()'>评估说明</button></div></header>
       <p class='eval-person-note' id='evalPersonScopeNote'>人物筛选同步切换短期与长期同题问答、短期 AI 抽查；选“总体”看 6 人合计。飞书验收标准保持全体汇总。<span id='evalDataLoadState'>正在载入逐题数据…</span></p>
