@@ -27,13 +27,12 @@ RUNS = ROOT / "data" / "egolife" / "runs"
 CACHE_FILE = RUNS / "qwen_cache.json"
 
 DEFAULT_API = "http://localhost:8000"
-DEFAULT_FRAMES = 4
-PROMPT_VERSION = "memory-v3-fact-preserving-2026-09-28"
+DEFAULT_FRAMES = 6
+PROMPT_VERSION = "memory-v5-visible-actions-6frames-2026-09-29"
 
 
 # ---------------------------------------------------------------------------
-# Prompt：对齐 code/agent.py 的 PART 1 — Scene Recognition，
-# 并补全六维索引所需的 activity / objects / environments。
+# Prompt: turn ordered video frames and speech into searchable episodic facts.
 # ---------------------------------------------------------------------------
 
 def build_prompt(transcript: str, n_frames: int) -> str:
@@ -43,18 +42,20 @@ def build_prompt(transcript: str, n_frames: int) -> str:
 
 {ts}
 
-Return exactly these English fields, one concise line per field:
-Scene: one sentence for the main event and its specific outcome when supported
+Compare the frames in time order. Record what changes and who performs each visible action. Do not treat an object's presence as proof that someone used or moved it.
+
+Return exactly these English fields, each on its own line with the exact field name and one concise value:
+Scene: one sentence naming the main event, the key visible action sequence, and its outcome when supported; avoid a generic room or group description
 Location: one broad place supported by the frames; do not guess an exact room
 Time/Occasion: only supported time or occasion
-People: names explicitly used as transcript speaker labels or clearly identified by name; never list unnamed people, clothing, "others", or generic groups
-User Action: concrete camera-wearer actions only; never attribute another person's action to the camera wearer
+People: names explicitly used as transcript speaker labels or clearly identified by name; never list unnamed people, clothing, or generic groups
+User Action: concrete actions performed by the camera wearer only; never assign another person's action to the wearer; leave blank if no action is visible
 Activity: the specific main activity and purpose, not a generic label such as "discussion"
-Objects: at most five important tangible items clearly visible or explicitly named in the transcript
+Objects: at most five important tangible items clearly visible or explicitly named
 Environment: one short physical setting supported by frames; omit guesses and background detail
-Interaction Details: one concise line of semicolon-separated facts. Preserve meaningful who-said/did-what claims, plans, questions and replies, decisions, transfers, named options, quantities, reasons, negation, preferences, and event order. Attach every claim to the exact speaker label in the transcript. Do not merge nearby speakers' statements or quantities. Preserve each named item in an explicit list; do not replace a concrete list with "various options" or a broad topic. If the speaker or detail is unclear, say unclear instead of guessing.
+Interaction Details: one concise line of semicolon-separated facts. Preserve meaningful spoken who-said-what claims, plans, questions and replies, decisions, transfers, named options, quantities, reasons, negation, preferences, and event order. Also record important visible non-speech actions: who did what to which object, in what order, and any transfer or state change. Name an actor only when identity is supported; otherwise say "unidentified person" or "camera wearer" as appropriate. Keep visual observations separate from speech facts. Do not merge nearby speakers' statements or quantities. Preserve each named item in an explicit list; do not replace a concrete list with a broad topic. If a speaker or detail is unclear, say unclear instead of guessing.
 
-Translate speech into natural English. Use a provided English translation where available; never copy source-language text. Separate transcript facts from visual inference. Do not infer actions from a person's presence. Keep routine visual details concise. Target at most 220 words, but preserve a clearly enumerated list even if it needs more space. Add no extra text."""
+For first/last/sequence questions, preserve the order of relevant actions and the person-object relationship. Translate speech into natural English. Use a provided English translation where available; never copy source-language text. Do not infer actions from a person's presence or speech alone. Keep routine visual details concise. Target at most 260 words, but preserve a clearly enumerated list or action sequence even if it needs more space. Do not write "None" or "None specified"; leave unsupported fields blank. Add no extra text."""
 
 _FIELD_LINE_RE = re.compile(
     r"^\s*(?:[-*]\s*)?(Scene|Location|Time/Occasion|People|User Action|"
@@ -157,6 +158,13 @@ def parse_analysis(text: str, transcript: str = "") -> dict:
     location = _field(text, "Location")
     people = _split_list(_field(text, "People"), person=True)
     action = _field(text, "User Action")
+    for marker in ("none specified", "none", "not specified", "n/a", "unknown"):
+        if action.casefold().startswith(marker):
+            action = action[len(marker):].lstrip(" .,:;")
+            break
+    prefix = "interaction details:"
+    if action.casefold().startswith(prefix):
+        action = action[len(prefix):].lstrip()
     interaction = _field(text, "Interaction Details")
     if interaction and interaction.lower() not in action.lower():
         action = (action.rstrip(" .") + ". Interaction details: " +
@@ -232,7 +240,11 @@ def extract_frames(vp: Path, start: float, end, n: int = DEFAULT_FRAMES):
         end = (dur or (start + 30))
     end = min(end, dur) if dur else end
 
-    times = [start + (end - start) * i / max(n - 1, 1) for i in range(n)] if n > 1 else [start]
+    # Video intervals are end-exclusive. Sampling exactly at end often asks
+    # OpenCV for a frame past EOF, silently dropping the final (often decisive) frame.
+    last_valid_time = max(start, end - 1.0 / fps)
+    times = [start + (last_valid_time - start) * i / max(n - 1, 1)
+             for i in range(n)] if n > 1 else [start]
     bufs = []
     try:
         for t in times:
