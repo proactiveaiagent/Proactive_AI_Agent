@@ -492,6 +492,11 @@ body{height:100vh;height:100dvh;min-height:0;display:flex;flex-direction:column}
 .eval-card h3,.eval-block h3,.eval-layer-section>h3{margin:0 0 5px;font-size:11px;color:#53617a}
 .eval-main{font-size:19px;font-weight:850;color:#16835d;line-height:1.15}
 .eval-warn{color:#ad6a12}
+.eval-accuracy-pair{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;width:100%;margin:3px 0 2px}
+.eval-accuracy-metric{min-width:0;padding:6px 7px;border:1px solid #e5eaf2;border-radius:7px;background:#fbfcff}
+.eval-accuracy-label{display:block;margin-bottom:3px;color:#68758c;font-size:9px;font-weight:750;line-height:1.3}
+.eval-accuracy-denom{display:block;margin-top:3px;color:#77839a;font-size:8px;line-height:1.35}
+.eval-accuracy-reference .eval-main{color:#536a9b}
 .eval-card p,.eval-block p{margin:4px 0;font-size:10px;line-height:1.4;color:#66738a}
 .eval-card small{font-size:9px;color:#77839a}
 .eval-block-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px}
@@ -733,7 +738,7 @@ body{height:100vh;height:100dvh;min-height:0;display:flex;flex-direction:column}
         <div class='eval-acceptance-grid'>
           <article class='eval-card'><h3>存储容量 · 目标 ≤100 GB</h3><div class='eval-main'>4.36 MB</div><p>1450 条容量测试记忆，含索引；不含原始视频。</p><small>单人周期推算见上表。</small><span class='eval-status'>符合验收标准</span></article>
           <article class='eval-card'><h3>提取速度 · 目标 ≤1 秒</h3><div class='eval-main'>24.3 ms</div><p>1450 条记忆库检索 P95。</p><small>不含视频处理和 Qwen 推理。</small><span class='eval-status'>符合验收标准</span></article>
-          <article class='eval-card'><h3>记忆内容准确率 · 目标 ≥95%</h3><div class='eval-main eval-warn'>70.6%</div><p>旧缓存抽查：80 段 × 5 字段，287 / 400 项完全符合（71.8%）。</p><small>加权估计 70.6%；v5 新缓存尚未复审。</small><span class='eval-status todo'>抽测低于目标</span></article>
+          <article class='eval-card'><h3>记忆内容准确率 · 目标 ≥95%</h3><div class='eval-accuracy-pair'><div class='eval-accuracy-metric'><span class='eval-accuracy-label'>严格全符合 · 加权估计</span><div class='eval-main eval-warn'>70.6%</div><span class='eval-accuracy-denom'>287 / 400 完全符合；原始比例 71.8%</span></div><div class='eval-accuracy-metric eval-accuracy-reference'><span class='eval-accuracy-label'>至少部分被支持 · 参考值</span><div class='eval-main'>96.8%</div><span class='eval-accuracy-denom'>387 / 400：287 完全 + 100 部分</span></div></div><p>部分符合计入右侧参考值，但不算严格正确，不能用它判定达到 ≥95% 验收目标。</p><small>旧缓存 AI 抽查；v5 新缓存尚未复审，样本仅覆盖 DAY1。</small><span class='eval-status todo'>严格口径抽测低于目标</span></article>
         </div>
         <p class='eval-plain'>这是 AI 小样本抽查，不是人工金标准；不能据此证明未审记忆达到目标。</p>
       </section>
@@ -851,6 +856,7 @@ body{height:100vh;height:100dvh;min-height:0;display:flex;flex-direction:column}
             <div class='eval-help-item'><b>错误 / 无依据 · 计 0</b><span>重要内容与证据矛盾，或证据不支持。</span></div>
           </div>
           <p>长期原始严格分：287 项完全符合 ÷ 400 项 = 71.8%；100 项部分符合和 13 项错误/无依据都不计正确。短期原始严格分：91 ÷ 150 = 60.7%（57 项部分符合、2 项错误/无依据）。</p>
+          <p>如果只问“是否至少有部分视频证据支持”，长期为（287 完全 + 100 部分）÷ 400 = 387 / 400（96.8%）；短期为（91 完全 + 57 部分）÷ 150 = 148 / 150（98.7%）。这个宽口径会把有明显遗漏或过度具体的部分符合也算进来，只能作参考，不能替代飞书文档要求的严格准确率。</p>
           <p>长期另按各人物和时段在总体样本中的占比加权：把每一层的完全符合率乘以该层总体占比后求和，得到 70.6%。这是对当前样本组成做的加权估计，不是另一批独立的 70.6% 正确项。</p>
         </section>
         <section class='eval-help-section'>

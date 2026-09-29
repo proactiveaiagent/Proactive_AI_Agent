@@ -280,6 +280,6 @@
 
 ### 内容字段准确率的版本边界
 
-页面所示的长期 70.6% 加权估计和短期 60.7% 严格全符合率，来自旧缓存 `qwen_cache_expanded_eval.json` 的 AI 抽样评审文件 `data/egolife/runs/qwen_predictions_category_review_expanded_825.json`，不是 v5 缓存的复评结果。长期复核 80/825 段（400 个字段），短期复核 30/120 段（150 个字段）；样本都只来自 DAY1。因而这些数值不能证明 v5 或未抽样记忆达到飞书文档的 ≥95% 准确率验收标准。当前 v5 的内容字段准确率仍待用相同证据和判分规则抽样复核。
+页面所示的长期 70.6% 加权估计和短期 60.7% 严格全符合率，来自旧缓存 `qwen_cache_expanded_eval.json` 的 AI 抽样评审文件 `data/egolife/runs/qwen_predictions_category_review_expanded_825.json`，不是 v5 缓存的复评结果。长期复核 80/825 段（400 个字段），短期复核 30/120 段（150 个字段）；样本都只来自 DAY1。若采用“至少部分有证据支持”的宽口径，长期为（287 完全 + 100 部分）/400 = 96.8%，短期为（91 完全 + 57 部分）/150 = 98.7%。该口径把有遗漏、过度具体或歧义的项目也计入，不能替代飞书文档的严格准确率验收。上述结果也不能证明 v5 或未抽样记忆达到 ≥95% 目标。当前 v5 的内容字段准确率仍待用相同证据和判分规则抽样复核。
 
 本轮机器报告分别保存在 `data/egolife/runs/egolifeqa_memory_retrieval_qwen_multiday_20260929_133503.json`、`data/egolife/runs/egolifeqa_answer_accuracy_v5_visible_actions_full_20260929.json` 和 `data/egolife/runs/short_long_official_qa_v5_visible_actions_full_answer_20260929.json`。
