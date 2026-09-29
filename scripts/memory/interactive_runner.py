@@ -311,6 +311,8 @@ class InteractiveSession:
             "objects": moment.get("objects") or [],
             "notes": moment.get("notes") or "",
             "highlighted": bool(moment.get("highlighted")),
+            "highlight_source": moment.get("highlight_source") or "",
+            "highlighted_at": moment.get("highlighted_at") or "",
         }
 
     def _operation_summary(self, name, args, kwargs, result, error,

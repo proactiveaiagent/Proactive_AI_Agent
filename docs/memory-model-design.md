@@ -215,7 +215,9 @@ moment 到达 ──add()──► layer1 ──溢出──► layer2 ──晋
 | `needs` | list | 需求 `[{"need": str, "confidence": float}]`（Part2） | |
 | `solutions` | list | 方案 `[{"need": str, "solution": str}]`（Part3） | |
 | `feedback` | dict | `{confirmed, corrections, user_rating}`（Part4，后填） | 不阻塞 Part1-3 |
-| `highlighted` | bool | 用户确认正确 | `highlight()` 置位 |
+| `highlighted` | bool | 记忆受重点保护并在检索排序中提权 | 仅显式 `highlight()` 或 `update_feedback(confirmed=True)` 置位 |
+| `highlight_source` | str | 最近一次显式标记入口 | `highlight_api` / `feedback_confirmed`；旧记录可能缺失 |
+| `highlighted_at` | str(ISO) | 最近一次显式标记时间 | 旧记录可能缺失 |
 | `layer` | int | 所在层 | 1~3 |
 
 ### 3.2 layer4 / layer5 字段
@@ -412,7 +414,7 @@ list 型字段追加去重（`json.dumps(sort_keys=True)` 精确比较，支持 
 - **稳定与可追溯**：索引 moment_id 合并保留规范键原有顺序，再追加旧键中尚未出现的 ID；不依赖无序集合生成输出。
   每条受影响的 moment 追加 `canonicalization_history`（维度、原标签、规范标签、时间），并同步仍在 L1–L3 的窗口副本。
   Layer 7 moment 原文和多模态引用不会因标签归并而删除；操作日志显示每组映射、受影响记录示例 ID、总数、两索引共有条数和字段更新数。
-- **重点标记边界**：`combine` 不修改 `highlighted`。只有用户通过 `highlight()` 或明确确认反馈，才会设置重点标记；标签相似或索引归并不等同于用户确认。
+- **重点标记边界**：`combine` 不修改 `highlighted` 或其来源字段。只有显式调用 `highlight()` 或 `update_feedback(confirmed=True)` 才会设置重点，并记录触发入口和时间；标签相似或索引归并不等同于用户确认。旧记录缺少来源时不得推断或自动撤销。
 - **幂等**：重复执行不产生副作用（old_key 已不存在或等于 canonical 则跳过）。
 - **不处理**：画像内的属性合并（那是 `update_profile` 的合并语义），combine 只管 layer7 索引键。
 

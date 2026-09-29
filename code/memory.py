@@ -1031,6 +1031,8 @@ class PersonMemory:
 
         if fb.get("confirmed"):
             moment["highlighted"] = True
+            moment["highlight_source"] = "feedback_confirmed"
+            moment["highlighted_at"] = _now_iso()
         self._sync_window_moment(moment_id)
         self._save()
         return True
@@ -1550,8 +1552,15 @@ class PersonMemory:
         if not moment:
             return False
         changed = not moment.get("highlighted", False)
+        provenance_changed = (
+            moment.get("highlight_source") != "highlight_api"
+            or not moment.get("highlighted_at")
+        )
         moment["highlighted"] = True
-        changed = self._sync_window_moment(moment_id) or changed
+        if provenance_changed:
+            moment["highlight_source"] = "highlight_api"
+            moment["highlighted_at"] = _now_iso()
+        changed = self._sync_window_moment(moment_id) or changed or provenance_changed
         if changed:
             self._save()
         return True
