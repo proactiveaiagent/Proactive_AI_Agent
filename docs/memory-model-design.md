@@ -335,9 +335,11 @@ moment 到达 ──add()──► layer1 ──溢出──► layer2 ──晋
 | 4 | retrieve | `retrieve()` L767 | 检索 | ✅ |
 | 5 | compress | `compress()` L813 | Phase C | ✅ |
 | 6 | sort | `sort()` L856 | Phase C | ✅ |
-| 7 | combine | `combine()` L882 | Phase C | ✅（09-17 落地 + 补测试） |
-| 8 | delete | `delete()` L916 | 手动 | ✅（09-15 落地 + 测试覆盖） |
-| 9 | highlight | `highlight()` L938 | Phase B 确认 | ✅ |
+| 7 | combine | combine() | Phase C | ✅ 索引标签归一化 |
+| 8 | find_merge_candidates | find_merge_candidates() | 交互页扫描 | ✅ 只生成候选，不改写记忆 |
+| 9 | merge_moments | merge_moments() | 用户逐条确认 | ✅ 非破坏性事件归并，来源留档 |
+| 10 | delete | delete() | 手动 | ✅（重点记忆默认保护） |
+| 11 | highlight | highlight() | Phase B 确认 | ✅ |
 | — | update_profile | L709 | Phase C | ✅（画像唯一写入口） |
 | — | get_profile | L737 | 任意 | ✅ |
 | — | get_context_for_analysis | L951 | Phase A | ✅（按需检索入口） |
@@ -418,7 +420,19 @@ list 型字段追加去重（`json.dumps(sort_keys=True)` 精确比较，支持 
 - **幂等**：重复执行不产生副作用（old_key 已不存在或等于 canonical 则跳过）。
 - **不处理**：画像内的属性合并（那是 `update_profile` 的合并语义），combine 只管 layer7 索引键。
 
-### 4.5 删除与标记
+### 4.5 相似事件候选与显式归并
+
+find_merge_candidates(limit=30, max_time_delta_s=120) 只生成待审阅候选，不自动更改数据。候选需满足以下路径之一：① 时间相差不超过 120 秒、共享人物或物品，且 Scene 与 Action 合并文本的相似度至少 0.92；② 同一来源视频的片段重叠比例至少 0.80。画面/音频相似度只作为人工核对证据，不单独触发候选，因为相似背景声或静止画面不能证明事件重复。候选显示时间差、共享实体、片段重叠和可用模态分值。该筛选只覆盖共享实体/时间桶或相同视频来源的候选，不是全库语义聚类；分数是相似度，不是“重复概率”。
+
+merge_moments(source_id, target_id, confirmed_duplicate=True, reason=...) 只允许用户明确确认后执行。交互页的“相似事件候选”步骤提供两条记忆对照，点击“确认是同一事件并合并”才会调用该操作。confirmed_duplicate 未设置时拒绝修改；规范记录不得是另一个合并组的来源。
+
+- 不删除来源：source 的 L7 原文、时间、标签、来源证据和多模态引用都保留；source 标记 merged_into，规范记录登记 merged_sources。归并关系、理由、时间、字段冲突、归并前索引/窗口归属和多模态保留情况写入 merge_history。页面目前没有一键拆分/撤销入口。
+- 字段规则：人物、物品、环境、needs、solutions 列表按稳定顺序精确去重并入规范记录；Scene、Action、地点、活动和时间等单值字段不覆盖。冲突两侧原文留在 source，并在规范记录的审计记录中并列展示。
+- 索引与窗口：六维 L7 索引把 source ID 替换为规范 ID 并去重；L1–L3 移除重复 source 副本，必要时保留规范记录。L7 总存储条数不因归并减少，索引与可检索事件数可以减少。
+- 检索与多模态：默认结果只返回规范事件一次，但会把来源事件正文作为附属证据用于检索和推理；重点标记不会被移到规范记录，只作为组级排序信号。source 仍持有原画面/音频资产，因此事件归并不会腾出多模态容量。
+- 评测边界：候选门限与误合并率尚未通过全量评测；容量、检索延迟和问答结果不能因归并而被推断达标。
+
+### 4.6 删除与标记
 
 **delete(moment_id, reason="manual", force=False) → bool**（定稿补全，9.15 落地 + 测试覆盖）
 - **清理范围**：moments 主存储条目 + 四个索引（people/locations/activity_events/time_nodes）中
@@ -434,7 +448,7 @@ list 型字段追加去重（`json.dumps(sort_keys=True)` 精确比较，支持 
 效果：① 删除清扫中受保护（见上）；② 检索排序中提权（v2：highlight 条目在同等命中数下优先）；
 ③ 画像更新的高权重佐证来源（v2）。moment 不存在返回 False。
 
-### 4.6 画像合并语义（精确规则）
+### 4.7 画像合并语义（精确规则）
 
 实现：`_merge_profile_node`（L678）及配套工具。
 

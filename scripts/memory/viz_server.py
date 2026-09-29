@@ -407,7 +407,8 @@ class Handler(BaseHTTPRequestHandler):
                                             "people", "location", "activity",
                                             "environments", "objects", "notes",
                                             "highlighted", "highlight_source",
-                                            "highlighted_at")
+                                            "highlighted_at", "merged_into",
+                                            "merged_sources", "merge_history")
                                 if moment.get(key) is not None
                             })
                     groups.append({"tag": tag, "count": len(ids), "moments": examples})
@@ -422,6 +423,8 @@ class Handler(BaseHTTPRequestHandler):
                 "indices": indices,
                 "archive_samples": archive_samples,
                 "moments_count": len(moments),
+                "active_moments_count": sum(not item.get("merged_into") for item in moments.values()),
+                "merged_moments_count": sum(bool(item.get("merged_into")) for item in moments.values()),
                 "metadata": mem.get("metadata", {}),
             })
 
@@ -577,6 +580,53 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, dict(PREWARM))
 
         return self._send(404, {"error": "not found"})
+
+    def do_POST(self):
+        global SESSION
+        url = urlparse(self.path)
+        if url.path != "/api/interactive/merge":
+            return self._send(404, {"error": "not found"})
+        if SESSION is None:
+            return self._send(404, {"error": "请先创建交互会话"})
+        if not STEP_LOCK.acquire(blocking=False):
+            return self._send(409, {"error": "当前步骤正在运行，请完成后再合并"})
+        try:
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                if length <= 0 or length > 32768:
+                    return self._send(400, {"error": "请求内容长度无效"})
+                payload = json.loads(self.rfile.read(length).decode("utf-8"))
+            except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
+                return self._send(400, {"error": "请求内容必须是有效 JSON"})
+            source_id = str(payload.get("source_id") or "")[:160]
+            target_id = str(payload.get("target_id") or "")[:160]
+            reason = str(payload.get("reason") or "网页人工确认重复事件")[:240]
+            confirmed = payload.get("confirmed_duplicate") is True
+            result = SESSION.mem.merge_moments(
+                source_id, target_id, confirmed_duplicate=confirmed, reason=reason)
+            archive = SESSION.mem.memory.get("layer7", {}).get("moments", {})
+            source = SESSION._moment_detail(archive.get(source_id, {}))
+            target = SESSION._moment_detail(archive.get(target_id, {}))
+            candidates = SESSION.mem.find_merge_candidates(limit=20)
+            perception = {
+                "kind": "operation_result", "operation": "merge_moments",
+                "title": "事件合并记录", "merge": result,
+                "source": source, "target": target, "candidates": candidates,
+            }
+            message = (
+                f"已合并 {source_id} → {target_id}；原始来源与多模态资产保留"
+                if result.get("ok") and result.get("status") == "merged"
+                else result.get("message") or
+                     ("两条记录此前已合并" if result.get("status") == "already_merged"
+                      else "合并未执行")
+            )
+            SESSION._log_snapshot("用户确认合并相似事件", "merge_moments",
+                                  message, perception)
+            state = SESSION.state()
+            state["last_result"] = message
+            return self._send(200, state)
+        finally:
+            STEP_LOCK.release()
 
     def log_message(self, fmt, *args):
         # 静默常规请求日志，只打印错误

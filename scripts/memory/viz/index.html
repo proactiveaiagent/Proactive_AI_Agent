@@ -921,7 +921,7 @@ const LAYER_META = [
   {k:'layer4', no:'L4', ttl:'近期摘要', family:'summary', kind:'日级压缩摘要', desc:'保留近期状态，不再逐条保存事件正文。', scope:'日级 · 约 30 天（建议值）', trigger:'夜间 compress()', flow:'近期任务与生活动线可并入 L5', use:'近期状态 / 当前任务'},
   {k:'layer5', no:'L5', ttl:'远期摘要', family:'summary', kind:'跨日长期摘要', desc:'从多日证据归纳关键事件与长期模式。', scope:'周/月级 · 约 90 天（建议值）', trigger:'夜间 rollup / compress()', flow:'稳定事实经裁决后进入 L6', use:'跨日模式与关键事件'},
   {k:'layer6', no:'L6', ttl:'用户画像', family:'profile', kind:'稳定属性画像', desc:'只放可溯源、带置信度的稳定用户属性。', scope:'长期保留 · stale 后退出检索', trigger:'夜间候选验证 → update_profile()', flow:'衰减标 stale；保留历史供审计', use:'长期个性化'},
-  {k:'layer7', no:'L7', ttl:'索引归档', family:'index', kind:'事实主存储 + 六维索引', desc:'保留文档四类核心索引（时间/活动/人物/地点），并按 Design Details 扩展环境/物品；索引只引用 L7 moment 主存储。', scope:'永久归档', trigger:'每次 add()；夜间 sort()/combine()', flow:'按维度定位事实，不重复生成副本', use:'追溯 / 精确查找'},
+  {k:'layer7', no:'L7', ttl:'索引归档', family:'index', kind:'事实主存储 + 六维索引', desc:'索引只引用 L7 moment；疑似重复事件先给候选，需人工确认后归并，来源原文和多模态资产保留。', scope:'永久归档', trigger:'每次 add()；夜间 sort()/combine()', flow:'按维度定位事实，不重复生成副本', use:'追溯 / 精确查找'},
 ];
 
 async function init(){
@@ -1167,6 +1167,8 @@ function renderMomentDetail(x, compact){
   }
   addTag(x.location,'📍 Location');
   addTag(x.activity,'🏷 Activity');
+  if(x.merged_into) addTag('并入 '+String(x.merged_into).slice(-14),'🔗 已归档来源');
+  if(Array.isArray(x.merged_sources)&&x.merged_sources.length) addTag(x.merged_sources.length+' 条来源','🔗 合并事件');
   for(const person of (Array.isArray(x.people)?x.people:[])) addTag(person,'👤 Person');
   for(const place of (Array.isArray(x.environments)?x.environments:[])) addTag(place,'Environment');
   for(const object of (Array.isArray(x.objects)?x.objects:[])) addTag(object,'Object');
@@ -1176,6 +1178,21 @@ function renderMomentDetail(x, compact){
   const payload=esc(JSON.stringify(x)).replace(/'/g,'&#39;');
   let html='<article class="moment-detail" data-preview-limit="'+previewLimit+'"><div class="moment-detail-head"><b>Memory '+esc(id.slice(-14)||'Unnumbered')+'</b><time>'+esc(String(x.timestamp||'').replace('T',' ').slice(0,19))+'</time></div>';
   if(tags.length) html+='<div class="moment-detail-tags">'+tags.join('')+'</div>';
+  if(Array.isArray(x.merge_history)&&x.merge_history.length){
+    const records=x.merge_history.slice(-5).reverse().map(entry=>{
+      const conflicts=(entry.scalar_conflicts||[]).map(c=>
+        '<div><b>'+esc(c.field)+'</b>：规范记录「'+esc(fieldText(c.target_value))+
+        '」；来源记录「'+esc(fieldText(c.source_value))+'」</div>').join('');
+      const media=(entry.media_preserved||[]).map(m=>
+        esc(m.id)+' · '+(m.visual?'画面保留 ':'')+(m.audio?'音频保留':'')).join('；');
+      return '<div style="margin:5px 0"><b>'+esc(entry.source_id||'来源')+' → '+esc(entry.target_id||id)+'</b>'+
+        '<small style="display:block">确认时间 '+esc(String(entry.at||'').replace('T',' ').slice(0,19))+
+        ' · '+esc(entry.reason||'未记录原因')+'</small>'+
+        (conflicts?'<div>字段冲突保留在来源：'+conflicts+'</div>':'')+
+        (media?'<small>多模态资产：'+media+'</small>':'')+'</div>';
+    }).join('');
+    html+='<details class="layer-note"><summary>合并审计记录 '+x.merge_history.length+' 次</summary>'+records+'</details>';
+  }
   if(scene) html+='<div class="moment-preview"><b>Scene:</b> '+excerpt(scene,previewLimit)+'</div>';
   else if(action) html+='<div class="moment-preview"><b>Action:</b> '+excerpt(action,previewLimit)+'</div>';
   else html+='<div class="moment-preview">'+excerpt(headline,previewLimit)+'</div>';
@@ -1331,6 +1348,8 @@ function renderLayer7Archive(samples){
 }
 function renderLayer7Snapshot(s, full){
   const count=Number((full&&(full.moments_count||full.layer7_total))||s.layer7_moments||0);
+  const active=Number((full&&full.layer7_active_total)??s.layer7_active_moments??count);
+  const merged=Number((full&&full.layer7_merged_total)??s.layer7_merged_moments??0);
   const samples=full&&(full.archive_samples||full.layer7_moments);
   const labels={people:'人物',locations:'地点',time_nodes:'时间',activity_events:'活动',environments:'环境',objects:'物品'};
   const chips=Object.entries(s.index_top||{}).map(([dim,items])=>{
@@ -1348,7 +1367,7 @@ function renderLayer7Snapshot(s, full){
     }
   }
   const sample=moments.find(x=>x&&(x.scene||x.user_action||x.notes))||moments[0];
-  return '<div class="layer7-overview layer-tone-l7"><div class="layer7-index-chips">'+(chips||'<span class="layer-profile-empty">索引键统计见上方维度索引表</span>')+'</div>'+(sample?renderLayerMemoryRow(sample,'L7 归档样例'):'<div class="layer-empty-evidence">本步骤只有索引统计，没有附带可展示的归档正文。</div>')+'<small class="layer-strip-meta">主存储 '+count+' 条 · 正文按索引引用归档</small></div>';
+  return '<div class="layer7-overview layer-tone-l7"><div class="layer7-index-chips">'+(chips||'<span class="layer-profile-empty">索引键统计见上方维度索引表</span>')+'</div>'+(sample?renderLayerMemoryRow(sample,'L7 归档样例'):'<div class="layer-empty-evidence">本步骤只有索引统计，没有附带可展示的归档正文。</div>')+'<small class="layer-strip-meta">主存储 '+count+' 条 · 可检索 '+active+' 条 · 已合并留档 '+merged+' 条</small></div>';
 }
 
 function renderFullMemory(full){
@@ -1584,8 +1603,9 @@ let mode='replay', intState=null, autoTimer=null, autoBusy=false, autoKind=null;
 let curStep=null, inputsExpanded=false, curInputs=null;
 
 const KIND_CN={add:'写入片段',add_batch:'批量写入',query:'检索',update:'更新字段',
-  highlight:'标记重点',delete:'删除',sort:'归类',combine:'合并',compress:'压缩',
-  update_profile:'画像更新',update_feedback:'反馈修正',query_hierarchical:'检索',nightly:'夜间整理',init:'初始'};
+  highlight:'标记重点',delete:'删除',sort:'归类',combine:'合并索引',compress:'压缩',
+  update_profile:'画像更新',update_feedback:'反馈修正',query_hierarchical:'检索',nightly:'夜间整理',
+  merge_candidates:'相似事件候选',find_merge_candidates:'扫描合并候选',merge_moments:'合并重复事件',init:'初始'};
 
 function updateModeChrome(m){
   mode=m;
@@ -2067,12 +2087,81 @@ function updateQstat(){
 }
 
 // ===== Qwen 感知产出与自动标签诊断 =====
+function renderMergeCandidateList(candidates){
+  const rows=Array.isArray(candidates)?candidates:[];
+  if(!rows.length) return '<div class="note">当前没有达到保守阈值的相似事件候选；扫描没有修改记忆。</div>';
+  const side=(title,item)=>'<div style="padding:8px;border:1px solid #dce4f1;border-radius:8px;background:#fff;min-width:0">'+
+    '<b>'+title+' · '+esc(item.id||'')+'</b><small style="display:block;color:#72809a">'+esc(String(item.timestamp||'').replace('T',' ').slice(0,19))+
+    (item.has_visual?' · 画面':'')+(item.has_audio?' · 音频':'')+'</small>'+
+    (item.scene?'<div class="perc-row"><b>Scene</b>'+esc(item.scene)+'</div>':'')+
+    (item.user_action?'<div class="perc-row"><b>Action</b>'+esc(item.user_action)+'</div>':'')+
+    (asLabels(item.people).length?'<div class="perc-row"><b>People</b>'+esc(asLabels(item.people).join('、'))+'</div>':'')+
+    (asLabels(item.objects).length?'<div class="perc-row"><b>Objects</b>'+esc(asLabels(item.objects).join('、'))+'</div>':'')+'</div>';
+  const modalitySummary=row=>{
+    const scores=row.multimodal_similarity||{};
+    const parts=[];
+    if(Number.isFinite(Number(scores.visual))) parts.push('画面 '+Math.round(Number(scores.visual)*100)+'%');
+    if(Number.isFinite(Number(scores.audio))) parts.push('音频 '+Math.round(Number(scores.audio)*100)+'%');
+    if(Number.isFinite(Number(scores.entities))) parts.push('实体重叠 '+Math.round(Number(scores.entities)*100)+'%');
+    if(Number(row.media_overlap)>0) parts.push('同片段重叠 '+Math.round(Number(row.media_overlap)*100)+'%');
+    return parts.length?parts.join(' · '):'无多模态分值';
+  };
+  const asLabels=value=>Array.isArray(value)?value.filter(x=>typeof x==='string'):typeof value==='string'?[value]:[];
+  return '<div><b>候选仅供核对；分数是相似度，不是“重复概率”。</b>'+
+    rows.map(row=>'<div style="margin-top:9px;padding:9px;border:1px solid #dce4f1;border-radius:10px;background:#f8faff">'+
+      '<div class="prec-sum">'+esc(row.reason||'相似事件')+' · 文本 '+Math.round((Number(row.text_similarity)||0)*100)+'% · '+esc(modalitySummary(row))+' · 时间差 '+esc(row.time_delta_s)+' 秒'+
+      (row.shared_entities&&row.shared_entities.length?' · 共有实体 '+esc(row.shared_entities.join('、')):'')+'</div>'+
+      '<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px">'+side('保留为规范记录',row.target||{})+side('来源记录',row.source||{})+'</div>'+
+      '<button type="button" style="margin-top:7px;border:0;border-radius:7px;padding:7px 11px;background:#536bd5;color:white;font-weight:700;cursor:pointer" data-merge-source="'+esc(row.source_id)+'" data-merge-target="'+esc(row.target_id)+'" onclick="mergeDuplicate(this)">确认是同一事件并合并</button>'+
+    '</div>').join('')+'</div>';
+}
+async function mergeDuplicate(button){
+  const source=button.dataset.mergeSource,target=button.dataset.mergeTarget;
+  if(!source||!target||button.disabled) return;
+  button.disabled=true; button.textContent='正在保存合并记录…';
+  try{
+    const response=await fetch(API+'/api/interactive/merge',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({source_id:source,target_id:target,confirmed_duplicate:true,
+        reason:'用户在可视化页面逐条确认重复事件'})});
+    const state=await response.json();
+    if(!response.ok||state.error) throw new Error(state.error||'合并未完成');
+    intState=state; renderInt();
+  }catch(error){
+    button.disabled=false; button.textContent='确认是同一事件并合并';
+    const note=document.createElement('div'); note.className='note'; note.style.color='#c0393a';
+    note.textContent='合并失败：'+(error.message||error); button.after(note);
+  }
+}
 function renderPerception(p){
   const box=document.getElementById('percBox');
   if(!p){ box.innerHTML=''; return; }
 
   if(p.kind==='operation_result'){
     const opNames={query:'检索结果',update:'字段更新',update_feedback:'反馈修正',highlight:'重点标记',delete:'删除'};
+    if(p.operation==='merge_candidates'){
+      box.innerHTML='<div class="percbox operation-result"><h4>相似事件候选 · 需要逐条确认</h4>'+
+        '<div class="prec-sum">系统不会自动合并。请核对两条记忆是否指向同一事件；确认后来源原文和多模态引用仍保留。</div>'+
+        renderMergeCandidateList(p.candidates||[])+'</div>';
+      return;
+    }
+    if(p.operation==='merge_moments'){
+      const merge=p.merge||{};
+      let html='<div class="percbox operation-result"><h4>事件归并：'+
+        (merge.status==='merged'?'已完成':merge.status==='already_merged'?'此前已完成':'未执行')+'</h4>';
+      html+='<div class="prec-sum">来源 '+esc(merge.source_id||'—')+' → 规范记录 '+esc(merge.target_id||'—')+
+        ' · 原始 L7 记录和多模态资产保留；检索按规范记录去重。</div>';
+      if(merge.merged_fields&&merge.merged_fields.length) html+='<div class="prec-row"><b>合并列表字段</b>'+esc(merge.merged_fields.join('、'))+'</div>';
+      for(const conflict of merge.scalar_conflicts||[]){
+        html+='<div class="prec-row"><b>冲突保留</b>'+esc(conflict.field)+' · 规范值：'+esc(JSON.stringify(conflict.target_value))+' · 来源值：'+esc(JSON.stringify(conflict.source_value))+'</div>';
+      }
+      const media=merge.media_preserved||[];
+      if(media.length) html+='<div class="prec-row"><b>来源多模态</b>'+media.map(m=>esc(m.id)+'（'+(m.visual?'画面 ':'')+(m.audio?'音频':'')+'）').join('；')+'</div>';
+      html+='<div class="prec-row"><b>目标事件</b>'+esc((p.target||{}).scene||'')+' · '+esc((p.target||{}).action||'')+'</div>';
+      html+='<div class="prec-row"><b>来源事件</b>'+esc((p.source||{}).scene||'')+' · '+esc((p.source||{}).action||'')+'</div>';
+      html+='<details style="margin-top:9px"><summary>其他相似候选</summary>'+renderMergeCandidateList(p.candidates||[])+'</details></div>';
+      box.innerHTML=html; return;
+    }
     const valueText=v=>{
       if(v===null||v===undefined||v==='') return '—';
       return esc(typeof v==='string'?v:JSON.stringify(v));

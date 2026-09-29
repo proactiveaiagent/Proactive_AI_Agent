@@ -238,6 +238,7 @@ class InteractiveSession:
         tracked = (
             "add", "query", "query_hierarchical", "update", "update_feedback",
             "highlight", "delete", "sort", "combine", "compress", "update_profile",
+            "find_merge_candidates", "merge_moments",
         )
         for name in tracked:
             original = getattr(self.mem, name, None)
@@ -252,6 +253,14 @@ class InteractiveSession:
                     mid = str(args[0] if args else kwargs.get("moment_id", ""))
                     item = self.mem.memory.get("layer7", {}).get("moments", {}).get(mid)
                     before_moment = copy.deepcopy(item) if isinstance(item, dict) else None
+                if __name == "merge_moments":
+                    archive = self.mem.memory.get("layer7", {}).get("moments", {})
+                    source_id = str(args[0] if args else kwargs.get("source_id", ""))
+                    target_id = str(args[1] if len(args) > 1 else kwargs.get("target_id", ""))
+                    before_moment = {
+                        "source": copy.deepcopy(archive.get(source_id, {})),
+                        "target": copy.deepcopy(archive.get(target_id, {})),
+                    }
                 if __name == "update_profile":
                     before_profile = copy.deepcopy(
                         self.mem.memory.get("layer6", {}).get("profile", {})
@@ -276,7 +285,11 @@ class InteractiveSession:
     def _append_operation(self, name, args, kwargs, result, started,
                           error=None, before_moment=None, before_profile=None):
         """Append a factual audit event with the affected memory content."""
-        status = "failed" if error else ("blocked" if result is False else "success")
+        status = "failed" if error else (
+            "blocked" if result is False or
+            (isinstance(result, dict) and result.get("ok") is False)
+            else "success"
+        )
         if name == "update" and result is False:
             mid = str(args[0] if args else kwargs.get("moment_id", ""))
             exists = mid in self.mem.memory.get("layer7", {}).get("moments", {})
@@ -320,6 +333,9 @@ class InteractiveSession:
             "highlighted": bool(moment.get("highlighted")),
             "highlight_source": moment.get("highlight_source") or "",
             "highlighted_at": moment.get("highlighted_at") or "",
+            "merged_into": moment.get("merged_into") or "",
+            "merged_sources": moment.get("merged_sources") or [],
+            "merge_history": moment.get("merge_history") or [],
         }
 
     def _operation_summary(self, name, args, kwargs, result, error,
@@ -347,6 +363,30 @@ class InteractiveSession:
                 examples.append(f"{layer}{mid}: {content[:100]}")
             detail = "；命中：" + "；".join(examples) if examples else ""
             return f"检索「{query}」· 命中 {len(hits)} 条{detail}"
+        if name == "find_merge_candidates":
+            candidates = result if isinstance(result, list) else []
+            examples = [
+                f"{row.get('source_id')}→{row.get('target_id')} "
+                f"({row.get('similarity', 0):.0%})"
+                for row in candidates[:3]
+            ]
+            suffix = " · " + "；".join(examples) if examples else ""
+            return f"相似事件候选 {len(candidates)} 组（需人工确认）{suffix}"
+        if name == "merge_moments":
+            details = result if isinstance(result, dict) else {}
+            if not details.get("ok"):
+                return str(details.get("message") or "合并未执行")
+            if details.get("status") == "already_merged":
+                return f"来源 {details.get('source_id')} 已归并到 {details.get('target_id')}（无重复改动）"
+            source_id = details.get("source_id") or "?"
+            target_id = details.get("target_id") or "?"
+            fields = "、".join(details.get("merged_fields") or []) or "没有新增列表字段"
+            conflicts = len(details.get("scalar_conflicts") or [])
+            media = details.get("media_preserved") or []
+            retained = sum(bool(item.get("visual") or item.get("audio")) for item in media)
+            return (f"合并事件 {source_id} → {target_id} · 列表字段：{fields}"
+                    f" · 标量冲突留在来源并记录 {conflicts} 项"
+                    f" · {retained}/{len(media)} 条来源保留多模态引用")
         if name == "update":
             mid = str(arg0 or "")
             updates = args[1] if len(args) > 1 else kwargs.get("updates", {})
@@ -722,6 +762,23 @@ class InteractiveSession:
                 "run": run,
             })
 
+        # 相似事件候选只进入待审阅队列，不会自动合并。
+        def run_merge_candidates(force=False):
+            candidates = self.mem.find_merge_candidates(limit=100)
+            result = {
+                "kind": "operation_result", "operation": "merge_candidates",
+                "title": "相似事件候选 · 逐条确认后才会合并",
+                "candidates": candidates,
+            }
+            return f"发现 {len(candidates)} 组相似事件候选；没有自动合并", result
+        steps.append({
+            "kind": "merge_candidates",
+            "title": "检查相似事件候选（需要逐条确认）",
+            "detail": {"note": "候选依据：同源片段重叠≥80%，或120秒内Scene与Action合并文本相似度≥92%且共享人物/物品。画面/音频只供核对；扫描不改数据，逐条确认后才归并。"},
+            "inputs": [],
+            "run": run_merge_candidates,
+        })
+
         # 2) query
         for q in plan.get("query", []):
             def run(q=q, force=False):
@@ -961,6 +1018,23 @@ class InteractiveSession:
                 "run": run,
             })
 
+        # 相似事件候选只进入待审阅队列，不会自动合并。
+        def run_merge_candidates(force=False):
+            candidates = self.mem.find_merge_candidates(limit=100)
+            result = {
+                "kind": "operation_result", "operation": "merge_candidates",
+                "title": "相似事件候选 · 逐条确认后才会合并",
+                "candidates": candidates,
+            }
+            return f"发现 {len(candidates)} 组相似事件候选；没有自动合并", result
+        steps.append({
+            "kind": "merge_candidates",
+            "title": "检查相似事件候选（需要逐条确认）",
+            "detail": {"note": "候选依据：同源片段重叠≥80%，或120秒内Scene与Action合并文本相似度≥92%且共享人物/物品。画面/音频只供核对；扫描不改数据，逐条确认后才归并。"},
+            "inputs": [],
+            "run": run_merge_candidates,
+        })
+
         # 夜间整理：使用真实记忆输入，不将测试集 ground-truth 写入画像。
         def run_nightly(force=False):
             result = NightlyProcessor(self.mem).run(
@@ -1024,10 +1098,16 @@ class InteractiveSession:
                  "timestamp": x.get("timestamp", "")}
             if with_stale:
                 d["stale"] = x.get("stale", False)
+                d["merged_into"] = x.get("merged_into", "")
+                d["merged_sources"] = copy.deepcopy(x.get("merged_sources", []))
+                d["merge_history"] = copy.deepcopy(x.get("merge_history", [])[-5:])
             v = vid_of(x.get("id", ""))
             if v:
                 d["video"] = v
             return d
+
+        layer7_moments = list(l7.get("moments", {}).values())
+        merged_count = sum(bool(item.get("merged_into")) for item in layer7_moments)
 
         # 索引：列出每个维度下的 tag 及其命中的 moment id（限每个维度 15 个 tag，每个 tag 5 个 id）
         indices = {}
@@ -1044,6 +1124,8 @@ class InteractiveSession:
             "layer6": m.get("layer6", {}),
             "layer7_moments": [fmt(x, True) for x in list(l7.get("moments", {}).values())[:80]],
             "layer7_total": len(l7.get("moments", {})),
+            "layer7_active_total": len(layer7_moments) - merged_count,
+            "layer7_merged_total": merged_count,
             "indices": indices,
             "metadata": m.get("metadata", {}),
             "daytime": self.daytime.snapshot(),
@@ -1052,6 +1134,8 @@ class InteractiveSession:
     def _log_snapshot(self, title, kind, msg, perception=None):
         snap = rs.snapshot(self.mem, title, action=kind)
         snap["full"] = self._full_snapshot()
+        snap["layer7_active_moments"] = snap["full"]["layer7_active_total"]
+        snap["layer7_merged_moments"] = snap["full"]["layer7_merged_total"]
         self.log.append({"kind": kind, "title": title, "msg": msg,
                          "snapshot": snap, "perception": perception})
 

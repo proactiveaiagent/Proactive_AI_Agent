@@ -58,6 +58,8 @@ class MemoryReasoner:
         found: dict[str, dict] = {}
 
         def candidate(mid: str, moment: dict) -> dict:
+            if hasattr(self.memory, "_retrieval_group_moment"):
+                moment = self.memory._retrieval_group_moment(moment)
             return found.setdefault(mid, {
                 "moment": moment, "text_score": 0.0, "entity_matches": [],
             })
@@ -68,7 +70,8 @@ class MemoryReasoner:
                     if str(tag).lower() == name.lower():
                         for mid in ids[-12:]:
                             moment = archive.get(mid)
-                            if moment and not moment.get("stale") and mid not in seen:
+                            if (moment and not moment.get("stale")
+                                    and not moment.get("merged_into") and mid not in seen):
                                 row = candidate(mid, moment)
                                 match = {"dimension": dimension, "tag": str(tag)}
                                 if match not in row["entity_matches"]:
@@ -94,7 +97,8 @@ class MemoryReasoner:
         # displace a clearly stronger text match.
         ranked = sorted(found.values(), key=lambda row: (
             row["text_score"], len(row["entity_matches"]),
-            bool(row["moment"].get("highlighted")),
+            bool(row["moment"].get("highlighted")
+                 or row["moment"].get("_group_highlighted")),
             str(row["moment"].get("timestamp") or ""),
         ), reverse=True)
         selected = ranked[:limit]
@@ -113,7 +117,8 @@ class MemoryReasoner:
                     "id": mid,
                     "text_relevance": round(row["text_score"], 3),
                     "entity_matches": row["entity_matches"],
-                    "highlighted": bool(moment.get("highlighted")),
+                    "highlighted": bool(moment.get("highlighted")
+                                        or moment.get("_group_highlighted")),
                     "timestamp": str(moment.get("timestamp") or ""),
                     "reasons": reasons or ["索引实体召回"],
                 }
@@ -151,7 +156,8 @@ class MemoryReasoner:
                    or (m.get("multimodal") or {}).get("audio")][:4]
         for anchor in anchors:
             for mid, moment in archive.items():
-                if mid in seen or moment.get("stale") or mid == anchor.get("id"):
+                if (mid in seen or moment.get("stale") or moment.get("merged_into")
+                        or mid == anchor.get("id")):
                     continue
                 similarity = compare_multimodal(anchor, moment)
                 modes = similarity.get("modalities") or {}
@@ -182,6 +188,19 @@ class MemoryReasoner:
             "objects": moment.get("objects") or [],
             "speech": str(moment.get("source_evidence") or "")[:320],
             "media": {"visual": bool(mm.get("visual")), "audio": bool(mm.get("audio"))},
+            "merged_sources": [
+                {
+                    "id": row.get("id"), "time": row.get("timestamp"),
+                    "scene": str(row.get("scene") or "")[:160],
+                    "action": str(row.get("user_action") or "")[:180],
+                    "speech": str(row.get("source_evidence") or "")[:180],
+                    "media": {
+                        "visual": bool((row.get("multimodal") or {}).get("visual")),
+                        "audio": bool((row.get("multimodal") or {}).get("audio")),
+                    },
+                }
+                for row in (moment.get("_merged_sources_records") or [])[:5]
+            ],
         }
 
     def reason(self, situation: str, context: dict | None = None) -> dict:

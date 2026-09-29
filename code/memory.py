@@ -24,7 +24,10 @@ DB Operations
 import json
 import math
 import os
-from collections import Counter
+import re
+import copy
+from difflib import SequenceMatcher
+from collections import Counter, defaultdict
 import time
 from pathlib import Path
 from datetime import datetime, date
@@ -436,7 +439,8 @@ def _rank_memory_docs(query_text: str, documents: list) -> list:
     weight so multilingual queries still work without live translation.
     """
     documents = [doc for doc in documents
-                 if isinstance(doc, dict) and not doc.get("stale")]
+                 if isinstance(doc, dict) and not doc.get("stale")
+                 and not doc.get("merged_into")]
     if not documents:
         return []
     query_terms = list(dict.fromkeys(_retrieval_tokens(str(query_text or "")[:1200])))
@@ -469,6 +473,8 @@ def _rank_memory_docs(query_text: str, documents: list) -> list:
         "confidence", "highlighted", "feedback", "source_ids", "layer",
         "canonicalization_history",
         "multimodal",
+        "merged_into", "merged_sources", "merge_history", "merge_event",
+        "_merged_sources_records", "_group_highlighted",
     }
 
     def as_search_text(value):
@@ -529,7 +535,10 @@ def _rank_memory_docs(query_text: str, documents: list) -> list:
                 score += field_weights.get(field, 0.75) * idf * norm_tf
         if score > 0:
             ranked.append((score, index, documents[index]))
-    ranked.sort(key=lambda item: (-item[0], item[1]))
+    ranked.sort(key=lambda item: (
+        -item[0], not bool(item[2].get("highlighted") or
+                           item[2].get("_group_highlighted")), item[1]
+    ))
     return [(score, document) for score, _, document in ranked]
 
 def _contains_cjk(text: str) -> bool:
@@ -1177,11 +1186,42 @@ class PersonMemory:
         """Return active Layer 7 memories with their field-aware BM25 scores."""
         if top_k <= 0:
             return []
-        documents = list(self.memory["layer7"]["moments"].values())
+        documents = [
+            self._retrieval_group_moment(moment)
+            for moment in self.memory["layer7"]["moments"].values()
+            if not moment.get("merged_into")
+        ]
         return [
             {"score": round(score, 6), "moment": moment}
             for score, moment in _rank_memory_docs(query_text, documents)[:top_k]
         ]
+
+    def _retrieval_group_moment(self, moment: Dict) -> Dict:
+        """Build a temporary search view containing the source evidence."""
+        result = copy.deepcopy(moment)
+        archive = self.memory.get("layer7", {}).get("moments", {})
+        source_records = []
+        for source_id in moment.get("merged_sources", []):
+            source = archive.get(source_id)
+            if not source or source.get("merged_into") != moment.get("id"):
+                continue
+            source_records.append({
+                key: copy.deepcopy(source.get(key))
+                for key in ("id", "timestamp", "scene", "user_action", "people",
+                            "location", "activity", "objects", "environments",
+                            "needs", "solutions", "source_evidence", "multimodal",
+                            "highlighted")
+                if source.get(key) is not None
+            })
+        result["_merged_sources_records"] = source_records
+        result["_merged_search_text"] = " ".join(
+            json.dumps(row, ensure_ascii=False) for row in source_records
+        )
+        result["_group_highlighted"] = bool(
+            moment.get("highlighted")
+            or any(row.get("highlighted") for row in source_records)
+        )
+        return result
 
     def query_hierarchical(self, query_text: str, top_k: int = 5) -> List[Dict]:
         """Search L1→L5 in order, using BM25 within each layer and early stopping."""
@@ -1267,13 +1307,16 @@ class PersonMemory:
             str(location or ""), str(activity or "")))
         excluded = set(exclude_ids or ())
         scored = []
-        for moment_id, moment in self.memory["layer7"]["moments"].items():
-            if moment_id in excluded or moment.get("stale"):
+        for moment_id, stored in self.memory["layer7"]["moments"].items():
+            if (moment_id in excluded or stored.get("stale")
+                    or stored.get("merged_into")):
                 continue
+            moment = self._retrieval_group_moment(stored)
             searchable = json.dumps(moment, ensure_ascii=False).lower()
             score = sum(1 for token in query_tokens if token in searchable)
             if score:
-                scored.append((score, bool(moment.get("highlighted")),
+                scored.append((score, bool(moment.get("highlighted")
+                                           or moment.get("_group_highlighted")),
                                moment.get("timestamp", ""), moment))
 
         scored.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
@@ -1320,6 +1363,18 @@ class PersonMemory:
                 if value:
                     line += f" | {label}: {str(value).replace(chr(10), ' ').strip()[:180]}"
             parts.append(line)
+            for source in moment.get("_merged_sources_records", []):
+                source_line = f"  └ 合并来源 [{source.get('id','')}] {str(source.get('timestamp',''))[:19]}"
+                for label, key in (("Scene", "scene"), ("Action", "user_action"),
+                                   ("People", "people"), ("Location", "location"),
+                                   ("Activity", "activity")):
+                    value = source.get(key)
+                    if value:
+                        source_line += f" | {label}: {str(value).replace(chr(10), ' ').strip()[:180]}"
+                media = source.get("multimodal") or {}
+                if media:
+                    source_line += " | retained media: " + ("visual " if (media.get("visual") or {}).get("asset") else "") + ("audio" if (media.get("audio") or {}).get("asset") else "")
+                parts.append(source_line)
 
         return chr(10).join(parts) if parts else "No relevant memory found."
 
@@ -1512,12 +1567,311 @@ class PersonMemory:
         return report
 
     # ------------------------------------------------------------------
-    # Operation 8 : DELETE
+    # Operation 8 : EVENT MERGE (explicit, audited source retention)
+    # ------------------------------------------------------------------
+
+    def find_merge_candidates(self, limit: int = 30,
+                              max_time_delta_s: int = 120) -> List[Dict]:
+        """Create a review queue; candidates are never merged automatically."""
+        archive = self.memory.get("layer7", {}).get("moments", {})
+        active = [(mid, item) for mid, item in archive.items()
+                  if isinstance(item, dict) and not item.get("stale")
+                  and not item.get("merged_into")]
+        by_entity_time, by_source = defaultdict(list), defaultdict(list)
+        pairs, parsed_times = set(), {}
+        bucket_seconds = 300
+
+        def entities(item):
+            values = set()
+            for field in ("people", "objects", "environments"):
+                raw = item.get(field) or []
+                if isinstance(raw, str):
+                    raw = [raw]
+                values.update(field[:1] + ":" + x.casefold().strip()
+                              for x in raw if isinstance(x, str) and x.strip())
+            for field in ("location", "activity"):
+                value = item.get(field)
+                if isinstance(value, str) and value.strip():
+                    values.add(field[:1] + ":" + value.casefold().strip())
+            return values
+
+        for mid, item in active:
+            try:
+                event_time = datetime.fromisoformat(str(item.get("timestamp") or ""))
+                parsed_times[mid] = event_time
+            except (TypeError, ValueError):
+                continue
+            bucket = int(event_time.timestamp() // bucket_seconds)
+            for tag in entities(item):
+                for nearby in (bucket - 1, bucket, bucket + 1):
+                    pairs.update(tuple(sorted((mid, other)))
+                                 for other in by_entity_time[(nearby, tag)])
+                by_entity_time[(bucket, tag)].append(mid)
+            media = item.get("multimodal") or {}
+            source_key = media.get("source_id") if isinstance(media, dict) else None
+            if source_key:
+                pairs.update(tuple(sorted((mid, other))) for other in by_source[source_key])
+                by_source[source_key].append(mid)
+
+        def norm(value):
+            return re.sub(r"\W+", " ", str(value or "").casefold()).strip()
+
+        normalized_text = {
+            mid: norm(str(item.get("scene") or "") + " " +
+                      str(item.get("user_action") or ""))[:1200]
+            for mid, item in active
+        }
+
+        def text_similarity(left_id, right_id, threshold_only=False):
+            a, b = normalized_text[left_id], normalized_text[right_id]
+            if not a or not b:
+                return 0.0
+            if a == b:
+                return 1.0
+            matcher = SequenceMatcher(None, a, b)
+            # quick_ratio is an upper bound. For text-only candidates, skip
+            # exact ratio if the combined Scene + Action cannot reach threshold.
+            if threshold_only and (
+                matcher.real_quick_ratio() < 0.92 or matcher.quick_ratio() < 0.92
+            ):
+                return 0.0
+            return matcher.ratio()
+
+        def media_overlap(left, right):
+            a, b = left.get("multimodal") or {}, right.get("multimodal") or {}
+            if not isinstance(a, dict) or not isinstance(b, dict):
+                return 0.0
+            if not a.get("source_id") or a.get("source_id") != b.get("source_id"):
+                return 0.0
+            try:
+                a0, a1 = float(a.get("start_s")), float(a.get("end_s"))
+                b0, b1 = float(b.get("start_s")), float(b.get("end_s"))
+            except (TypeError, ValueError):
+                return 0.0
+            shorter = min(max(0.0, a1 - a0), max(0.0, b1 - b0))
+            overlap = max(0.0, min(a1, b1) - max(a0, b0))
+            return overlap / shorter if shorter else 0.0
+
+        def brief(mid, item):
+            media = item.get("multimodal") or {}
+            return {
+                "id": mid, "timestamp": item.get("timestamp", ""),
+                "scene": str(item.get("scene") or "")[:240],
+                "user_action": str(item.get("user_action") or "")[:300],
+                "people": item.get("people") or [],
+                "location": item.get("location") or "",
+                "activity": item.get("activity") or "",
+                "objects": item.get("objects") or [],
+                "has_visual": bool((media.get("visual") or {}).get("asset")),
+                "has_audio": bool((media.get("audio") or {}).get("asset")),
+            }
+
+        try:
+            from multimodal_memory import compare_multimodal
+        except ImportError:
+            compare_multimodal = lambda left, right: {"score": None, "modalities": {}}
+
+        candidates = []
+        for left_id, right_id in pairs:
+            left, right = archive[left_id], archive[right_id]
+            delta = abs((parsed_times[left_id] - parsed_times[right_id]).total_seconds())
+            shared = sorted(entities(left) & entities(right))
+            shared_people_objects = [x for x in shared if x.startswith(("p:", "o:"))]
+            overlap = media_overlap(left, right)
+            media_candidate = overlap >= 0.80
+            if not media_candidate and delta > max_time_delta_s:
+                continue
+            media_similarity = compare_multimodal(left, right)
+            modalities = media_similarity.get("modalities") or {}
+            similarity = text_similarity(left_id, right_id,
+                                         threshold_only=not media_candidate)
+            text_candidate = (
+                delta <= max_time_delta_s
+                and similarity >= 0.92
+                and bool(shared_people_objects)
+            )
+            if not (media_candidate or text_candidate):
+                continue
+            target_id, source_id = sorted(
+                (left_id, right_id), key=lambda mid: (parsed_times[mid], mid))
+            candidates.append({
+                "target_id": target_id, "source_id": source_id,
+                "similarity": round(max(similarity, overlap), 4),
+                "text_similarity": round(similarity, 4),
+                "media_overlap": round(overlap, 4),
+                "multimodal_similarity": modalities,
+                "time_delta_s": round(delta, 2),
+                "shared_entities": shared,
+                "reason": (
+                    "同一视频来源且片段高度重叠" if media_candidate else
+                    "时间接近、Scene 与 Action 合并文本高度相似且共享人物或物品"
+                ),
+                "target": brief(target_id, archive[target_id]),
+                "source": brief(source_id, archive[source_id]),
+            })
+        candidates.sort(key=lambda row: (
+            -row["similarity"], row["time_delta_s"], row["target_id"], row["source_id"]))
+        return candidates[:max(0, int(limit))]
+
+    def merge_moments(self, source_id: str, target_id: str,
+                      confirmed_duplicate: bool = False,
+                      reason: str = "manual duplicate review") -> Dict:
+        """Explicit merge: retain source L7/media, union lists, audit conflicts."""
+        if not confirmed_duplicate:
+            return {"ok": False, "status": "confirmation_required",
+                    "message": "请先人工确认这两条记录是同一事件。"}
+        if not source_id or not target_id or source_id == target_id:
+            return {"ok": False, "status": "invalid_ids",
+                    "message": "source_id 与 target_id 必须是不同的有效记忆 ID。"}
+        archive = self.memory.get("layer7", {}).get("moments", {})
+        source, target = archive.get(source_id), archive.get(target_id)
+        if not source or not target:
+            return {"ok": False, "status": "not_found",
+                    "message": "来源或规范记忆不存在。"}
+        if target.get("merged_into"):
+            return {"ok": False, "status": "target_is_alias",
+                    "message": "规范目标本身已归并；请改选当前规范记录。"}
+        if source.get("merged_into"):
+            if source.get("merged_into") == target_id:
+                return {"ok": True, "status": "already_merged",
+                        "source_id": source_id, "target_id": target_id,
+                        "merged_sources": target.get("merged_sources", [])}
+            return {"ok": False, "status": "source_is_alias",
+                    "message": "来源已归并到其他记忆，不能建立新的归并关系。"}
+
+        child_ids = [
+            mid for mid in source.get("merged_sources", [])
+            if mid in archive and archive[mid].get("merged_into") == source_id]
+        alias_ids, now = [source_id] + child_ids, _now_iso()
+        list_fields = ("people", "objects", "environments", "needs", "solutions")
+        target_fields_before = {
+            field: copy.deepcopy(target.get(field)) for field in list_fields
+        }
+        source_index_tags = {
+            alias_id: {
+                index_key: [tag for tag, ids in
+                            self.memory["layer7"].get(index_key, {}).items()
+                            if alias_id in ids]
+                for index_key in LAYER7_INDICES
+            }
+            for alias_id in alias_ids
+        }
+        target_index_tags = {
+            index_key: [tag for tag, ids in
+                        self.memory["layer7"].get(index_key, {}).items()
+                        if target_id in ids]
+            for index_key in LAYER7_INDICES
+        }
+        source_window_membership = {
+            alias_id: {
+                layer_key: [i for i, row in enumerate(self.memory.get(layer_key, []))
+                            if row.get("id") == alias_id]
+                for layer_key in ("layer1", "layer2", "layer3")
+            }
+            for alias_id in alias_ids
+        }
+        merged_fields = []
+        for field in list_fields:
+            values = []
+            for alias_id in alias_ids:
+                current = archive.get(alias_id, {}).get(field)
+                if isinstance(current, list):
+                    values.extend(current)
+            old_values = target.get(field) if isinstance(target.get(field), list) else []
+            combined, seen = [], set()
+            for value in list(old_values) + values:
+                key = json.dumps(value, ensure_ascii=False, sort_keys=True)
+                if key not in seen:
+                    seen.add(key)
+                    combined.append(value)
+            if combined != old_values:
+                target[field] = combined
+                merged_fields.append(field)
+
+        scalar_conflicts = []
+        for alias_id in alias_ids:
+            row = archive.get(alias_id, {})
+            for field in ("scene", "user_action", "location", "activity", "timestamp"):
+                a, b = target.get(field), row.get(field)
+                if a and b and a != b:
+                    scalar_conflicts.append({
+                        "source_id": alias_id, "field": field,
+                        "target_value": a, "source_value": b,
+                    })
+
+        prior = target.get("merged_sources")
+        if not isinstance(prior, list):
+            prior = []
+        target["merged_sources"] = list(dict.fromkeys(prior + alias_ids))
+        history = target.setdefault("merge_history", [])
+        if not isinstance(history, list):
+            history = []
+            target["merge_history"] = history
+        media_preserved = []
+        for alias_id in alias_ids:
+            media = archive.get(alias_id, {}).get("multimodal") or {}
+            media_preserved.append({
+                "id": alias_id,
+                "visual": bool((media.get("visual") or {}).get("asset")),
+                "audio": bool((media.get("audio") or {}).get("asset")),
+            })
+        history.append({
+            "source_id": source_id, "source_ids": alias_ids,
+            "target_id": target_id, "at": now, "reason": str(reason)[:240],
+            "merged_fields": merged_fields,
+            "target_fields_before": target_fields_before,
+            "target_fields_after": {
+                field: copy.deepcopy(target.get(field)) for field in list_fields
+            },
+            "source_index_tags_before": source_index_tags,
+            "target_index_tags_before": target_index_tags,
+            "source_window_membership_before": source_window_membership,
+            "scalar_conflicts": scalar_conflicts,
+            "source_highlighted": any(
+                bool(archive.get(mid, {}).get("highlighted")) for mid in alias_ids),
+            "media_preserved": media_preserved,
+        })
+        for alias_id in alias_ids:
+            alias = archive[alias_id]
+            alias["merged_into"] = target_id
+            alias["merge_event"] = {
+                "target_id": target_id, "at": now, "reason": str(reason)[:240]}
+
+        alias_set = set(alias_ids)
+        for index_key in LAYER7_INDICES:
+            index = self.memory["layer7"].get(index_key, {})
+            for tag, ids in list(index.items()):
+                if any(mid in alias_set for mid in ids):
+                    rewritten = list(dict.fromkeys(
+                        target_id if mid in alias_set else mid for mid in ids))
+                    index[tag] = rewritten
+        for layer_key in ("layer1", "layer2", "layer3"):
+            rows = self.memory.get(layer_key, [])
+            positions = [i for i,row in enumerate(rows) if row.get("id") in alias_set]
+            if not positions:
+                continue
+            target_present = any(row.get("id") == target_id for row in rows)
+            kept = [row for row in rows if row.get("id") not in alias_set]
+            if not target_present:
+                kept.insert(min(positions[0], len(kept)), target)
+            self.memory[layer_key] = kept
+        self._sync_window_moment(target_id)
+        self._save()
+        return {
+            "ok": True, "status": "merged", "source_id": source_id,
+            "source_ids": alias_ids, "target_id": target_id,
+            "merged_fields": merged_fields, "scalar_conflicts": scalar_conflicts,
+            "media_preserved": media_preserved,
+            "merged_source_count": len(target["merged_sources"]), "at": now,
+        }
+
+    # ------------------------------------------------------------------
+    # Operation 9 : DELETE
     # ------------------------------------------------------------------
 
     def delete(self, moment_id: str = None, reason: str = "manual",
                force: bool = False) -> bool:
-        """删除 moment（设计说明书 §4.5）。
+        """删除 moment（设计说明书 §4.6）。
 
         - 清理范围：moments 主存储 + 四个索引引用 + layer1/2/3 条目。
         - highlight 保护：highlighted=True 且非 force → 拒绝删除（返回 False）。
@@ -1580,11 +1934,11 @@ class PersonMemory:
         return result
 
     # ------------------------------------------------------------------
-    # Operation 9 : HIGHLIGHT
+    # Operation 10 : HIGHLIGHT
     # ------------------------------------------------------------------
 
     def highlight(self, moment_id: str) -> bool:
-        """标记 moment 为 confirmed-correct（设计说明书 §4.5）。
+        """标记 moment 为 confirmed-correct（设计说明书 §4.6）。
 
         效果：① 删除清扫中受保护（delete 默认拒删）；② v2：检索排序提权、
         画像更新高权重佐证。moment 不存在返回 False。
@@ -1637,6 +1991,8 @@ class PersonMemory:
             return "；".join(values)
 
         def add_moment(layer_no, moment):
+            if moment.get("id") in self.memory.get("layer7", {}).get("moments", {}):
+                moment = self._retrieval_group_moment(moment)
             moment_id = moment.get("id")
             if moment_id:
                 seen_ids.add(moment_id)
@@ -1663,6 +2019,17 @@ class PersonMemory:
                 if value:
                     line += f" | {label}: {str(value).replace(chr(10), ' ')[:180]}"
             lines.append(line)
+            for source in moment.get("_merged_sources_records", []):
+                source_line = f"[Merged source · {source.get('timestamp','')[:19]} {source.get('id','')}]"
+                for label, key in (("场景", "scene"), ("动作", "user_action"),
+                                   ("人物", "people"), ("地点", "location"),
+                                   ("活动", "activity")):
+                    value = source.get(key)
+                    if value:
+                        source_line += f" | {label}: {str(value).replace(chr(10), ' ')[:180]}"
+                if source.get("multimodal"):
+                    source_line += " | 多模态来源仍保留"
+                lines.append(source_line)
 
         if hits:
             for hit in hits:
