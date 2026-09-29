@@ -53,9 +53,15 @@ class MemoryReasoner:
                 if isinstance(item, str) and item.strip()]
 
     def _recall(self, searches: list[str], entities: list[str], seen: set[str],
-                limit: int = 12) -> list[dict]:
+                limit: int = 12, priority_details: dict | None = None) -> list[dict]:
         archive = self.memory.memory["layer7"]["moments"]
-        found: dict[str, tuple[float, dict]] = {}
+        found: dict[str, dict] = {}
+
+        def candidate(mid: str, moment: dict) -> dict:
+            return found.setdefault(mid, {
+                "moment": moment, "text_score": 0.0, "entity_matches": [],
+            })
+
         for name in entities:
             for dimension in ("people", "locations", "activity_events", "objects", "environments"):
                 for tag, ids in self.memory.memory["layer7"].get(dimension, {}).items():
@@ -63,17 +69,74 @@ class MemoryReasoner:
                         for mid in ids[-12:]:
                             moment = archive.get(mid)
                             if moment and not moment.get("stale") and mid not in seen:
-                                found[mid] = (max(found.get(mid, (0, None))[0], 1.0), moment)
+                                row = candidate(mid, moment)
+                                match = {"dimension": dimension, "tag": str(tag)}
+                                if match not in row["entity_matches"]:
+                                    row["entity_matches"].append(match)
         for query in searches:
-            for rank, moment in enumerate(self.memory.query(query, top_k=limit)):
+            if hasattr(self.memory, "query_ranked"):
+                ranked = self.memory.query_ranked(query, top_k=limit)
+            else:
+                ranked = [{"score": 1.0 - rank / max(limit, 1), "moment": moment}
+                          for rank, moment in enumerate(self.memory.query(query, top_k=limit))]
+            top_score = max((float(row.get("score") or 0) for row in ranked), default=0.0)
+            for row in ranked:
+                moment = row.get("moment") or {}
                 mid = moment.get("id")
                 if mid and mid not in seen:
-                    lexical_score = 3.0 - rank / max(limit, 1)
-                    found[mid] = (max(found.get(mid, (0, None))[0], lexical_score), moment)
-        ranked = sorted(found.values(), key=lambda item: (
-            item[0] + (0.3 if item[1].get("highlighted") else 0),
-            item[1].get("timestamp", "")), reverse=True)
-        return [moment for _, moment in ranked[:limit]]
+                    candidate_row = candidate(mid, moment)
+                    raw_score = float(row.get("score") or 0)
+                    relative_score = raw_score / top_score if top_score > 0 else 0.0
+                    candidate_row["text_score"] = max(candidate_row["text_score"], relative_score)
+
+        # Text relevance remains the primary order. Exact indexed-entity matches,
+        # user highlights, and recency only break ties; these signals cannot
+        # displace a clearly stronger text match.
+        ranked = sorted(found.values(), key=lambda row: (
+            row["text_score"], len(row["entity_matches"]),
+            bool(row["moment"].get("highlighted")),
+            str(row["moment"].get("timestamp") or ""),
+        ), reverse=True)
+        selected = ranked[:limit]
+        if priority_details is not None:
+            for row in selected:
+                moment = row["moment"]
+                mid = str(moment.get("id") or "")
+                reasons = []
+                if row["text_score"] > 0:
+                    reasons.append("文本相关度")
+                if row["entity_matches"]:
+                    reasons.append("索引实体命中")
+                if moment.get("highlighted"):
+                    reasons.append("用户标记重点")
+                priority_details[mid] = {
+                    "id": mid,
+                    "text_relevance": round(row["text_score"], 3),
+                    "entity_matches": row["entity_matches"],
+                    "highlighted": bool(moment.get("highlighted")),
+                    "timestamp": str(moment.get("timestamp") or ""),
+                    "reasons": reasons or ["索引实体召回"],
+                }
+        return [row["moment"] for row in selected]
+
+    @staticmethod
+    def _priority_rows(moments: list[dict], details: dict,
+                       media_links: list[dict]) -> list[dict]:
+        linked = {str(link.get("to_id")): link for link in media_links}
+        rows = []
+        for moment in moments:
+            mid = str(moment.get("id") or "")
+            row = dict(details.get(mid) or {"id": mid, "reasons": []})
+            if mid in linked:
+                link = linked[mid]
+                row["multimodal_link"] = {
+                    "from_id": link.get("from_id"),
+                    "similarity": (link.get("similarity") or {}).get("score"),
+                    "modalities": (link.get("similarity") or {}).get("modalities") or {},
+                }
+                row["reasons"] = list(row.get("reasons") or []) + ["多模态相似关联"]
+            rows.append(row)
+        return rows
 
     def _media_neighbors(self, seeds: list[dict], seen: set[str],
                          limit: int = 3) -> tuple[list[dict], list[dict]]:
@@ -141,14 +204,17 @@ class MemoryReasoner:
         searches = self._strings(planner.get("searches"), 4) or [situation]
         entities = self._strings(planner.get("entities"), 6)
         seen: set[str] = set()
-        first = self._recall(searches, entities, seen, limit=9)
+        first_details: dict[str, dict] = {}
+        first = self._recall(searches, entities, seen, limit=9,
+                             priority_details=first_details)
         media_first, links_first = self._media_neighbors(first, {m["id"] for m in first})
         first.extend(media_first)
         for row in first:
             seen.add(row["id"])
         evidence = first[:]
         rounds = [{"queries": searches, "candidate_ids": [m["id"] for m in first],
-                   "media_links": links_first}]
+                   "media_links": links_first,
+                   "candidate_details": self._priority_rows(first, first_details, links_first)}]
         summaries = {
             layer: str(self.memory.memory.get(layer, {}).get("summary") or "")[:700]
             for layer in ("layer4", "layer5")
@@ -188,14 +254,18 @@ class MemoryReasoner:
         decision = self._infer(final_prompt(evidence, True))
         followups = self._strings(decision.get("followup_searches"), 3)
         if followups:
-            more = self._recall(followups, entities, seen, limit=8)
+            more_details: dict[str, dict] = {}
+            more = self._recall(followups, entities, seen, limit=8,
+                                priority_details=more_details)
             if more:
                 media_more, links_more = self._media_neighbors(more, seen | {m["id"] for m in more})
                 more.extend(media_more)
                 evidence.extend(more)
                 rounds.append({"queries": followups,
                                "candidate_ids": [m["id"] for m in more],
-                               "media_links": links_more})
+                               "media_links": links_more,
+                               "candidate_details": self._priority_rows(
+                                   more, more_details, links_more)})
                 decision = self._infer(final_prompt(evidence, False))
 
         model_decision = dict(decision)

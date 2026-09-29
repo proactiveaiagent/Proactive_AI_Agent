@@ -274,6 +274,50 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send_file(idx, "text/html; charset=utf-8")
             return self._send(404, {"error": "index.html not found"})
 
+        if url.path == "/api/memory_asset":
+            if SESSION is None:
+                return self._send(404, {"error": "no interactive session"})
+            rel = (qs.get("p") or [""])[0]
+            root = SESSION.mem.memory_dir.resolve()
+            asset = (root / rel).resolve()
+            if not rel.startswith("assets/") or not asset.is_relative_to(root / "assets"):
+                return self._send(400, {"error": "invalid asset path"})
+            if not asset.is_file():
+                return self._send(404, {"error": "memory asset missing"})
+            ctype = {".webp": "image/webp", ".ogg": "audio/ogg"}.get(asset.suffix)
+            if not ctype:
+                return self._send(400, {"error": "invalid asset type"})
+            return self._send_file(asset, ctype)
+
+        if url.path == "/api/interactive/progress":
+            try:
+                after = float((qs.get("after") or ["0"])[0])
+            except (TypeError, ValueError):
+                after = 0
+            if SESSION is None:
+                return self._send(404, {"error": "no session"})
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-cache, no-store")
+            self.send_header("Connection", "keep-alive")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            last = None
+            while True:
+                progress = dict(SESSION.nightly_progress) if SESSION.nightly_progress else None
+                fresh = progress and progress.get("updated_at", 0) >= after
+                payload = json.dumps(progress, ensure_ascii=False)
+                if fresh and payload != last:
+                    try:
+                        self.wfile.write(f"event: progress\ndata: {payload}\n\n".encode("utf-8"))
+                        self.wfile.flush()
+                    except (BrokenPipeError, ConnectionResetError, OSError):
+                        return
+                    last = payload
+                if fresh and not progress.get("running"):
+                    return
+                threading.Event().wait(0.5)
+
         if url.path == "/api/video_preview/status":
             return self._preview_status()
 
@@ -285,6 +329,29 @@ class Handler(BaseHTTPRequestHandler):
             if evaluation is None:
                 return self._send(503, {"error": "evaluation data is not ready"})
             return self._send(200, evaluation)
+
+        if url.path == "/api/multimodal-capacity":
+            return self._send(200, {
+                "short_120": load_json(RUNS / "multimodal_baseline_v5_20260929" / "capacity_report.json"),
+                "long_725": load_json(RUNS / "multimodal_full_day_v5_20260929" / "capacity_report.json"),
+            })
+
+        if url.path == "/api/semantic-scenario-review":
+            report_path = RUNS / "semantic_scenario_review_20260929_v6" / "scenario_review.json"
+            if not report_path.exists():
+                report_path = RUNS / "semantic_scenario_review_20260929_v5" / "scenario_review.json"
+            if not report_path.exists():
+                report_path = RUNS / "semantic_scenario_review_20260929_v4" / "scenario_review.json"
+            if not report_path.exists():
+                report_path = RUNS / "semantic_scenario_review_20260929_v3" / "scenario_review.json"
+            if not report_path.exists():
+                report_path = RUNS / "semantic_scenario_review_20260929_v2" / "scenario_review.json"
+            if not report_path.exists():
+                report_path = RUNS / "semantic_scenario_review_20260929" / "scenario_review.json"
+            report = load_json(report_path)
+            if report is None:
+                return self._send(404, {"error": "场景审阅仍在生成"})
+            return self._send(200, report)
 
         if url.path == "/api/scenarios":
             out = []
@@ -361,6 +428,25 @@ class Handler(BaseHTTPRequestHandler):
         if url.path == "/api/interactive/options":
             return self._send(200, ir.interactive_dataset_options())
 
+        if url.path == "/api/interactive/reason":
+            if SESSION is None:
+                return self._send(404, {"error": "请先创建交互会话"})
+            situation = (qs.get("situation") or [""])[0].strip()[:1200]
+            if not situation:
+                return self._send(400, {"error": "请填写当前事件"})
+            if not STEP_LOCK.acquire(blocking=False):
+                return self._send(409, {"error": "当前步骤正在运行，请完成后再分析"})
+            try:
+                result = SESSION.daytime.advise(situation)
+                log_path = SESSION.mem.memory_dir / "reasoning_log.jsonl"
+                with log_path.open("a", encoding="utf-8") as f:
+                    f.write(json.dumps(result, ensure_ascii=False) + "\n")
+                return self._send(200, result)
+            except Exception as exc:
+                return self._send(503, {"error": f"语义推理未完成：{exc}"})
+            finally:
+                STEP_LOCK.release()
+
         if url.path == "/api/interactive/new":
             key = (qs.get("scenario") or ["short_term"])[0]
             participant = (qs.get("participant") or [""])[0] or None
@@ -408,13 +494,16 @@ class Handler(BaseHTTPRequestHandler):
             force = (qs.get("force") or ["0"])[0] in ("1", "true", "True")
             automatic = (qs.get("automatic") or ["0"])[0] in ("1", "true", "True")
             continuous_kind = (qs.get("continuous_kind") or [None])[0]
+            use_cache = (qs.get("use_cache") or ["1"])[0] not in ("0", "false", "False")
             if not STEP_LOCK.acquire(blocking=False):
                 return self._send(409, {"error": "busy",
                                         "message": "上一步仍在执行（实时推理可能需要数分钟），请稍候"})
             ACTIVE_STEP_FORCE = force
             try:
                 try:
-                    msg = SESSION.run_step(force=force, automatic=automatic, continuous_kind=continuous_kind)
+                    msg = SESSION.run_step(force=force, automatic=automatic,
+                                            continuous_kind=continuous_kind,
+                                            use_cache=use_cache)
                 except Exception as e:
                     return self._send(500, {"error": f"执行失败: {e}"})
                 st = SESSION.state()

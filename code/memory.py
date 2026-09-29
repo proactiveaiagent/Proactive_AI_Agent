@@ -1127,10 +1127,17 @@ class PersonMemory:
 
     def query(self, query_text: str, top_k: int = 5) -> List[Dict]:
         """Search the Layer 7 archive with stopword filtering and BM25 ranking."""
+        return [row["moment"] for row in self.query_ranked(query_text, top_k)]
+
+    def query_ranked(self, query_text: str, top_k: int = 5) -> List[Dict]:
+        """Return active Layer 7 memories with their field-aware BM25 scores."""
         if top_k <= 0:
             return []
         documents = list(self.memory["layer7"]["moments"].values())
-        return [moment for _, moment in _rank_memory_docs(query_text, documents)[:top_k]]
+        return [
+            {"score": round(score, 6), "moment": moment}
+            for score, moment in _rank_memory_docs(query_text, documents)[:top_k]
+        ]
 
     def query_hierarchical(self, query_text: str, top_k: int = 5) -> List[Dict]:
         """Search L1→L5 in order, using BM25 within each layer and early stopping."""

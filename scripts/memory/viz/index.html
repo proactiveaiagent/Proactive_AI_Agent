@@ -560,6 +560,15 @@ body{height:100vh;height:100dvh;min-height:0;display:flex;flex-direction:column}
 .storage-projection-table tr:last-child td{border-bottom:0}
 .storage-projection-ok{color:#14845b}
 .storage-projection-note{margin:6px 0 0;color:#68758d;font-size:10px;line-height:1.55}
+.media-evidence{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:7px 0 2px;padding:6px 8px;border:1px solid #dbe5f2;border-radius:8px;background:#f7faff;color:#52647e;font-size:12px}
+.media-evidence img{width:96px;height:54px;object-fit:cover;border-radius:5px;background:#dce4ef}
+.media-evidence audio{width:190px;height:30px}
+.reason-controls{display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap}
+.reason-controls textarea{flex:1 1 480px;min-height:76px;resize:vertical;border:1px solid #d4ddec;border-radius:8px;padding:9px;font:inherit}
+.reason-examples{display:flex;gap:6px;flex-wrap:wrap;margin:9px 0}
+.reason-result{margin-top:12px;line-height:1.55}
+.reason-result article{padding:10px 12px;margin:8px 0;background:#f7faff;border:1px solid #dde5f3;border-radius:9px}
+.reason-result ul{margin:6px 0 0 20px}
 </style>
 </head>
 <body>
@@ -599,6 +608,7 @@ body{height:100vh;height:100dvh;min-height:0;display:flex;flex-direction:column}
       <button class="view-tab" role="tab" aria-selected="false" data-view="layers">逐层详情</button>
     <button class="view-tab" role="tab" aria-selected="false" data-view="index">索引与画像</button>
     <button class="view-tab" role="tab" aria-selected="false" data-view="memory">完整记忆</button>
+    <button class="view-tab" role="tab" aria-selected="false" data-view="reason">语义决策</button>
     <button class='view-tab' role='tab' aria-selected='false' data-view='evaluation'>评估指标</button>
     <button class="view-tab" role="tab" aria-selected="false" data-view="log">操作日志</button>
   </nav>
@@ -634,12 +644,30 @@ body{height:100vh;height:100dvh;min-height:0;display:flex;flex-direction:column}
         <button class="btn primary" id="runStepBtn" onclick="runStep(false)" disabled>▶ 运行此步</button>
         <button class="btn" id="liveBtn" onclick="runStep(true)" disabled>⚡ 实时推理此步</button>
         <button class="btn" id="cancelInferenceBtn" onclick="cancelInference()" style="display:none" disabled>⏹ 停止推理</button>
+        <label class="note" id="nightlyCacheOption" style="display:none;align-self:center"><input id="useNightlyCache" type="checkbox" checked> 使用整理缓存（已完成的模型步骤可复用）</label>
         <button class="btn" id="autoBtn" title="连续执行相邻的同类步骤，遇到另一种操作时自动停止" onclick="toggleAuto()" disabled>⏩ 连续运行当前类型</button>
       </div>
       <div class="lastres" id="lastRes"></div>
+      <div id="nightlyProgress" class="note" aria-live="polite" style="display:none;margin:10px 0;padding:12px;border:1px solid #d7deed;border-radius:10px"></div>
       <div id="percBox"></div>
     </div>
   </div></section>
+
+  <section class="content-panel" data-view-panel="reason" role="tabpanel" aria-label="语义决策">
+    <div class="card">
+      <h2><span class="dot"></span>从记忆到行动建议</h2>
+      <p class="note">先在“当前步骤”写入记忆，再描述当下发生的事。模型规划关联检索、读取证据，最后给出建议；建议不会自动执行。</p>
+      <div class="reason-examples">
+        <button class="btn" onclick="setReasonExample('Alice 现在需要帮助，结合已经认识的 Alice 和当前场景，下一步应该做什么？')">Alice</button>
+        <button class="btn" onclick="setReasonExample('眼前有人突然晕倒。结合已存的相关健康信息，应该采取什么行动？')">有人晕倒</button>
+        <button class="btn" onclick="setReasonExample('用户刚从中国到美国，在餐厅用餐后忘记付小费。是否需要提醒？')">跨国付小费</button>
+      </div>
+      <div class="note" style="margin:12px 0 6px"><b>真实记忆场景审阅</b> · 基于 725 条 EgoLife 完整日记忆 · 定性示例，不计入准确率</div>
+      <div id="semanticScenarioReview" class="reason-result" aria-live="polite">正在读取场景审阅结果…</div>
+      <div class="reason-controls"><textarea id="reasonSituation" aria-label="当前事件" placeholder="描述当下事件、人物和地点"></textarea><button class="btn primary" id="reasonRunBtn" onclick="runMemoryReason()">关联检索并推理</button></div>
+      <div id="reasonResult" class="reason-result" aria-live="polite"></div>
+    </div>
+  </section>
 
   <section class="content-panel active" data-view-panel="overview" role="tabpanel" aria-label="记忆流动">
   <section class="card flow-card" id="memoryFlowCard">
@@ -733,6 +761,10 @@ body{height:100vh;height:100dvh;min-height:0;display:flex;flex-direction:column}
         </div>
         <p class='storage-projection-note'>估算依据：长期样本的一个完整 A1_JAKE 日包含 725 条唯一记忆；容量测试实测约 3,005.85 B/条（4.36 MB/1,450 条，含索引），据此按每天同等使用量线性外推。1450 条长测标注对应 725 个唯一片段，已按唯一记忆计数。实际一天记忆文件约 1.84 MB，因此表格基准略保守。</p>
         <p class='storage-projection-note'>按 1 个月 30 天、半年 182.5 天、1 年 365 天计算；不含原始视频。十年估算约 7.95 GB，低于 100 GB 目标。实际用量会随每天记忆条数、摘要压缩和索引变化而变化。</p>
+      </section>
+      <section class='eval-block' id='multimodalCapacityBlock'>
+        <div class='eval-block-heading'><h3>多模态记忆容量 · 新样本</h3><span>关键帧、短音频、文本与索引；不含原始视频</span></div>
+        <div id='multimodalCapacityContent' class='eval-plain'>正在读取多模态样本…</div>
       </section>
       <section class='eval-block eval-acceptance'>
         <div class='eval-block-heading'><h3>飞书文档的三项验收标准</h3><span>问答分数不能替代基础操作准确率</span></div>
@@ -831,7 +863,6 @@ body{height:100vh;height:100dvh;min-height:0;display:flex;flex-direction:column}
           <div class='eval-help-item'><b>提取速度 / 存储容量</b><span>提取速度只计记忆检索，不含视频处理和 Qwen 推理；容量统计记忆文件与索引，不含原始视频。验收目标分别为 ≤1 秒、≤100 GB。</span></div>
         </div>
       </section>
-      <p class='eval-help-section' id='evalHelpScopeText'><b>范围提醒：</b>人物筛选会切换短期/长期同题问答和短期 AI 抽查；CRUD 与飞书验收总览仍是全体汇总。500 道跨日选择题目前只覆盖 Jake。题库没有“证据不足”选项，模型必须选择 A–D；当前归类 AI 抽测原始全支持率为 71.8%，参与者/小时加权估计为 70.6%，低于飞书文档的 ≥95% 目标。</p>
     </div>
     </div>
     <div class='eval-help-tab-panel' id='evalHelpPanelReview' role='tabpanel' aria-labelledby='evalHelpTabReview' hidden>
@@ -1062,6 +1093,18 @@ function renderSummaryLayer(layer, kind){
   }
   return html;
 }
+function renderMultimodalEvidence(x){
+  const media=x&&x.multimodal;
+  if(!media) return '';
+  const visual=media.visual||{}, audio=media.audio||{};
+  const speakers=(media.entities&&media.entities.speakers)||[];
+  const bytes=Number(visual.bytes||0)+Number(audio.bytes||0);
+  const bits=[];
+  if(visual.url) bits.push('<img loading="lazy" alt="记忆关键帧" src="'+esc(visual.url)+'">');
+  bits.push('<span>多模态证据 · '+(visual.url?'画面 ':'')+(audio.url?'声音 ':'')+'· '+(bytes/1024).toFixed(1)+' KB'+(speakers.length?' · 说话人 '+esc(speakers.join(', ')):'')+'</span>');
+  if(audio.url) bits.push('<audio controls preload="none" src="'+esc(audio.url)+'" aria-label="记忆音频证据"></audio>');
+  return '<div class="media-evidence">'+bits.join('')+'</div>';
+}
 function renderMomentDetail(x, compact){
   if(!x) return '';
   const scene=String(x.scene||'');
@@ -1086,6 +1129,7 @@ function renderMomentDetail(x, compact){
   else html+='<div class="moment-preview">'+excerpt(headline,previewLimit)+'</div>';
   if(scene&&action) html+='<div class="moment-action-preview"><b>Action:</b> '+excerpt(action,64)+'</div>';
   if(notes&&notes!==headline&&notes!==action) html+='<div class="moment-notes-preview"><b>Additional context</b> '+excerpt(notes,72)+'</div>';
+  html+=renderMultimodalEvidence(x);
   const expandNeeded=headline.length>previewLimit||(action&&action!==headline&&action.length>64)||(notes&&notes!==headline&&notes!==action&&notes.length>72);
   html+='<button type="button" class="memory-expand-toggle" data-expand-truncated="'+(expandNeeded?'true':'false')+'" data-memory=\''+payload+'\' aria-label="展开完整记忆" title="展开完整记忆" hidden onclick="toggleLayerMemoryDetail(this)">∨</button>';
   return html+'</article>';
@@ -1103,7 +1147,7 @@ function renderLayerMemoryRow(x, sourceLabel){
   const excerpt=content.length>150?content.slice(0,150).trimEnd()+'…':content;
   const context=[sourceLabel||'',String(x.timestamp||'').replace('T',' ').slice(0,16),x.location||'',x.activity||'',...(Array.isArray(x.people)?x.people.slice(0,2):[])].filter(Boolean).join(' · ');
   const payload=esc(JSON.stringify(x)).replace(/'/g,'&#39;');
-  return '<div class="layer-memory-row"><div class="layer-memory-context">'+esc(context||'已归档记忆')+'</div><div class="layer-memory-copy">'+esc(excerpt)+'</div><button type="button" class="memory-expand-toggle" data-expand-truncated="'+(content.length>150?'true':'false')+'" data-memory=\''+payload+'\' aria-label="展开完整记忆" title="展开完整记忆" hidden onclick="toggleLayerMemoryDetail(this)">∨</button></div>';
+  return '<div class="layer-memory-row"><div class="layer-memory-context">'+esc(context||'已归档记忆')+'</div><div class="layer-memory-copy">'+esc(excerpt)+'</div>'+renderMultimodalEvidence(x)+'<button type="button" class="memory-expand-toggle" data-expand-truncated="'+(content.length>150?'true':'false')+'" data-memory=\''+payload+'\' aria-label="展开完整记忆" title="展开完整记忆" hidden onclick="toggleLayerMemoryDetail(this)">∨</button></div>';
 }
 function renderLayerTextButton(text,label,title){
   const payload=esc(JSON.stringify(String(text||''))).replace(/'/g,'&#39;');
@@ -1263,6 +1307,7 @@ function renderFullMemory(full){
     const count=Number(counts[key]??(full[key]||[]).length);
     return '<span class="window-count layer-tone-l'+key.slice(-1)+'"><b>'+label+'</b> '+count+' / '+cap+'</span>';
   }).join('')+'</div>';
+  if(full.multimodal_asset_bytes!=null) html+='<div class="layer-note">多模态证据资产 '+(Number(full.multimodal_asset_bytes)/1048576).toFixed(2)+' MiB（已去重；不含原始视频）</div>';
   html+='<div class="window-intro"><span class="layer-token layer-tone-l1">L1</span>/<span class="layer-token layer-tone-l2">L2</span>/<span class="layer-token layer-tone-l3">L3</span> 是同一 moment 结构的不同窗口，条目可能重叠。下面按 moment ID 去重；每条记录旁的彩色标记表示它当前属于哪些窗口。滑出窗口不会删除 <span class="layer-token layer-tone-l7">L7</span> 归档事实。</div>';
   for(const [key] of windows){
     for(const item of (full[key]||[])){
@@ -1866,8 +1911,26 @@ async function runStep(force, automatic=false, continuousKind=null){
   const kindLabel=KIND_CN[continuousKind]||continuousKind||'当前类型';
   btn.textContent = force?'⏳ Qwen 实时推理中…（可点击“停止推理”）':(automatic?'⏳ 连续执行「'+kindLabel+'」…':'⏳ 执行中…');
   autoBusy=true;
+  const progressBox=document.getElementById('nightlyProgress');
+  const cacheOption=document.getElementById('nightlyCacheOption');
+  const isNightly=intState.current&&intState.current.kind==='nightly';
+  let progressStream=null;
+  if(cacheOption) cacheOption.style.display=isNightly?'inline-flex':'none';
+  if(progressBox){progressBox.style.display=isNightly?'block':'none';progressBox.innerHTML='';}
+  if(isNightly){
+    progressStream=new EventSource(API+'/api/interactive/progress?after='+(Date.now()/1000));
+    progressStream.addEventListener('progress',event=>{
+      const p=JSON.parse(event.data||'null');
+      if(!p||!progressBox) return;
+      const step=p.total?(' · '+p.current+'/'+p.total):'';
+      progressBox.innerHTML='<b>'+esc(p.label||'夜间整理')+esc(step)+'</b>'
+        +(p.message?'<div style="margin-top:5px">'+esc(p.message)+'</div>':'')
+        +'<div style="margin-top:5px;color:#667085">缓存命中 '+(Number(p.cache_hits)||0)+' 项 · 模型调用 '+(Number(p.model_calls)||0)+' 次</div>';
+    });
+  }
   try{
     const params=new URLSearchParams();
+    if(isNightly && !document.getElementById('useNightlyCache')?.checked) params.set('use_cache','0');
     if(force) params.set('force','1');
     if(automatic) params.set('automatic','1');
     if(automatic && continuousKind) params.set('continuous_kind',continuousKind);
@@ -1884,6 +1947,7 @@ async function runStep(force, automatic=false, continuousKind=null){
     if(st.auto_paused) stopAuto();
     renderInt();
   }finally{
+    if(progressStream) progressStream.close();
     autoBusy=false;
     if(cancelBtn){ cancelBtn.style.display='none'; cancelBtn.disabled=true; cancelBtn.textContent='⏹ 停止推理'; }
     updateRunBtn();
@@ -2195,6 +2259,8 @@ function renderInputs(inputs, expand){
 }
 
 function renderStepCard(){
+  const nightlyOption=document.getElementById('nightlyCacheOption');
+  if(nightlyOption) nightlyOption.style.display=curStep&&curStep.kind==='nightly'?'inline-flex':'none';
   const sd=document.getElementById('stepDetail');
   const actions=document.getElementById('stepActions');
   if(actions&&actions.parentElement===sd) actions.remove();
@@ -2425,6 +2491,111 @@ document.addEventListener('keydown',e=>{
     e.preventDefault();stepTimeline(1);
   }
 });
+
+function setReasonExample(text){
+  document.getElementById('reasonSituation').value=text;
+  document.getElementById('reasonSituation').focus();
+}
+function renderPriorityDetails(rounds){
+  const labels={people:'人物',locations:'地点',activity_events:'活动',objects:'物品',environments:'环境'};
+  const content=(rounds||[]).map((round,index)=>{
+    const rows=(round.candidate_details||[]).slice(0,6).map(item=>{
+      const why=[];
+      if(Number.isFinite(Number(item.text_relevance))&&Number(item.text_relevance)>0)
+        why.push('文本相关度 '+Number(item.text_relevance).toFixed(2));
+      (item.entity_matches||[]).forEach(match=>why.push((labels[match.dimension]||match.dimension)+'命中 '+match.tag));
+      if(item.highlighted)why.push('已标重点');
+      const mm=item.multimodal_link;
+      if(mm){
+        const modalities=Object.entries(mm.modalities||{}).map(([key,value])=>
+          (key==='visual'?'画面':key==='audio'?'音频':'实体')+' '+Math.round(Number(value)*100)+'%');
+        why.push('关联 '+(modalities.join(' / ')||'多模态')+'（总相似度 '+Math.round(Number(mm.similarity||0)*100)+'%）');
+      }
+      if(!why.length)why.push('索引实体召回');
+      return '<li><code>'+esc(item.id||'')+'</code> · '+esc(why.join('；'))+'</li>';
+    }).join('');
+    return rows?'<div><b>第 '+(index+1)+' 轮前 6 条候选</b><ul>'+rows+'</ul></div>':'';
+  }).join('');
+  return content?'<details><summary>候选为什么排在这里</summary><div class="note">先按本轮最高文本相关度排序；索引实体、重点标记和时间只用于同分排序。文本相关度是本轮归一化排序值，不是准确率。</div>'+content+'</details>':'';
+}
+async function runMemoryReason(){
+  const situation=document.getElementById('reasonSituation').value.trim();
+  const box=document.getElementById('reasonResult');
+  const button=document.getElementById('reasonRunBtn');
+  if(!situation){box.textContent='请先描述当前事件。';return;}
+  button.disabled=true;
+  box.textContent='正在规划检索并生成有证据的建议…';
+  try{
+    const response=await fetch(API+'/api/interactive/reason?situation='+encodeURIComponent(situation),{cache:'no-store'});
+    const result=await response.json();
+    if(!response.ok) throw new Error(result.error||('HTTP '+response.status));
+    const rec=result.recommendation||{};
+    const cited=new Set(rec.evidence_ids||[]);
+    const rounds=(result.retrieval_rounds||[]).map((round,index)=>{
+      const links=(round.media_links||[]).map(link=>'<li><code>'+esc(link.from_id||'')+'</code> → <code>'+esc(link.to_id||'')+'</code> · 相似度 '+Math.round(Number((link.similarity||{}).score||0)*100)+'%</li>').join('');
+      return '<article><b>第 '+(index+1)+' 轮检索</b> · '+esc((round.queries||[]).join(' / '))+'<div class="note">候选记忆 '+(round.candidate_ids||[]).length+' 条；其中画面/音频关联 '+(round.media_links||[]).length+' 条</div>'+(links?'<ul>'+links+'</ul>':'')+'</article>';
+    }).join('');
+    const candidates=(result.candidates||[]).slice(0,12).map(item=>'<li>'+(cited.has(item.id)?'<b>证据</b> ':'')+'<code>'+esc(item.id||'')+'</code> · '+esc((item.scene||item.action||'').slice(0,230))+'</li>').join('');
+    box.innerHTML='<article><b>建议动作</b><div>'+esc(rec.action||'模型未给出可执行建议')+'</div><div class="note">'+esc(rec.reason||'')+'</div>'+
+      (rec.uncertainty?'<div class="note">不确定性：'+esc(rec.uncertainty)+'</div>':'')+
+      (rec.world_assumption?'<div class="note">一般知识假设：'+esc(rec.world_assumption)+'</div>':'')+
+      ((result.policy_adjustments||[]).length?'<div class="note">规则校正：'+esc(result.policy_adjustments.join('；'))+'</div>':'')+
+      ((result.model_recommendation||{}).action?'<details><summary>查看模型原始建议</summary><p>'+esc(result.model_recommendation.action)+'</p><p>'+esc(result.model_recommendation.reason||'')+'</p></details>':'')+
+      '<div class="note">风险：'+esc(rec.risk||'未知')+' · 推理耗时 '+Number(result.elapsed_ms||0)+' ms · 引用 '+cited.size+' 条记忆</div></article>'+
+      rounds+renderPriorityDetails(result.retrieval_rounds||[])+'<article><b>检索到的记忆</b>'+(candidates?'<ul>'+candidates+'</ul>':'<div class="note">当前会话没有找到相关记忆；建议应按缺少个人证据理解。</div>')+'</article>';
+  }catch(error){box.textContent=String(error.message||error);}
+  finally{button.disabled=false;}
+}
+
+fetch(API+'/api/semantic-scenario-review',{cache:'no-store'})
+  .then(response=>{if(!response.ok)throw new Error('审阅尚未完成');return response.json();})
+  .then(data=>{
+    const rows=Object.values(data.scenarios||{});
+    const host=document.getElementById('semanticScenarioReview');
+    if(!rows.length){host.textContent='场景审阅尚无结果。';return;}
+    host.innerHTML=rows.map(item=>{
+      const rec=item.recommendation||{}, cited=new Set(rec.evidence_ids||[]);
+      const raw=item.model_recommendation||{};
+      const candidates=item.candidates||[];
+      const evidence=candidates.filter(m=>cited.has(m.id)).map(m=>
+        '<li><code>'+esc(m.id||'')+'</code> · '+esc((m.scene||m.action||'').slice(0,240))+'</li>'
+      ).join('');
+      const other=candidates.filter(m=>!cited.has(m.id)).slice(0,5).map(m=>
+        '<li><code>'+esc(m.id||'')+'</code> · '+esc((m.scene||m.action||'').slice(0,180))+'</li>'
+      ).join('');
+      const trace=(item.retrieval_rounds||[]).map((round,index)=>
+        '<li>第 '+(index+1)+' 轮：'+esc((round.queries||[]).join(' / '))+
+        ' · '+(round.candidate_ids||[]).length+' 条候选'+
+        ((round.media_links||[]).length?' · 多模态关联 '+(round.media_links||[]).length+' 条':'')+'</li>'
+      ).join('');
+      return '<article><b>'+esc(item.title||'场景')+'</b>'+
+        '<div><b>建议：</b>'+esc(rec.action||'未生成')+'</div>'+
+        '<div class="note">'+esc(rec.reason||'')+'</div>'+
+        (rec.uncertainty?'<div class="note">证据边界：'+esc(rec.uncertainty)+'</div>':'')+
+        (rec.world_assumption?'<div class="note">一般知识：'+esc(rec.world_assumption)+'</div>':'')+
+        ((item.policy_adjustments||[]).length?'<div class="note">规则校正：'+esc(item.policy_adjustments.join('；'))+'</div>':'')+
+        '<div class="note">风险：'+esc(rec.risk||'未知')+' · 引用 '+cited.size+' 条记忆 · '+Number(item.elapsed_ms||0)+' ms</div>'+
+        '<details><summary>查看问题、检索过程和记忆</summary><p>'+esc(item.situation||'')+'</p>'+
+      (trace?'<b>检索过程</b><ul>'+trace+'</ul>':'')+
+      renderPriorityDetails(item.retrieval_rounds||[])+
+        (raw.action?'<b>模型原始建议</b><p>'+esc(raw.action)+'</p><p class="note">'+esc(raw.reason||'')+'</p>':'')+
+        '<b>模型引用的个人记忆</b>'+
+        (evidence?'<ul>'+evidence+'</ul>':'<p class="note">本场景没有引用到个人记忆。</p>')+
+        (other?'<b>检索到但未引用</b><ul>'+other+'</ul>':'')+
+        '<p class="note">审阅要点：'+esc(item.review_target||'')+'</p></details></article>';
+    }).join('');
+  })
+  .catch(error=>{document.getElementById('semanticScenarioReview').textContent='场景审阅结果尚未生成：'+error.message;});
+
+fetch(API+'/api/multimodal-capacity',{cache:'no-store'})
+  .then(response=>{if(!response.ok)throw new Error('HTTP '+response.status);return response.json();})
+  .then(data=>{
+    const short=data.short_120, long=data.long_725;
+    const format=(name,item)=>item?'<article class="eval-card"><h3>'+esc(name)+'</h3><div class="eval-main">'+(Number(item.total_bytes||0)/1048576).toFixed(2)+' MiB</div><p>'+Number(item.stored_moments||0)+' 条记忆 · 画面 '+Number(item.visual_evidence_count||0)+' · 音频 '+Number(item.audio_evidence_count||0)+'</p><small>单人十年线性推算 '+esc(String(item.projected_10yr_gib_at_725_moments_per_day||'—'))+' GiB；样本估算，尚未作为多模态验收结果。</small></article>':'';
+    document.getElementById('multimodalCapacityContent').innerHTML='<div class="eval-grid eval-summary-grid">'+format('短期 120 条',short)+format('完整日 725 条',long)+'</div>'+
+      ((!short&&!long)?'<p>样本正在生成；当前上方 7.95 GB 为纯文本记忆推算。</p>':'<p>每条资产分别受 12 KB 画面、6 KB 声音限制；内容哈希复用，80 GiB 媒体资产预算可配置。十年值按 725 条/天外推，不包含源视频。</p>');
+  })
+  .catch(error=>{document.getElementById('multimodalCapacityContent').textContent='多模态样本暂不可用：'+error.message;});
 
 fetch(API+'/api/evaluation-data',{cache:'no-store'})
   .then(response=>{if(!response.ok)throw new Error('HTTP '+response.status);return response.json();})
