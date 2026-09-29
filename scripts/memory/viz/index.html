@@ -1034,6 +1034,7 @@ function collectProfileEntries(value, path, out){
         if(value.source) meta.push('来源 '+String(value.source));
         if(value.last_seen) meta.push('最近观察 '+String(value.last_seen).slice(0,10));
         if(value.observations) meta.push('观察 '+value.observations+' 次');
+        if(Array.isArray(value.history)&&value.history.length) meta.push('历史冲突 '+value.history.length+' 项');
         out.push({path:path,value:typeof v==='object'?JSON.stringify(v):String(v),meta:meta.join(' · ')});
       }
       return;
@@ -1044,6 +1045,50 @@ function collectProfileEntries(value, path, out){
     return;
   }
   if(value!=='') out.push({path:path,value:String(value),meta:''});
+}
+function collectProfileConflicts(value, path, out){
+  if(value==null) return;
+  if(Array.isArray(value)){
+    value.forEach((item,i)=>collectProfileConflicts(item,path+'['+(i+1)+']',out));
+    return;
+  }
+  if(typeof value!=='object') return;
+  if(Object.prototype.hasOwnProperty.call(value,'value')){
+    (Array.isArray(value.history)?value.history:[]).forEach(item=>{
+      if(!item||typeof item!=='object'||!Object.prototype.hasOwnProperty.call(item,'value')) return;
+      const resolution=item.resolution||{};
+      const basisLabels={
+        observations:'观测次数更多',recency:'观察时间更新',confidence:'置信度更高',
+        existing_value_tiebreak:'条件相同时保留旧值'
+      };
+      const explanation=basisLabels[resolution.basis]||'旧记录未保存裁决依据';
+      out.push({
+        path:path,
+        oldValue:fieldText(item.value),
+        newValue:fieldText(resolution.winner_value!==undefined?resolution.winner_value:value.value),
+        explanation:explanation,
+        source:item.source||'未知来源',
+        at:resolution.resolved_at||''
+      });
+    });
+    return;
+  }
+  for(const [key,child] of Object.entries(value)){
+    collectProfileConflicts(child,path?path+'.'+key:key,out);
+  }
+}
+function renderProfileConflictHistory(p){
+  const conflicts=[];
+  collectProfileConflicts(p||{},'',conflicts);
+  if(!conflicts.length) return '';
+  const rows=conflicts.slice(-20).reverse().map(item=>
+    '<div class="profile-attribute"><b>'+esc(item.path)+'</b>'+
+    '<span>'+esc(item.oldValue)+' → '+esc(item.newValue)+'</span>'+
+    '<small>'+esc(item.explanation)+' · 来源 '+esc(item.source)+
+    (item.at?' · '+esc(item.at.slice(0,16).replace('T',' ')):' · 时间未记录')+
+    '</small></div>'
+  ).join('');
+  return '<details class="profile-conflict-history" style="margin-top:10px"><summary>历史冲突 '+conflicts.length+' 项（已显示最近 '+Math.min(20,conflicts.length)+' 项）</summary>'+rows+'</details>';
 }
 function renderProfileFromFull(p, summary='', layerData={}){
   const entries=[];
@@ -1056,6 +1101,7 @@ function renderProfileFromFull(p, summary='', layerData={}){
     const sourceCount=Number(layerData.source_moment_count||0);
     html+='<div class="profile-empty">当前没有已确认的画像事实'+(sourceCount===0?'；本次画像没有关联到任何来源 moment。字段名只是数据结构，不代表已经记住了对应属性。':'。')+'</div>';
   }
+  html+=renderProfileConflictHistory(p);
   const source=Number(layerData.source_moment_count||0);
   if(source) html+='<div class="layer-note">画像证据来源：'+source+' 条 moment · 更新于 '+esc(String(layerData.last_updated||'未知').slice(0,10))+'</div>';
   return html;
@@ -1195,13 +1241,16 @@ function renderCompactSummaryLayer(layer,kind){
 }
 function renderCompactProfileLayer(p,summary,layerData){
   const entries=[];
+  const conflicts=[];
   collectProfileEntries(p||{},'',entries);
+  collectProfileConflicts(p||{},'',conflicts);
   const shown=entries.slice(0,3).map(x=>'<span class="layer-strip-tag"><b>'+esc(x.path)+'</b> '+esc(x.value.length>48?x.value.slice(0,48).trimEnd()+'…':x.value)+'</span>');
   const source=Number((layerData||{}).source_moment_count||0);
-  const content=[summary||'',...entries.map(x=>x.path+'：'+x.value+(x.meta?'（'+x.meta+'）':''))].filter(Boolean).join('\n\n');
+  const conflictLines=conflicts.map(x=>'历史冲突 · '+x.path+'：'+x.oldValue+' → '+x.newValue+'（'+x.explanation+'；来源 '+x.source+'）');
+  const content=[summary||'',...entries.map(x=>x.path+'：'+x.value+(x.meta?'（'+x.meta+'）':'')),...conflictLines].filter(Boolean).join('\n\n');
   let html='<div class="layer-profile-strip">';
   if(summary) html+='<div class="layer-summary-copy">'+esc(summary)+'</div>';
-  if(shown.length) html+='<div class="layer-strip-tags">'+shown.join('')+(entries.length>3?'<span class="layer-strip-tag">另有 '+(entries.length-3)+' 项</span>':'')+'</div>';
+  if(shown.length) html+='<div class="layer-strip-tags">'+shown.join('')+(entries.length>3?'<span class="layer-strip-tag">另有 '+(entries.length-3)+' 项</span>':'')+(conflicts.length?'<span class="layer-strip-tag">历史冲突 '+conflicts.length+' 项</span>':'')+'</div>';
   else html+='<div class="layer-profile-empty">当前没有已确认的画像事实</div>';
   if(content) html+=renderLayerTextButton(content,'画像详情 →','Layer 6 画像详情');
   if(source) html+='<small class="layer-strip-meta">证据来源 '+source+' 条 moment</small>';

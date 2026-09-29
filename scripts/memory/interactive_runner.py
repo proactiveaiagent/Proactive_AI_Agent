@@ -247,27 +247,34 @@ class InteractiveSession:
             def audited(*args, __name=name, __original=original, **kwargs):
                 started = time.perf_counter()
                 before_moment = None
+                before_profile = None
                 if __name in ("update", "update_feedback", "highlight", "delete"):
                     mid = str(args[0] if args else kwargs.get("moment_id", ""))
                     item = self.mem.memory.get("layer7", {}).get("moments", {}).get(mid)
                     before_moment = copy.deepcopy(item) if isinstance(item, dict) else None
+                if __name == "update_profile":
+                    before_profile = copy.deepcopy(
+                        self.mem.memory.get("layer6", {}).get("profile", {})
+                    )
                 try:
                     result = __original(*args, **kwargs)
                 except Exception as exc:
                     self._append_operation(__name, args, kwargs, None,
                                            started, error=exc,
-                                           before_moment=before_moment)
+                                           before_moment=before_moment,
+                                           before_profile=before_profile)
                     raise
                 self._append_operation(
                     __name, args, kwargs, result, started,
                     before_moment=before_moment,
+                    before_profile=before_profile,
                 )
                 return result
 
             setattr(self.mem, name, audited)
 
     def _append_operation(self, name, args, kwargs, result, started,
-                          error=None, before_moment=None):
+                          error=None, before_moment=None, before_profile=None):
         """Append a factual audit event with the affected memory content."""
         status = "failed" if error else ("blocked" if result is False else "success")
         if name == "update" and result is False:
@@ -275,7 +282,7 @@ class InteractiveSession:
             exists = mid in self.mem.memory.get("layer7", {}).get("moments", {})
             status = "no_change" if exists else "blocked"
         summary = self._operation_summary(
-            name, args, kwargs, result, error, before_moment
+            name, args, kwargs, result, error, before_moment, before_profile
         )
         self.operation_log.append({
             "seq": len(self.operation_log) + 1,
@@ -316,7 +323,7 @@ class InteractiveSession:
         }
 
     def _operation_summary(self, name, args, kwargs, result, error,
-                           before_moment=None):
+                           before_moment=None, before_profile=None):
         if error:
             return f"{name} 失败：{str(error)[:140]}"
         arg0 = args[0] if args else kwargs.get("moment_id")
@@ -444,8 +451,60 @@ class InteractiveSession:
                 return (sum(x[0] for x in totals), sum(x[1] for x in totals))
             total, stale = count_attrs(profile)
             detail = f"画像 {total} 项 · 过时 {stale} 项" if total else "暂无画像字段 · 衰减状态已检查"
+
+            def conflicts(node, path=""):
+                found = []
+                if isinstance(node, dict) and "value" in node:
+                    for old_value in node.get("history", []) or []:
+                        if not isinstance(old_value, dict):
+                            continue
+                        found.append({
+                            "path": path,
+                            "old": old_value.get("value"),
+                            "new": node.get("value"),
+                            "resolution": old_value.get("resolution") or {},
+                        })
+                elif isinstance(node, dict):
+                    for key, value in node.items():
+                        found.extend(conflicts(value, f"{path}.{key}" if path else str(key)))
+                elif isinstance(node, list):
+                    for index, value in enumerate(node):
+                        found.extend(conflicts(value, f"{path}[{index + 1}]"))
+                return found
+
+            before_conflicts = conflicts(before_profile or {})
+            before_signatures = {
+                (item["path"], json.dumps(item["old"], ensure_ascii=False, sort_keys=True, default=str),
+                 item["resolution"].get("resolved_at", ""))
+                for item in before_conflicts
+            }
+            new_conflicts = [
+                item for item in conflicts(profile)
+                if (item["path"], json.dumps(item["old"], ensure_ascii=False, sort_keys=True, default=str),
+                    item["resolution"].get("resolved_at", "")) not in before_signatures
+            ]
+            basis_labels = {
+                "observations": "观测次数更多",
+                "recency": "最近观察",
+                "confidence": "置信度更高",
+                "existing_value_tiebreak": "条件相同时保留旧值",
+            }
+            conflict_note = ""
+            if new_conflicts:
+                examples = []
+                for item in new_conflicts[:3]:
+                    resolution = item["resolution"]
+                    examples.append(
+                        f"{item['path']}「{self._brief_value(item['old'], 32)}」→"
+                        f"「{self._brief_value(item['new'], 32)}」"
+                        f"（{basis_labels.get(resolution.get('basis'), '裁决依据未记录')}）"
+                    )
+                conflict_note = f" · 新增冲突裁决 {len(new_conflicts)} 项：{'；'.join(examples)}"
+                if len(new_conflicts) > len(examples):
+                    conflict_note += f"；另有 {len(new_conflicts) - len(examples)} 项"
+                conflict_note += " · 旧值保留在画像历史"
             names = f" · 字段 {chr(12289).join(map(str, fields[:8]))}" if fields else ""
-            return f"更新用户画像 · {detail}{names}"
+            return f"更新用户画像 · {detail}{conflict_note}{names}"
         return name
 
     # ------------------------------------------------------------------

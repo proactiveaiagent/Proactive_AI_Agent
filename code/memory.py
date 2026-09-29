@@ -283,20 +283,61 @@ def _corroborate_attr(old: Dict, new: Dict) -> Dict:
 
 
 def _resolve_conflict(old: Dict, new: Dict) -> Dict:
-    """单值型冲突裁决：频次 > 最近 > 置信度，败者入 history 供审计。"""
-    if new.get("observations", 0) > old.get("observations", 0):
-        winner, loser = new, old
-    elif new.get("observations", 0) < old.get("observations", 0):
-        winner, loser = old, new
-    elif new.get("last_seen", "") > old.get("last_seen", ""):
-        winner, loser = new, old
-    elif new.get("confidence", 0) > old.get("confidence", 0):
-        winner, loser = new, old
+    """单值冲突裁决：观测次数 > 最近观察 > 置信度；平局保留已有值。
+
+    败者追加到 winner.history，并写明裁决依据、双方来源和值与裁决时间，
+    让画像当前值可追溯到被替代的观察。
+    """
+    old_count = max(1, int(old.get("observations", 1) or 1))
+    new_count = max(1, int(new.get("observations", 1) or 1))
+    old_seen = str(old.get("last_seen", "") or "")
+    new_seen = str(new.get("last_seen", "") or "")
+    old_conf = float(old.get("confidence", 0) or 0)
+    new_conf = float(new.get("confidence", 0) or 0)
+
+    if new_count != old_count:
+        winner, loser = (new, old) if new_count > old_count else (old, new)
+        basis = "observations"
+    elif new_seen != old_seen:
+        winner, loser = (new, old) if new_seen > old_seen else (old, new)
+        basis = "recency"
+    elif new_conf != old_conf:
+        winner, loser = (new, old) if new_conf > old_conf else (old, new)
+        basis = "confidence"
     else:
         winner, loser = old, new
-    winner.setdefault("history", []).append(loser)
-    return winner
+        basis = "existing_value_tiebreak"
 
+    # Carry forward prior history whichever value wins. Avoid nesting a whole
+    # history tree inside one loser entry as conflicts accumulate.
+    history = []
+    seen = set()
+    for candidate in (old, new):
+        entries = candidate.get("history")
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            signature = (
+                str(entry.get("value", "")),
+                str((entry.get("resolution") or {}).get("resolved_at", "")),
+                str(entry.get("source", "")),
+            )
+            if signature not in seen:
+                seen.add(signature)
+                history.append(entry)
+
+    loser_entry = {key: value for key, value in loser.items() if key != "history"}
+    loser_entry["resolution"] = {
+        "winner_value": winner.get("value"),
+        "winner_source": winner.get("source", ""),
+        "basis": basis,
+        "resolved_at": _now_iso(),
+    }
+    history.append(loser_entry)
+    winner["history"] = history
+    return winner
 
 def _merge_attr_list(old_list: List, new_list: List, threshold: float = MERGE_SIM_THRESHOLD) -> List:
     """列表型维度：追加去重。相似 → 佐证合并，否则追加新条目。绝不整体覆盖。"""

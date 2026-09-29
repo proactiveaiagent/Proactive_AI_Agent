@@ -56,6 +56,9 @@ mem.delete(mid, reason="user correction")  # highlighted 时返回 False
 
 完整方法和参数以 `code/memory.py` 的 `PersonMemory` 为准。反馈确认可调用 `update_feedback(mid, confirmed=True, corrections={...})`；画像只通过 `update_profile()` 写入，不要直接编辑 `layer6.profile`。
 
+画像单值属性冲突按“观测次数更多 → 最近观察 → 置信度更高”裁决；全部相同时保留已有值。败者写入该属性的 history，记录胜出值、双方来源、依据和时间。交互执行的操作日志会列出本次新增裁决；逐层详情与完整记忆中的 L6 画像可以展开查看历史。既有历史若无依据字段会标注“旧记录未保存裁决依据”。
+
+
 ## 3. 分层查看与备份
 
 记忆文件是 JSON。可用下列脚本查看每层数量、索引和画像，不打印完整个人内容：
