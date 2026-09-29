@@ -246,14 +246,7 @@ class InteractiveSession:
 
             def audited(*args, __name=name, __original=original, **kwargs):
                 started = time.perf_counter()
-                before_highlighted = None
                 before_moment = None
-                if __name == "combine":
-                    moments = self.mem.memory.get("layer7", {}).get("moments", {})
-                    before_highlighted = {
-                        mid for mid, item in moments.items()
-                        if isinstance(item, dict) and item.get("highlighted")
-                    }
                 if __name in ("update", "update_feedback", "highlight", "delete"):
                     mid = str(args[0] if args else kwargs.get("moment_id", ""))
                     item = self.mem.memory.get("layer7", {}).get("moments", {}).get(mid)
@@ -267,7 +260,6 @@ class InteractiveSession:
                     raise
                 self._append_operation(
                     __name, args, kwargs, result, started,
-                    before_highlighted=before_highlighted,
                     before_moment=before_moment,
                 )
                 return result
@@ -275,7 +267,7 @@ class InteractiveSession:
             setattr(self.mem, name, audited)
 
     def _append_operation(self, name, args, kwargs, result, started,
-                          error=None, before_highlighted=None, before_moment=None):
+                          error=None, before_moment=None):
         """Append a factual audit event with the affected memory content."""
         status = "failed" if error else ("blocked" if result is False else "success")
         if name == "update" and result is False:
@@ -283,7 +275,7 @@ class InteractiveSession:
             exists = mid in self.mem.memory.get("layer7", {}).get("moments", {})
             status = "no_change" if exists else "blocked"
         summary = self._operation_summary(
-            name, args, kwargs, result, error, before_highlighted, before_moment
+            name, args, kwargs, result, error, before_moment
         )
         self.operation_log.append({
             "seq": len(self.operation_log) + 1,
@@ -322,7 +314,7 @@ class InteractiveSession:
         }
 
     def _operation_summary(self, name, args, kwargs, result, error,
-                           before_highlighted=None, before_moment=None):
+                           before_moment=None):
         if error:
             return f"{name} 失败：{str(error)[:140]}"
         arg0 = args[0] if args else kwargs.get("moment_id")
@@ -398,12 +390,6 @@ class InteractiveSession:
         if name == "combine":
             details = result if isinstance(result, dict) else {}
             aliases = details.get("aliases", [])
-            moments = self.mem.memory.get("layer7", {}).get("moments", {})
-            after = {mid for mid, item in moments.items()
-                     if isinstance(item, dict) and item.get("highlighted")}
-            auto_highlighted = details.get("auto_highlighted")
-            if auto_highlighted is None:
-                auto_highlighted = len(after - (before_highlighted or set()))
             if not isinstance(aliases, list):
                 aliases = []
             examples = []
@@ -436,8 +422,6 @@ class InteractiveSession:
                 summary += "（无有效别名需要合并）"
             if details.get("updated_moments"):
                 summary += f" · 记忆记录更新 {details['updated_moments']} 条"
-            if auto_highlighted:
-                summary += f" · 自动标记重点 {auto_highlighted} 条"
             return summary
         if name == "compress":
             payload = arg0 if isinstance(arg0, dict) else {}

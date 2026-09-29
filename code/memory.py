@@ -16,9 +16,9 @@ DB Operations
   retrieve  — pull related data for Part2 analysis; pull Layer-7 data for layers 4-5-6
   compress  — summarise raw layers 4-5-6-7 into text + few images  (triggered after need analysis)
   sort      — classify same-type data under shared tags in layer 7  (triggered at compress time)
-  combine   — merge new data with similar existing data in layers 4-5-6-7
+  combine   — canonicalize layer 7 index aliases while preserving source moments
   delete    — one-off / accidental / erroneous entries; post-compress duplicates
-  highlight — user-confirmed correct data; data that recurs and is merged/similar
+  highlight — data explicitly confirmed or marked important by the user
 """
 
 import json
@@ -1390,7 +1390,7 @@ class PersonMemory:
             "environments": ("environments", "list"),
             "objects": ("objects", "list"),
         }
-        report = {"aliases": [], "updated_moments": 0, "auto_highlighted": 0}
+        report = {"aliases": [], "updated_moments": 0}
         updated_moment_ids = set()
         moments = self.memory["layer7"]["moments"]
         for index_key, mapping in canonical_map.items():
@@ -1424,17 +1424,7 @@ class PersonMemory:
                     "overlap_moments": overlap_count,
                     "field_updates": 0,
                     "list_duplicates_removed": 0,
-                    "auto_highlighted": 0,
                 }
-                # 规范（09-22 highlight）：重复出现 / 归类合并的相似相同数据自动标记
-                if len(merged_ids) > len(ids):
-                    for mid in ids:
-                        m = moments.get(mid)
-                        if m:
-                            if not m.get("highlighted"):
-                                alias_report["auto_highlighted"] += 1
-                                report["auto_highlighted"] += 1
-                            m["highlighted"] = True
                 # 同步更新 moments 主存储引用字段
                 for mid in ids:
                     m = moments.get(mid)

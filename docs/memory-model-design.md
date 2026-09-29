@@ -70,7 +70,7 @@
 3. **查询按层级先后 1→2→3→4→5 提取**（见 §4.3 读取类）。
 4. **特别标注两类记忆**（`highlight`）：
    - 用户在 Part4 确认无误的数据；
-   - 重复出现 / 归类合并的相似相同数据（`combine` 合并时自动标记 `highlighted=True`）。
+   - 用户明确标记为重点的数据。标签归并（`combine`）只规范索引，不代表用户确认，也不会自动标记重点。
 5. **layer2 归类依据是「环境场景」**：按 Part1 识别的 `environments` 判定同场景（有交集即同场景）；
    无 `environments` 标注时降级为 `location + activity` 判定（兼容旧数据）。
 
@@ -412,6 +412,7 @@ list 型字段追加去重（`json.dumps(sort_keys=True)` 精确比较，支持 
 - **稳定与可追溯**：索引 moment_id 合并保留规范键原有顺序，再追加旧键中尚未出现的 ID；不依赖无序集合生成输出。
   每条受影响的 moment 追加 `canonicalization_history`（维度、原标签、规范标签、时间），并同步仍在 L1–L3 的窗口副本。
   Layer 7 moment 原文和多模态引用不会因标签归并而删除；操作日志显示每组映射、受影响记录示例 ID、总数、两索引共有条数和字段更新数。
+- **重点标记边界**：`combine` 不修改 `highlighted`。只有用户通过 `highlight()` 或明确确认反馈，才会设置重点标记；标签相似或索引归并不等同于用户确认。
 - **幂等**：重复执行不产生副作用（old_key 已不存在或等于 canonical 则跳过）。
 - **不处理**：画像内的属性合并（那是 `update_profile` 的合并语义），combine 只管 layer7 索引键。
 
