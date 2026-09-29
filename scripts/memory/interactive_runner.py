@@ -17,6 +17,7 @@ import copy
 import json
 import os
 import sys
+import threading
 import time
 from pathlib import Path
 from urllib.parse import quote
@@ -219,7 +220,12 @@ class InteractiveSession:
         self.dataset_key = dataset
         self.pos = 0            # 已执行步数 = 下一步索引
         self.auto_paused = False  # 连续运行只允许执行写入步骤
+        self.step_cancelled = False
         self.log = []           # [{kind, title, msg, snapshot, perception}]
+        self._cancel_lock = threading.Lock()
+        self._active_step_cancel = None
+        self._active_step_force = False
+        self._pending_cancel = False
         self.perceiver = perceiver or site_perceiver()
         self.qwen_health = self.perceiver.health()
         self._build()
@@ -426,12 +432,42 @@ class InteractiveSession:
     # Qwen 看视频产出记忆条目；数据集 caption / ground_truth 只用于评估。
     # ------------------------------------------------------------------
 
+    def cancel_current(self):
+        """Interrupt the active real-time step; completed items remain available for retry."""
+        with self._cancel_lock:
+            event = self._active_step_cancel
+            if event is None:
+                if not self._active_step_force:
+                    return {"requested": False, "model_cancel_sent": False}
+                self._pending_cancel = True
+            else:
+                event.set()
+        cancel_sent = bool(getattr(self.perceiver, "cancel_active", lambda: False)())
+        return {"requested": True, "model_cancel_sent": cancel_sent}
+
     def _add_one(self, m, force=False):
         """用 Qwen 的感知产出写入一条记忆，返回 (moment_id, info)。"""
-        r = self.perceiver.perceive(m, force=force)
+        dataset_id = m.get("id", "")
+        existing_mid = self.id_map.get(dataset_id)
+        if existing_mid:
+            cached = self.perceiver.cache.get(dataset_id) or {}
+            fields = self._qwen_fields.get(dataset_id) or cached.get("fields") or {}
+            return existing_mid, {
+                "dataset_id": dataset_id,
+                "moment_id": existing_mid,
+                "qwen": fields,
+                "raw": cached.get("raw", ""),
+                "elapsed_ms": cached.get("elapsed_ms"),
+                "num_frames": cached.get("num_frames"),
+                "source": "cache",
+                "eval": golden_eval(fields, m.get("ground_truth", {})),
+            }
+        cancel_event = self._active_step_cancel
+        r = self.perceiver.perceive(m, force=force, cancel_event=cancel_event)
         if not r.get("fields"):
             return None, {"error": r.get("error", "感知失败"),
-                          "source": r.get("source", "error")}
+                          "source": r.get("source", "error"),
+                          "cancelled": bool(r.get("cancelled"))}
         f = r["fields"]
         mid = self.daytime.ingest(
             scene=f["scene"],
@@ -595,7 +631,8 @@ class InteractiveSession:
             def run(m=m, i=i, force=False):
                 mid, info = self._add_one(m, force=force)
                 if mid is None:
-                    return f"感知失败：{info.get('error')}", {"kind": "single", **info}
+                    msg = ("实时推理已停止" if info.get("cancelled") else "感知失败")
+                    return f"{msg}：{info.get('error')}", {"kind": "single", **info}
                 msg = f"Qwen 看过 {m['id']} → 写入记忆 {mid}（{info['source']}，{info['elapsed_ms']}ms）"
                 return msg, {"kind": "single", **info}
             steps.append({
@@ -821,13 +858,22 @@ class InteractiveSession:
             group = by_hour[h]
             def run(group=group, h=h, force=False):
                 items, ok = [], 0
+                cancelled = False
                 for m in group:
                     mid, info = self._add_one(m, force=force)
                     if mid:
                         ok += 1
                     items.append(info)
+                    if info.get("cancelled"):
+                        cancelled = True
+                        break
                 msg = f"{h}:00 时段：Qwen 感知 {ok}/{len(group)} 条并写入记忆"
-                return msg, {"kind": "batch", "items": items, "n": len(group), "ok": ok}
+                if cancelled:
+                    msg = f"实时推理已停止；本时段已完成 {ok}/{len(group)} 条"
+                return msg, {
+                    "kind": "batch", "items": items, "n": len(group),
+                    "ok": ok, "cancelled": cancelled,
+                }
             steps.append({
                 "kind": "add_batch",
                 "title": f"白天感知写入 · {h}:00 时段（{len(group)} 条）",
@@ -932,6 +978,7 @@ class InteractiveSession:
     def run_step(self, force=False, automatic=False, continuous_kind=None):
         """执行当前步；连续模式仅跨越相邻的同类步骤。"""
         self.auto_paused = False
+        self.step_cancelled = False
         if self.pos >= len(self.steps):
             return "所有步骤已执行完毕"
         step = self.steps[self.pos]
@@ -941,6 +988,13 @@ class InteractiveSession:
                 self.auto_paused = True
                 return (f"连续运行已暂停：当前操作类型已从“{expected_kind}”切换为“{step['kind']}”。"
                         f"下一步“{step['title']}”未执行；可继续运行该类操作。")
+        cancel_event = threading.Event()
+        with self._cancel_lock:
+            self._active_step_cancel = cancel_event
+            self._active_step_force = bool(force)
+            if force and self._pending_cancel:
+                cancel_event.set()
+                self._pending_cancel = False
         self._active_step_no = self.pos + 1
         self._active_step_title = step["title"]
         try:
@@ -948,6 +1002,17 @@ class InteractiveSession:
         finally:
             self._active_step_no = None
             self._active_step_title = None
+            with self._cancel_lock:
+                if self._active_step_cancel is cancel_event:
+                    self._active_step_cancel = None
+                    self._active_step_force = False
+        if cancel_event.is_set():
+            self.step_cancelled = True
+            if isinstance(perception, dict):
+                perception["cancelled"] = True
+            msg = "实时推理已停止；已完成的记忆会保留，当前步骤未标为完成，可再次运行。"
+            self._log_snapshot(step["title"], step["kind"], msg, perception)
+            return msg
         self._log_snapshot(step["title"], step["kind"], msg, perception)
         self.pos += 1
         return msg
@@ -1011,6 +1076,7 @@ class InteractiveSession:
             "finished": self.pos >= total,
             "current": cur,
             "auto_paused": self.auto_paused,
+            "step_cancelled": self.step_cancelled,
             "log": slim,
             "operations": [dict(event) for event in self.operation_log[-2000:]],
             "snapshot": self.log[-1]["snapshot"] if self.log else None,

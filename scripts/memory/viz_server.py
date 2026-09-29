@@ -44,6 +44,7 @@ PREWARM = {"running": False, "done": 0, "total": 0, "cache_hits": 0, "inferred":
 PREVIEW_JOBS = {}
 PREVIEW_LOCK = threading.Lock()
 PREVIEW_SEMAPHORE = threading.BoundedSemaphore(2)
+ACTIVE_STEP_FORCE = False
 
 try:
     from interactive_runner import InteractiveSession
@@ -263,6 +264,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
+        global SESSION, ACTIVE_STEP_FORCE
         url = urlparse(self.path)
         qs = parse_qs(url.query)
 
@@ -356,8 +358,6 @@ class Handler(BaseHTTPRequestHandler):
             })
 
         # ---------------- 交互式步进执行 ----------------
-        global SESSION
-
         if url.path == "/api/interactive/options":
             return self._send(200, ir.interactive_dataset_options())
 
@@ -386,6 +386,22 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(404, {"error": "no session"})
             return self._send(200, SESSION.state())
 
+        if url.path == "/api/interactive/cancel":
+            if SESSION is None:
+                return self._send(404, {"error": "no session"})
+            if not STEP_LOCK.locked() or not ACTIVE_STEP_FORCE:
+                return self._send(409, {
+                    "error": "没有正在运行的实时推理可停止",
+                    "message": "只有实时推理运行时才能使用停止按钮",
+                })
+            result = SESSION.cancel_current()
+            if not result.get("requested"):
+                return self._send(409, {
+                    "error": "当前实时推理已结束或尚未开始",
+                    "message": "请在实时推理进行中点击停止",
+                })
+            return self._send(200, result)
+
         if url.path == "/api/interactive/step":
             if SESSION is None:
                 return self._send(404, {"error": "no session"})
@@ -395,6 +411,7 @@ class Handler(BaseHTTPRequestHandler):
             if not STEP_LOCK.acquire(blocking=False):
                 return self._send(409, {"error": "busy",
                                         "message": "上一步仍在执行（实时推理可能需要数分钟），请稍候"})
+            ACTIVE_STEP_FORCE = force
             try:
                 try:
                     msg = SESSION.run_step(force=force, automatic=automatic, continuous_kind=continuous_kind)
@@ -406,6 +423,7 @@ class Handler(BaseHTTPRequestHandler):
                 st["auto_paused"] = SESSION.auto_paused
                 return self._send(200, st)
             finally:
+                ACTIVE_STEP_FORCE = False
                 STEP_LOCK.release()
 
         # Qwen 缓存预热（后台跑，前端轮询进度）

@@ -17,7 +17,9 @@ qwen_perceive.py — Qwen3-VL 感知客户端（记忆的上游）
 
 import json
 import re
+import threading
 import time
+import uuid
 from pathlib import Path
 
 import requests
@@ -274,6 +276,33 @@ class QwenPerceiver:
         self.cache_file = cache_file
         self.cache_file.parent.mkdir(parents=True, exist_ok=True)
         self._cache = None
+        self._active_request_lock = threading.Lock()
+        self._active_request_id = None
+
+    def cancel_active(self):
+        """Ask the Qwen service to stop the currently active video generation."""
+        with self._active_request_lock:
+            request_id = self._active_request_id
+        if not request_id:
+            return False
+        try:
+            response = requests.post(
+                f"{self.api_url}/cancel_inference",
+                json={"request_id": request_id},
+                timeout=(2, 5),
+            )
+            return response.ok and bool(response.json().get("cancelled"))
+        except Exception:
+            return False
+
+    @staticmethod
+    def _cancelled_result():
+        return {
+            "source": "cancelled",
+            "cancelled": True,
+            "error": "实时推理已停止",
+            "fields": None,
+        }
 
     # -- 缓存 ---------------------------------------------------------------
     @property
@@ -296,7 +325,7 @@ class QwenPerceiver:
             return {"model_loaded": False, "error": str(e)}
 
     # -- 核心 ---------------------------------------------------------------
-    def perceive(self, m: dict, force: bool = False):
+    def perceive(self, m: dict, force: bool = False, cancel_event=None):
         """
         产出一条记忆条目。force=True 强制实时调用真模型（忽略缓存）。
 
@@ -304,6 +333,8 @@ class QwenPerceiver:
         source: 'cache' | 'qwen'
         """
         mid = m.get("id", "")
+        if cancel_event is not None and cancel_event.is_set():
+            return self._cancelled_result()
         if not force and mid in self.cache:
             hit = dict(self.cache[mid])
             cached_fields = dict(hit.get("fields") or {})
@@ -332,6 +363,8 @@ class QwenPerceiver:
                      for i, b in enumerate(bufs)]
             raw = ""
             for attempt in range(3):
+                if cancel_event is not None and cancel_event.is_set():
+                    return self._cancelled_result()
                 prompt = base_prompt
                 if attempt == 1:
                     prompt += ("\n\nRewrite the previous answer. It violated the English-only rule. "
@@ -341,8 +374,26 @@ class QwenPerceiver:
                     prompt += ("\n\nFinal rewrite: do not quote any speech. Summarize dialogue only when you can "
                                "state it naturally in English; otherwise write that the colloquial speech was unclear. "
                                "Every field value must contain English text only and zero CJK characters.")
-                resp = requests.post(f"{self.api_url}/analyze_video",
-                                     files=files, data={"prompt": prompt}, timeout=240)
+                request_id = uuid.uuid4().hex
+                with self._active_request_lock:
+                    self._active_request_id = request_id
+                try:
+                    resp = requests.post(
+                        f"{self.api_url}/analyze_video",
+                        files=files,
+                        data={"prompt": prompt, "request_id": request_id},
+                        timeout=240,
+                    )
+                except Exception:
+                    if cancel_event is not None and cancel_event.is_set():
+                        return self._cancelled_result()
+                    raise
+                finally:
+                    with self._active_request_lock:
+                        if self._active_request_id == request_id:
+                            self._active_request_id = None
+                if (cancel_event is not None and cancel_event.is_set()) or resp.status_code == 409:
+                    return self._cancelled_result()
                 if resp.status_code != 200:
                     return {"source": "error",
                             "error": f"API {resp.status_code}: {resp.text[:200]}",

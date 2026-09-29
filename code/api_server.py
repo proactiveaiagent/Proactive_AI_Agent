@@ -16,6 +16,8 @@ import io
 import shutil
 import tempfile
 import asyncio
+import threading
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -24,7 +26,9 @@ from typing import List
 import torch
 from fastapi import FastAPI, File, UploadFile, Form, Request
 from fastapi.responses import JSONResponse
-from transformers import AutoModelForImageTextToText, AutoProcessor
+from transformers import (
+    AutoModelForImageTextToText, AutoProcessor, StoppingCriteria, StoppingCriteriaList,
+)
 from PIL import Image
 import uvicorn
 
@@ -40,6 +44,66 @@ whisper_model = None
 
 # Prevents concurrent generate() calls from OOM-ing the GPU
 _generate_lock = asyncio.Lock()
+_inference_cancel_lock = threading.Lock()
+_inference_cancel_events = {}
+_inference_cancel_pending = {}
+
+
+class _StopGenerationOnEvent(StoppingCriteria):
+    def __init__(self, event):
+        self.event = event
+
+    def __call__(self, input_ids, scores, **kwargs):
+        return self.event.is_set()
+
+
+def _register_inference_cancel_event(request_id):
+    request_id = str(request_id or "").strip()
+    if not request_id:
+        return None
+    now = time.time()
+    with _inference_cancel_lock:
+        for key, timestamp in list(_inference_cancel_pending.items()):
+            if now - timestamp > 180:
+                _inference_cancel_pending.pop(key, None)
+        event = threading.Event()
+        if request_id in _inference_cancel_pending:
+            event.set()
+            _inference_cancel_pending.pop(request_id, None)
+        _inference_cancel_events[request_id] = event
+        return event
+
+
+def _finish_inference_cancel_event(request_id, event):
+    if not request_id:
+        return
+    with _inference_cancel_lock:
+        if _inference_cancel_events.get(request_id) is event:
+            _inference_cancel_events.pop(request_id, None)
+
+
+def _cancelled_response():
+    return JSONResponse(
+        content={"cancelled": True, "error": "Inference cancelled"},
+        status_code=409,
+    )
+
+
+def _generate_video_with_cancel(inputs, cancel_event):
+    options = {}
+    if cancel_event is not None:
+        options["stopping_criteria"] = StoppingCriteriaList([
+            _StopGenerationOnEvent(cancel_event)
+        ])
+    return qwen_model.generate(
+        **inputs,
+        max_new_tokens=2048,
+        top_p=0.8,
+        top_k=20,
+        temperature=0.3,
+        repetition_penalty=1.0,
+        **options,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -173,15 +237,25 @@ async def analyze(image: UploadFile = File(...), prompt: str = Form(...)):
 # ---------------------------------------------------------------------------
 
 @app.post("/analyze_video")
-async def analyze_video(images: List[UploadFile] = File(...), prompt: str = Form(...)):
-    """Analyze a sequence of frames (sampled from a video) with Qwen3-VL."""
-    if not images:
-        return JSONResponse(content={"error": "No images provided"}, status_code=400)
-
+async def analyze_video(
+    images: List[UploadFile] = File(...),
+    prompt: str = Form(...),
+    request_id: str = Form(default=""),
+):
+    """Analyze video frames and allow the memory UI to cancel generation."""
+    request_id = str(request_id or "").strip()
+    cancel_event = _register_inference_cancel_event(request_id)
     tmp_paths: List[str] = []
     try:
-        # Persist each uploaded frame to its own temp file
+        if not images:
+            return JSONResponse(content={"error": "No images provided"}, status_code=400)
+        if cancel_event is not None and cancel_event.is_set():
+            return _cancelled_response()
+
+        # Persist each uploaded frame to its own temp file.
         for img in images:
+            if cancel_event is not None and cancel_event.is_set():
+                return _cancelled_response()
             suffix = Path(img.filename).suffix if img.filename else ".jpg"
             tmp_fd, tmp_path = tempfile.mkstemp(suffix=suffix)
             try:
@@ -190,7 +264,6 @@ async def analyze_video(images: List[UploadFile] = File(...), prompt: str = Form
                 with os.fdopen(tmp_fd, "wb") as f:
                     pil_image.save(f, format="JPEG")
             except Exception:
-                # ensure the fd is closed even if PIL fails
                 try:
                     os.close(tmp_fd)
                 except Exception:
@@ -198,8 +271,6 @@ async def analyze_video(images: List[UploadFile] = File(...), prompt: str = Form
                 raise
             tmp_paths.append(tmp_path)
 
-        # Build a multi-image message — Qwen3-VL handles a frame sequence
-        # natively when given several "image" entries in order.
         content = [{"type": "image", "image": p} for p in tmp_paths]
         content.append({"type": "text", "text": prompt})
         messages = [{"role": "user", "content": content}]
@@ -212,16 +283,23 @@ async def analyze_video(images: List[UploadFile] = File(...), prompt: str = Form
             return_tensors="pt"
         ).to(qwen_model.device)
 
+        if cancel_event is not None and cancel_event.is_set():
+            return _cancelled_response()
+
         async with _generate_lock:
-            generated_ids = qwen_model.generate(
-                **inputs,
-                max_new_tokens=2048,
-                top_p=0.8,
-                top_k=20,
-                temperature=0.3,
-                repetition_penalty=1.0
-            )
-            torch.cuda.empty_cache()
+            if cancel_event is not None and cancel_event.is_set():
+                return _cancelled_response()
+            try:
+                # Keep the event loop responsive so /cancel_inference can set the
+                # stopping event while the model is generating tokens.
+                generated_ids = await asyncio.to_thread(
+                    _generate_video_with_cancel, inputs, cancel_event
+                )
+            finally:
+                torch.cuda.empty_cache()
+
+        if cancel_event is not None and cancel_event.is_set():
+            return _cancelled_response()
 
         trimmed = [
             out[len(inp):]
@@ -233,14 +311,38 @@ async def analyze_video(images: List[UploadFile] = File(...), prompt: str = Form
         return JSONResponse(content={"analysis": output[0], "num_frames": len(tmp_paths)})
 
     except Exception as e:
+        if cancel_event is not None and cancel_event.is_set():
+            return _cancelled_response()
         return JSONResponse(content={"error": str(e)}, status_code=500)
     finally:
+        _finish_inference_cancel_event(request_id, cancel_event)
         for p in tmp_paths:
             if os.path.exists(p):
                 try:
                     os.unlink(p)
                 except Exception:
                     pass
+
+
+@app.post("/cancel_inference")
+async def cancel_inference(request: Request):
+    """Signal a running /analyze_video generation to stop between tokens."""
+    try:
+        payload = await request.json()
+        request_id = str(payload.get("request_id") or "").strip()
+    except Exception:
+        request_id = ""
+    if not request_id:
+        return JSONResponse(content={"cancelled": False, "error": "request_id is required"},
+                            status_code=400)
+    now = time.time()
+    with _inference_cancel_lock:
+        event = _inference_cancel_events.get(request_id)
+        if event is not None:
+            event.set()
+        else:
+            _inference_cancel_pending[request_id] = now
+    return JSONResponse(content={"cancelled": True, "accepted": True})
 
 
 # ---------------------------------------------------------------------------

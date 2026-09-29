@@ -633,6 +633,7 @@ body{height:100vh;height:100dvh;min-height:0;display:flex;flex-direction:column}
       <div class="toolbar" id="stepActions" style="margin-top:10px">
         <button class="btn primary" id="runStepBtn" onclick="runStep(false)" disabled>▶ 运行此步</button>
         <button class="btn" id="liveBtn" onclick="runStep(true)" disabled>⚡ 实时推理此步</button>
+        <button class="btn" id="cancelInferenceBtn" onclick="cancelInference()" style="display:none" disabled>⏹ 停止推理</button>
         <button class="btn" id="autoBtn" title="连续执行相邻的同类步骤，遇到另一种操作时自动停止" onclick="toggleAuto()" disabled>⏩ 连续运行当前类型</button>
       </div>
       <div class="lastres" id="lastRes"></div>
@@ -1859,9 +1860,11 @@ async function runStep(force, automatic=false, continuousKind=null){
   if(!intState||intState.finished) return;
   const btn=document.getElementById('runStepBtn');
   const live=document.getElementById('liveBtn');
+  const cancelBtn=document.getElementById('cancelInferenceBtn');
   btn.disabled=true; if(live) live.disabled=true;
+  if(cancelBtn){ cancelBtn.style.display=force?'':'none'; cancelBtn.disabled=!force; cancelBtn.textContent='⏹ 停止推理'; }
   const kindLabel=KIND_CN[continuousKind]||continuousKind||'当前类型';
-  btn.textContent = force?'⏳ Qwen 实时推理中…（GPU 空闲约 5 秒，被占用时可能数分钟，请勿刷新）':(automatic?'⏳ 连续执行「'+kindLabel+'」…':'⏳ 执行中…');
+  btn.textContent = force?'⏳ Qwen 实时推理中…（可点击“停止推理”）':(automatic?'⏳ 连续执行「'+kindLabel+'」…':'⏳ 执行中…');
   autoBusy=true;
   try{
     const params=new URLSearchParams();
@@ -1882,7 +1885,24 @@ async function runStep(force, automatic=false, continuousKind=null){
     renderInt();
   }finally{
     autoBusy=false;
+    if(cancelBtn){ cancelBtn.style.display='none'; cancelBtn.disabled=true; cancelBtn.textContent='⏹ 停止推理'; }
     updateRunBtn();
+  }
+}
+
+async function cancelInference(){
+  const b=document.getElementById('cancelInferenceBtn');
+  if(!b || b.disabled) return;
+  b.disabled=true; b.textContent='正在请求停止…';
+  try{
+    const r=await fetch(API+'/api/interactive/cancel');
+    const data=await r.json();
+    if(!r.ok || data.error) throw new Error(data.message||data.error||'停止请求未接受');
+    b.textContent='正在停止生成…';
+  }catch(e){
+    b.disabled=false; b.textContent='⏹ 停止推理';
+    const d=document.getElementById('stepDetail');
+    if(d) d.insertAdjacentHTML('beforeend','<div class="note" style="color:#e5484d">停止失败：'+esc(e.message||e)+'</div>');
   }
 }
 
@@ -1995,6 +2015,7 @@ function renderPerception(p){
       `${dimNames[d]||d}：${a.hit}/${a.tot} · ${a.tot?Math.round(100*a.hit/a.tot):0}%`);
     html+=`<div class="prec-sum"><b>和数据集自动标签对照</b>：${parts.join(' · ')||'该批次缺少参考标签'}</div>`;
     html+=cmpLegend();
+    if(p.cancelled) html+='<div class="prec-sum" style="color:#b45309">已停止；已完成的记忆写入已保留，剩余内容可再次运行。</div>';
     const live=items.filter(i=>i.source==='qwen').length;
     if(live) html+=`<div class="prec-sum" style="color:#f59e0b">其中 ${live} 条为本次实时推理，其余来自缓存</div>`;
     for(const it of items.slice(0,3)) html+=percRow(it);
@@ -2006,6 +2027,10 @@ function renderPerception(p){
 
   // single
   let html='<div class="percbox">';
+  if(p.cancelled || p.source==='cancelled'){
+    html+='<h4>🤖 Qwen3-VL 感知 <span class="srctag err">已停止</span></h4><div class="prec-sum">当前步骤没有完成，仍可再次运行；此前完成的记忆已保留。</div></div>';
+    box.innerHTML=html; return;
+  }
   if(p.error){
     html+=`<h4>🤖 Qwen3-VL 感知 <span class="srctag err">失败</span></h4>
       <div class="prec-sum" style="color:#e5484d">${esc(p.error)}</div></div>`;
