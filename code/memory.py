@@ -426,6 +426,7 @@ def _rank_memory_docs(query_text: str, documents: list) -> list:
         "id", "timestamp", "created_at", "updated_at", "last_used",
         "access_count", "stale", "decay_type", "decay_rate", "expires_at",
         "confidence", "highlighted", "feedback", "source_ids", "layer",
+        "canonicalization_history",
         "multimodal",
     }
 
@@ -1351,9 +1352,15 @@ class PersonMemory:
                 if not _is_valid_index_tag(index_key, tag):
                     continue
                 valid_ids = [i for i in ids if i in moments]  # 过滤悬挂引用
-                existing = set(self.memory["layer7"][index_key].get(tag, []))
-                existing.update(valid_ids)
-                self.memory["layer7"][index_key][tag] = list(existing)
+                # Keep first-seen order stable across runs; a set here made
+                # index snapshots change order nondeterministically.
+                merged = []
+                seen = set()
+                for moment_id in list(self.memory["layer7"][index_key].get(tag, [])) + valid_ids:
+                    if moment_id not in seen:
+                        seen.add(moment_id)
+                        merged.append(moment_id)
+                self.memory["layer7"][index_key][tag] = merged
         self._save()
 
     # ------------------------------------------------------------------
@@ -1371,8 +1378,9 @@ class PersonMemory:
         }
 
         - canonical 过校验（防 G7 污染）；old_key 不存在或等于 canonical 则跳过（幂等）。
-        - 合并 moment_id 集合并同步更新 moments 主存储里的引用字段：
-          locations → location 字段；people → people 列表元素；activity_events → activity 字段。
+        - 按稳定顺序合并 moment_id 并同步更新 moments 主存储里的引用字段；列表字段替换后去重。
+        - 在受影响的 moment 上保留 canonicalization_history，记录来源标签和规范标签；不删除原始 moment。
+        - 返回本次实际归并明细，供操作日志展示。
         """
         # 索引 → (moments 引用字段, 字段类型[str 单值 / list 列表])
         REF_FIELD = {
@@ -1382,6 +1390,9 @@ class PersonMemory:
             "environments": ("environments", "list"),
             "objects": ("objects", "list"),
         }
+        report = {"aliases": [], "updated_moments": 0, "auto_highlighted": 0}
+        updated_moment_ids = set()
+        moments = self.memory["layer7"]["moments"]
         for index_key, mapping in canonical_map.items():
             if index_key not in self.memory["layer7"] or not isinstance(mapping, dict):
                 continue
@@ -1392,33 +1403,80 @@ class PersonMemory:
                     continue
                 if old_key not in index or old_key == canonical:
                     continue
-                ids = index.pop(old_key)
-                existing = set(index.get(canonical, []))
-                existing.update(ids)
-                index[canonical] = list(existing)
+                ids = list(dict.fromkeys(index.pop(old_key) or []))
+                canonical_ids_before = list(index.get(canonical, []))
+                canonical_id_set = set(canonical_ids_before)
+                alias_id_set = set(ids)
+                overlap_count = len(canonical_id_set & alias_id_set)
+                merged_ids = []
+                seen_ids = set()
+                for mid in canonical_ids_before + list(ids):
+                    if mid not in seen_ids:
+                        seen_ids.add(mid)
+                        merged_ids.append(mid)
+                index[canonical] = merged_ids
+                alias_report = {
+                    "dimension": index_key,
+                    "from": old_key,
+                    "to": canonical,
+                    "affected_moments": 0,
+                    "sample_moment_ids": [],
+                    "overlap_moments": overlap_count,
+                    "field_updates": 0,
+                    "list_duplicates_removed": 0,
+                    "auto_highlighted": 0,
+                }
                 # 规范（09-22 highlight）：重复出现 / 归类合并的相似相同数据自动标记
-                if len(existing) > len(ids):
+                if len(merged_ids) > len(ids):
                     for mid in ids:
-                        m = self.memory["layer7"]["moments"].get(mid)
+                        m = moments.get(mid)
                         if m:
+                            if not m.get("highlighted"):
+                                alias_report["auto_highlighted"] += 1
+                                report["auto_highlighted"] += 1
                             m["highlighted"] = True
                 # 同步更新 moments 主存储引用字段
-                if ref:
-                    field, kind = ref
-                    moments = self.memory["layer7"]["moments"]
-                    for mid in existing:
-                        m = moments.get(mid)
-                        if not m:
-                            continue
+                for mid in ids:
+                    m = moments.get(mid)
+                    if not m:
+                        continue
+                    alias_report["affected_moments"] += 1
+                    if len(alias_report["sample_moment_ids"]) < 5:
+                        alias_report["sample_moment_ids"].append(mid)
+                    changed = False
+                    history = m.get("canonicalization_history")
+                    if not isinstance(history, list):
+                        history = []
+                        m["canonicalization_history"] = history
+                    history.append({
+                        "dimension": index_key,
+                        "from": old_key,
+                        "to": canonical,
+                        "at": _now_iso(),
+                    })
+                    changed = True
+                    if ref:
+                        field, kind = ref
                         if kind == "str":
                             if m.get(field) == old_key:
                                 m[field] = canonical
+                                alias_report["field_updates"] += 1
+                                changed = True
                         elif kind == "list":
                             if isinstance(m.get(field), list) and old_key in m[field]:
-                                m[field] = [canonical if x == old_key else x
-                                            for x in m[field]]
+                                replaced = [canonical if x == old_key else x for x in m[field]]
+                                after_values = list(dict.fromkeys(replaced))
+                                alias_report["field_updates"] += 1
+                                alias_report["list_duplicates_removed"] += len(replaced) - len(after_values)
+                                m[field] = after_values
+                                changed = True
+                    if changed:
+                        updated_moment_ids.add(mid)
                         self._sync_window_moment(mid)
+                report["aliases"].append(alias_report)
+        report["updated_moments"] = len(updated_moment_ids)
         self._save()
+        return report
 
     # ------------------------------------------------------------------
     # Operation 8 : DELETE

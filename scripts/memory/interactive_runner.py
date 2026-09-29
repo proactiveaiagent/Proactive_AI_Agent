@@ -396,14 +396,49 @@ class InteractiveSession:
                        for ids in dim.values() if isinstance(ids, list))
             return f"整理索引 · {len(analysis)} 个维度、{tags} 个标签、{refs} 条引用"
         if name == "combine":
-            mapping = arg0 if isinstance(arg0, dict) else {}
-            aliases = sum(len(v) for v in mapping.values() if isinstance(v, dict))
+            details = result if isinstance(result, dict) else {}
+            aliases = details.get("aliases", [])
             moments = self.mem.memory.get("layer7", {}).get("moments", {})
             after = {mid for mid, item in moments.items()
                      if isinstance(item, dict) and item.get("highlighted")}
-            auto_highlighted = len(after - (before_highlighted or set()))
-            return f"合并索引别名 {aliases} 个" + (
-                f" · 合并后自动标记重点 {auto_highlighted} 条" if auto_highlighted else "")
+            auto_highlighted = details.get("auto_highlighted")
+            if auto_highlighted is None:
+                auto_highlighted = len(after - (before_highlighted or set()))
+            if not isinstance(aliases, list):
+                aliases = []
+            examples = []
+            for alias in aliases[:4]:
+                if not isinstance(alias, dict):
+                    continue
+                dimension = str(alias.get("dimension") or "索引")
+                old = self._brief_value(alias.get("from"), 48)
+                new = self._brief_value(alias.get("to"), 48)
+                affected = int(alias.get("affected_moments") or 0)
+                item = f"{dimension}「{old}」→「{new}」·影响 {affected} 条"
+                sample_ids = alias.get("sample_moment_ids")
+                if isinstance(sample_ids, list) and sample_ids:
+                    item += "·例 " + ", ".join(str(mid) for mid in sample_ids[:3])
+                    if affected > len(sample_ids[:3]):
+                        item += f" 等 {affected} 条"
+                if alias.get("overlap_moments"):
+                    item += f"·两索引共有 {alias['overlap_moments']} 条"
+                if alias.get("field_updates"):
+                    item += f"·字段更新 {alias['field_updates']} 条"
+                if alias.get("list_duplicates_removed"):
+                    item += f"·列表去重 {alias['list_duplicates_removed']} 项"
+                examples.append(item)
+            summary = f"规范化标签 {len(aliases)} 组"
+            if examples:
+                summary += " · " + "；".join(examples)
+                if len(aliases) > len(examples):
+                    summary += f"；另有 {len(aliases) - len(examples)} 组"
+            elif not aliases:
+                summary += "（无有效别名需要合并）"
+            if details.get("updated_moments"):
+                summary += f" · 记忆记录更新 {details['updated_moments']} 条"
+            if auto_highlighted:
+                summary += f" · 自动标记重点 {auto_highlighted} 条"
+            return summary
         if name == "compress":
             payload = arg0 if isinstance(arg0, dict) else {}
             layers = "、".join(k.upper() for k in payload if k in ("layer4", "layer5", "layer6"))

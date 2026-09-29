@@ -408,7 +408,10 @@ list 型字段追加去重（`json.dumps(sort_keys=True)` 精确比较，支持 
   （非法则跳过）；old_key ≠ canonical 且存在 → 把 old_key 的 moment_id 集并入 canonical，
   删除 old_key；同步更新 moments 主存储中引用字段：
   `locations → location`（str 单值）、`activity_events → activity`（str 单值）、
-  `people → people`（list 元素逐个替换）。
+  `people → people`、`environments → environments`、`objects → objects`（列表元素替换并按首次出现顺序去重）。
+- **稳定与可追溯**：索引 moment_id 合并保留规范键原有顺序，再追加旧键中尚未出现的 ID；不依赖无序集合生成输出。
+  每条受影响的 moment 追加 `canonicalization_history`（维度、原标签、规范标签、时间），并同步仍在 L1–L3 的窗口副本。
+  Layer 7 moment 原文和多模态引用不会因标签归并而删除；操作日志显示每组映射、受影响记录示例 ID、总数、两索引共有条数和字段更新数。
 - **幂等**：重复执行不产生副作用（old_key 已不存在或等于 canonical 则跳过）。
 - **不处理**：画像内的属性合并（那是 `update_profile` 的合并语义），combine 只管 layer7 索引键。
 
