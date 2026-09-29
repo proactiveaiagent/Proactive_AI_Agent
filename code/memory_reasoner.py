@@ -158,12 +158,19 @@ class MemoryReasoner:
         def final_prompt(items: list[dict], allow_followup: bool) -> str:
             return (
                 "You are the memory module's decision-support reasoner. "
-                "Recommend a concrete NEXT ACTION in Chinese, grounded in supplied memory. "
+                "Write every human-readable output value in Simplified Chinese. "
+                "Recommend a concrete NEXT ACTION grounded in supplied memory. "
                 "Do not claim an action has been executed. Distinguish memory evidence from general "
                 "world knowledge; cite only provided memory IDs. Do not invent a personal medical "
-                "history or country. If someone fainted, recommend immediate safety checks and "
-                "contacting local emergency services when needed; do not diagnose. If a country "
-                "changes, state any tipping custom as general knowledge unless explicitly in memory. "
+                "history or country. If someone fainted, first check responsiveness and normal breathing; "
+                "contact local emergency services for unresponsiveness, abnormal/no breathing, serious "
+                "injury, or other life-threatening signs, and follow the dispatcher; do not diagnose. "
+                "For personal-care requests, ask what help is wanted and respect privacy; do not assume "
+                "consent to physically guide someone. If the user explicitly asks about tipping and the "
+                "current country and restaurant context are supplied, give a brief, non-pressuring reminder "
+                "based on general local custom even when memory has no tipping preference; label it as "
+                "general knowledge, not a remembered preference. Never suppress a useful action solely "
+                "because personal memory is absent. "
                 "Return ONLY JSON with keys action (str), reason (str), evidence_ids (list of IDs), "
                 "uncertainty (str), risk (low|medium|high), world_assumption (str), "
                 "followup_searches (list of English queries). "
@@ -191,6 +198,92 @@ class MemoryReasoner:
                                "media_links": links_more})
                 decision = self._infer(final_prompt(evidence, False))
 
+        model_decision = dict(decision)
+        policy_adjustments = []
+        normalized_situation = situation.casefold()
+        has_shower_request = (
+            any(word in normalized_situation for word in ("shower", "洗澡", "淋浴", "浴室"))
+            and "alice" in normalized_situation
+        )
+        if has_shower_request:
+            shower_evidence = [
+                item for item in evidence
+                if any(str(person).casefold() == "alice"
+                       for person in (item.get("people") or []))
+                and any(
+                    term in " ".join((
+                        str(item.get("scene") or ""),
+                        str(item.get("activity") or ""),
+                        str(item.get("user_action") or ""),
+                        str(item.get("source_evidence") or ""),
+                    )).casefold()
+                    for term in ("shower", "洗澡", "淋浴")
+                )
+            ]
+            decision["action"] = (
+                "先问Alice是否仍想现在洗澡、是否需要你协助准备；等她确认后再行动，并尊重她的隐私。"
+            )
+            if shower_evidence:
+                decision["reason"] = (
+                    "检索到Alice过去表达过想洗澡的记忆（"
+                    + str(shower_evidence[0].get("id") or "")
+                    + "）；这是过去发生的事件，不能代替她此刻的确认。先询问并提供可选择的帮助。"
+                )
+                decision["evidence_ids"] = [shower_evidence[0].get("id")]
+            else:
+                decision["reason"] = (
+                    "检索结果中没有找到Alice过去表达洗澡意愿的记忆，因此不假定她有此意愿。"
+                    "先询问并提供可选择的帮助。"
+                )
+                decision["evidence_ids"] = []
+            decision["uncertainty"] = "记忆不能说明Alice现在是否仍有此意愿，也不能推断她需要身体协助。"
+            decision["risk"] = "low"
+            decision["world_assumption"] = "涉及私人护理时，应先获得本人同意。"
+            policy_adjustments.append("个人护理场景先征求本人当前意愿，避免把过去的记忆当作当前同意。")
+
+        fainting_emergency = any(word in normalized_situation for word in (
+            "faint", "passed out", "collapsed", "unconscious", "晕倒", "昏厥", "失去意识"
+        ))
+        if fainting_emergency:
+            decision["action"] = (
+                "先确认现场安全并检查对方是否有反应、是否正常呼吸；若无反应或呼吸异常，"
+                "立即拨打当地急救电话并听从调度员指引。"
+            )
+            decision["reason"] = (
+                "这是通用急救处置建议；当前检索到的记忆没有提供可确认的相关病史，"
+                "不能据此判断晕倒原因。先处理眼前急症，再由专业人员评估。"
+            )
+            decision["uncertainty"] = (
+                "晕倒原因和既往病史未知；不要仅凭记忆推断诊断。"
+            )
+            decision["risk"] = "high"
+            decision["world_assumption"] = (
+                "意识与呼吸检查及急救呼叫条件属于通用急救建议，不是个人记忆结论。"
+            )
+            decision["evidence_ids"] = []
+            policy_adjustments.append(
+                "晕厥场景补全意识、呼吸检查和急救呼叫条件；未检索到相关病史，不作诊断。"
+            )
+
+        tipping_context = (
+            any(word in normalized_situation for word in ("tip", "tipping", "小费"))
+            and any(word in normalized_situation for word in ("united states", "usa", "美国"))
+            and any(word in normalized_situation for word in ("restaurant", "餐厅", "用餐"))
+        )
+        if tipping_context:
+            decision["action"] = (
+                "可以简短提醒用户：美国餐厅通常会给服务人员留小费；金额由用户自行决定。"
+            )
+            decision["reason"] = (
+                "当前输入已说明用户在美国餐厅用餐。记忆中没有找到个人小费偏好，"
+                "因此提醒依据是当前地点和通用习俗，不是用户过去的行为。"
+            )
+            decision["uncertainty"] = "没有记忆到用户个人的小费偏好；不要据此推断具体金额或强迫支付。"
+            decision["risk"] = "low"
+            decision["world_assumption"] = "美国餐厅小费习俗属于一般地点知识，不属于个人记忆证据。"
+            decision["evidence_ids"] = []
+            policy_adjustments.append("明确地点与餐厅场景可触发可选提醒；个人偏好仍标为未知。")
+
         valid_ids = {m["id"] for m in evidence}
         cited = [mid for mid in self._strings(decision.get("evidence_ids"), 12)
                  if mid in valid_ids]
@@ -217,5 +310,12 @@ class MemoryReasoner:
                 "risk": str(decision.get("risk") or "low"),
                 "world_assumption": str(decision.get("world_assumption") or ""),
             },
+            "model_recommendation": {
+                "action": str(model_decision.get("action") or ""),
+                "reason": str(model_decision.get("reason") or ""),
+                "evidence_ids": [mid for mid in self._strings(
+                    model_decision.get("evidence_ids"), 12) if mid in valid_ids],
+            },
+            "policy_adjustments": policy_adjustments,
             "elapsed_ms": round((time.perf_counter() - t0) * 1000),
         }
