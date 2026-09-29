@@ -114,7 +114,8 @@ class DaytimeProcessor:
                objects: List[str] = None,
                extra_notes: str = "",
                timestamp: str = None,
-               source_evidence: str = "") -> str:
+               source_evidence: str = "",
+               multimodal: Dict = None) -> str:
         """
         实时写入一条记忆。
 
@@ -136,6 +137,7 @@ class DaytimeProcessor:
                 extra_notes=extra_notes,
                 timestamp=timestamp,
                 source_evidence=source_evidence,
+                multimodal=multimodal,
             )
         self.stats["ingested"] += 1
 
@@ -163,6 +165,15 @@ class DaytimeProcessor:
         self.stats["queries"] += 1
         hits = self.mem.query_hierarchical(text, top_k=top_k)
         return [item["moment"] for item in hits]
+
+    def advise(self, situation: str, context: Dict = None) -> Dict:
+        """Higher-latency semantic retrieval and grounded next-action advice.
+
+        Kept separate from query() so the <=1s memory extraction path remains
+        fast. The caller decides whether to execute the suggested action.
+        """
+        from memory_reasoner import MemoryReasoner
+        return MemoryReasoner(self.mem).reason(situation, context=context)
 
     def context(self, top_k: int = 5, query_text: str = None) -> List[Dict]:
         """按 Layer1→5 优先级提供上下文；支持查询词相关性检索。"""

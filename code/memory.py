@@ -426,6 +426,7 @@ def _rank_memory_docs(query_text: str, documents: list) -> list:
         "id", "timestamp", "created_at", "updated_at", "last_used",
         "access_count", "stale", "decay_type", "decay_rate", "expires_at",
         "confidence", "highlighted", "feedback", "source_ids", "layer",
+        "multimodal",
     }
 
     def as_search_text(value):
@@ -845,7 +846,8 @@ class PersonMemory:
             objects: List[str] = None,
             extra_notes: str = "",
             timestamp: str = None,
-            source_evidence: str = "") -> str:
+            source_evidence: str = "",
+            multimodal: Dict = None) -> str:
         """
         Store a complete Part1+2+3 result.
         Returns the moment_id so Part4 can reference it later.
@@ -874,6 +876,8 @@ class PersonMemory:
             moment["objects"] = objects                # 物品（规范新增维度）
         if extra_notes:
             moment["notes"] = extra_notes
+        if isinstance(multimodal, dict) and multimodal.get("schema") == 1:
+            moment["multimodal"] = multimodal
 
         moment_id = self._new_moment_id()
         moment["id"] = moment_id
@@ -1445,8 +1449,37 @@ class PersonMemory:
             self.memory[lkey] = [m for m in self.memory[lkey]
                                  if m.get("id") != moment_id]
         self._save()
+        if moment.get("multimodal"):
+            from multimodal_memory import MultimodalAssetStore
+            MultimodalAssetStore(self.memory_dir).release_unreferenced(
+                self.memory["layer7"]["moments"])
         print(f"🗑️  Deleted moment {moment_id} ({reason})")
         return True
+
+    def update_multimodal(self, moment_id: str, evidence: Dict) -> bool:
+        """Replace media references while retaining the event and six indices."""
+        moment = self.memory["layer7"]["moments"].get(moment_id)
+        if not moment or not isinstance(evidence, dict) or evidence.get("schema") != 1:
+            return False
+        moment["multimodal"] = evidence
+        self._sync_window_moment(moment_id)
+        self._save()
+        from multimodal_memory import MultimodalAssetStore
+        MultimodalAssetStore(self.memory_dir).release_unreferenced(
+            self.memory["layer7"]["moments"])
+        return True
+
+    def compact_multimodal_assets(self, budget_bytes: int = None) -> Dict:
+        """Keep episodic facts while reclaiming low-priority media assets."""
+        from multimodal_memory import MultimodalAssetStore
+        result = MultimodalAssetStore(self.memory_dir).compact_to_budget(
+            self.memory["layer7"]["moments"], budget_bytes=budget_bytes)
+        if result.get("evicted_moments"):
+            for mid, moment in self.memory["layer7"]["moments"].items():
+                if (moment.get("multimodal") or {}).get("evicted_at"):
+                    self._sync_window_moment(mid)
+            self._save()
+        return result
 
     # ------------------------------------------------------------------
     # Operation 9 : HIGHLIGHT
