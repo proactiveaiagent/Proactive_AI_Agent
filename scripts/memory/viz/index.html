@@ -1113,6 +1113,12 @@ function renderMomentDetail(x, compact){
   const excerpt=(value,limit)=>esc(value.length>limit?value.slice(0,limit).trimEnd()+'…':value);
   const tags=[];
   const addTag=(value,label)=>{ if(value) tags.push('<span class="mtag">'+label+' '+esc(value)+'</span>'); };
+  if(x.highlighted){
+    const sourceLabels={highlight_api:'显式标记',feedback_confirmed:'确认反馈'};
+    const source=sourceLabels[x.highlight_source]||'来源未知';
+    const markedAt=String(x.highlighted_at||'').slice(0,10);
+    addTag(source+(markedAt?' · '+markedAt:''),'⭐ 重点');
+  }
   addTag(x.location,'📍 Location');
   addTag(x.activity,'🏷 Activity');
   for(const person of (Array.isArray(x.people)?x.people:[])) addTag(person,'👤 Person');

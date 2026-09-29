@@ -406,7 +406,8 @@ class Handler(BaseHTTPRequestHandler):
                                 for key in ("id", "timestamp", "scene", "user_action",
                                             "people", "location", "activity",
                                             "environments", "objects", "notes",
-                                            "highlighted")
+                                            "highlighted", "highlight_source",
+                                            "highlighted_at")
                                 if moment.get(key) is not None
                             })
                     groups.append({"tag": tag, "count": len(ids), "moments": examples})
