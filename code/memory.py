@@ -374,7 +374,7 @@ def _merge_attr_list(old_list: List, new_list: List, threshold: float = MERGE_SI
     for na in new_list:
         hit = next(
             (o for o in old_list
-             if isinstance(o, dict) and "value" in o and not o.get("stale")
+             if isinstance(o, dict) and "value" in o
              and effective_confidence(o, now=now) >= STALE_THRESHOLD
              and _bigram_jaccard(o["value"], na["value"]) >= threshold),
             None,
@@ -1336,7 +1336,7 @@ class PersonMemory:
                     return old
                 if isinstance(old, dict) and "value" in old:
                     old_effective = effective_confidence(old, now=timestamp)
-                    if old.get("stale") or old_effective < STALE_THRESHOLD:
+                    if old_effective < STALE_THRESHOLD:
                         return _replace_stale_attr(old, na, old_effective)
                     if _bigram_jaccard(old["value"], na["value"]) >= MERGE_SIM_THRESHOLD:
                         return _corroborate_attr(old, na)
