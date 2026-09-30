@@ -664,7 +664,7 @@ body{height:100vh;height:100dvh;min-height:0;display:flex;flex-direction:column}
   <section class="content-panel" data-view-panel="reason" role="tabpanel" aria-label="语义决策">
     <div class="card">
       <h2><span class="dot"></span>从记忆到行动建议</h2>
-      <p class="note">先在“当前步骤”写入记忆，再描述当下发生的事。模型规划关联检索、读取证据，最后给出建议；建议不会自动执行。</p>
+      <p class="note">先检索相关事件，再将可用关键帧（最多 4 张）送入 Qwen3-VL；短音频（最多 2 段）由 Whisper 转写后参与判断。无媒体时会降级为文本。主动建议由下方按钮按需触发，不会在后台持续运行；建议不会自动执行。</p>
       <div class="reason-examples">
         <button class="btn" onclick="setReasonExample('Alice 现在需要帮助，结合已经认识的 Alice 和当前场景，下一步应该做什么？')">Alice</button>
         <button class="btn" onclick="setReasonExample('眼前有人突然晕倒。结合已存的相关健康信息，应该采取什么行动？')">有人晕倒</button>
@@ -672,7 +672,8 @@ body{height:100vh;height:100dvh;min-height:0;display:flex;flex-direction:column}
       </div>
       <div class="note" style="margin:12px 0 6px"><b>真实记忆场景审阅</b> · 基于 725 条 EgoLife 完整日记忆 · 定性示例，不计入准确率</div>
       <div id="semanticScenarioReview" class="reason-result" aria-live="polite">正在读取场景审阅结果…</div>
-      <div class="reason-controls"><textarea id="reasonSituation" aria-label="当前事件" placeholder="描述当下事件、人物和地点"></textarea><button class="btn primary" id="reasonRunBtn" onclick="runMemoryReason()">关联检索并推理</button></div>
+      <div class="reason-controls"><textarea id="reasonSituation" aria-label="当前事件" placeholder="描述当下事件、人物和地点"></textarea><button class="btn primary" id="reasonRunBtn" onclick="runMemoryReason(false)">关联检索并推理</button></div>
+      <div style="margin-top:8px"><button class="btn" id="reasonProactiveBtn" onclick="runMemoryReason(true)">🔎 基于最新记忆主动建议</button><span class="note">无需输入问题；以最新事件和关联记忆为依据，页面分开展示模型原始建议与规则校正。</span></div>
       <div id="reasonResult" class="reason-result" aria-live="polite"></div>
     </div>
   </section>
@@ -2755,19 +2756,25 @@ function renderPriorityDetails(rounds){
   }).join('');
   return content?'<details><summary>候选为什么排在这里</summary><div class="note">先按本轮最高文本相关度排序；索引实体、重点标记和时间只用于同分排序。文本相关度是本轮归一化排序值，不是准确率。</div>'+content+'</details>':'';
 }
-async function runMemoryReason(){
+async function runMemoryReason(proactive=false){
   const situation=document.getElementById('reasonSituation').value.trim();
   const box=document.getElementById('reasonResult');
   const button=document.getElementById('reasonRunBtn');
-  if(!situation){box.textContent='请先描述当前事件。';return;}
+  if(!situation&&!proactive){box.textContent='请先描述当前事件。';return;}
+  const proactiveButton=document.getElementById('reasonProactiveBtn');
   button.disabled=true;
-  box.textContent='正在规划检索并生成有证据的建议…';
+  if(proactiveButton) proactiveButton.disabled=true;
+  box.textContent=proactive?'正在读取最新事件与关联记忆，并检查可用的画面/音频…':'正在规划检索并生成有证据的建议…';
   try{
-    const response=await fetch(API+'/api/interactive/reason?situation='+encodeURIComponent(situation),{cache:'no-store'});
+    const endpoint=proactive?API+'/api/interactive/reason?mode=latest':API+'/api/interactive/reason?situation='+encodeURIComponent(situation);
+    const response=await fetch(endpoint,{cache:'no-store'});
     const result=await response.json();
     if(!response.ok) throw new Error(result.error||('HTTP '+response.status));
     const rec=result.recommendation||{};
     const cited=new Set(rec.evidence_ids||[]);
+    const modalities=result.multimodal_inference||{};
+    const visualUsed=Number(modalities.visual_frames_used)||0;
+    const audioUsed=Number(modalities.audio_transcripts_used)||0;
     const rounds=(result.retrieval_rounds||[]).map((round,index)=>{
       const links=(round.media_links||[]).map(link=>'<li><code>'+esc(link.from_id||'')+'</code> → <code>'+esc(link.to_id||'')+'</code> · 相似度 '+Math.round(Number((link.similarity||{}).score||0)*100)+'%</li>').join('');
       return '<article><b>第 '+(index+1)+' 轮检索</b> · '+esc((round.queries||[]).join(' / '))+'<div class="note">候选记忆 '+(round.candidate_ids||[]).length+' 条；其中画面/音频关联 '+(round.media_links||[]).length+' 条</div>'+(links?'<ul>'+links+'</ul>':'')+'</article>';
@@ -2778,10 +2785,12 @@ async function runMemoryReason(){
       (rec.world_assumption?'<div class="note">一般知识假设：'+esc(rec.world_assumption)+'</div>':'')+
       ((result.policy_adjustments||[]).length?'<div class="note">规则校正：'+esc(result.policy_adjustments.join('；'))+'</div>':'')+
       ((result.model_recommendation||{}).action?'<details><summary>查看模型原始建议</summary><p>'+esc(result.model_recommendation.action)+'</p><p>'+esc(result.model_recommendation.reason||'')+'</p></details>':'')+
+      '<div class="note">实际送入推理：'+(visualUsed?'视觉 '+visualUsed+' 帧':'无可用画面')+' · '+(audioUsed?'音频转写 '+audioUsed+' 段':'无可用音频转写')+' · '+esc(modalities.model||'模型状态未知')+'</div>'+
+      ((modalities.language_translation==='failed'||modalities.language_translation==='partial')?'<div class="note">中文翻译未完全完成；请按模型原文核对。</div>':'')+
       '<div class="note">风险：'+esc(rec.risk||'未知')+' · 推理耗时 '+Number(result.elapsed_ms||0)+' ms · 引用 '+cited.size+' 条记忆</div></article>'+
       rounds+renderPriorityDetails(result.retrieval_rounds||[])+'<article><b>检索到的记忆</b>'+(candidates?'<ul>'+candidates+'</ul>':'<div class="note">当前会话没有找到相关记忆；建议应按缺少个人证据理解。</div>')+'</article>';
   }catch(error){box.textContent=String(error.message||error);}
-  finally{button.disabled=false;}
+  finally{button.disabled=false;if(proactiveButton) proactiveButton.disabled=false;}
 }
 
 fetch(API+'/api/semantic-scenario-review',{cache:'no-store'})

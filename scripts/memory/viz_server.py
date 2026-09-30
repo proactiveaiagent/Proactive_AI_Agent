@@ -438,13 +438,22 @@ class Handler(BaseHTTPRequestHandler):
         if url.path == "/api/interactive/reason":
             if SESSION is None:
                 return self._send(404, {"error": "请先创建交互会话"})
+            mode = (qs.get("mode") or [""])[0]
             situation = (qs.get("situation") or [""])[0].strip()[:1200]
-            if not situation:
+            reason_context = {}
+            if mode == "latest":
+                archive = SESSION.mem.memory.get("layer7", {}).get("moments", {})
+                active = [m for m in archive.values() if not m.get("merged_into")]
+                if not active:
+                    return self._send(409, {"error": "当前会话还没有写入记忆，请先运行一个视频步骤"})
+                latest = max(active, key=lambda m: str(m.get("timestamp") or ""))
+                reason_context = {"source_moment_id": latest.get("id"), "proactive": True}
+            elif not situation:
                 return self._send(400, {"error": "请填写当前事件"})
             if not STEP_LOCK.acquire(blocking=False):
                 return self._send(409, {"error": "当前步骤正在运行，请完成后再分析"})
             try:
-                result = SESSION.daytime.advise(situation)
+                result = SESSION.daytime.advise(situation, context=reason_context)
                 log_path = SESSION.mem.memory_dir / "reasoning_log.jsonl"
                 with log_path.open("a", encoding="utf-8") as f:
                     f.write(json.dumps(result, ensure_ascii=False) + "\n")

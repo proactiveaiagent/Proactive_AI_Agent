@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import re
 import time
+from pathlib import Path
 from typing import Any
 
 import requests
@@ -199,6 +200,122 @@ class MemoryReasoner:
         top = sorted(matches.values(), key=lambda item: item[0], reverse=True)[:limit]
         return [item[1] for item in top], [item[2] for item in top]
 
+    def _load_modal_evidence(self, moments: list[dict]) -> tuple[list[dict], list[dict], dict]:
+        # Read small, content-addressed assets from this memory store only.
+        root = Path(self.memory.memory_dir).resolve()
+        images, audio_texts = [], []
+        image_paths, audio_paths = set(), set()
+        image_ids, audio_ids = [], []
+        for moment in moments:
+            mid = str(moment.get("id") or "")
+            mm = moment.get("multimodal") or {}
+            if len(images) < 4:
+                ref = mm.get("visual") or {}
+                asset = str(ref.get("asset") or "")
+                if asset:
+                    path = (root / asset).resolve()
+                    if root in path.parents and path.is_file() and path not in image_paths:
+                        payload = path.read_bytes()
+                        if len(payload) <= 24_000:
+                            image_paths.add(path)
+                            images.append({"id": mid, "name": path.name,
+                                           "bytes": payload, "mime": "image/webp"})
+                            image_ids.append(mid)
+            if len(audio_texts) < 2:
+                ref = mm.get("audio") or {}
+                asset = str(ref.get("asset") or "")
+                if asset:
+                    path = (root / asset).resolve()
+                    if root in path.parents and path.is_file() and path not in audio_paths:
+                        payload = path.read_bytes()
+                        if len(payload) <= 12_000:
+                            audio_paths.add(path)
+                            try:
+                                response = requests.post(
+                                    self.api_url + "/transcribe",
+                                    files={"audio": (path.name, payload, "audio/ogg")},
+                                    timeout=self.timeout,
+                                )
+                                response.raise_for_status()
+                                text = str(response.json().get("full_text") or "").strip()
+                                if text:
+                                    audio_texts.append({"id": mid, "text": text[:360]})
+                                    audio_ids.append(mid)
+                            except Exception:
+                                # Audio is optional; visual/text reasoning must remain available.
+                                continue
+        return images, audio_texts, {
+            "visual_memory_ids": image_ids,
+            "audio_memory_ids": audio_ids,
+        }
+
+    def _infer_with_media(self, prompt: str, moments: list[dict]) -> tuple[dict, dict]:
+        images, audio_texts, source = self._load_modal_evidence(moments)
+        if audio_texts:
+            prompt += "\n\nShort audio excerpts transcribed from stored memory assets by Whisper: "
+            prompt += json.dumps(audio_texts, ensure_ascii=False)
+        if images:
+            mapping = [{"image": index + 1, "memory_id": item["id"]}
+                       for index, item in enumerate(images)]
+            prompt += (
+                "\n\nInspect the attached stored memory frames as visual evidence. "
+                "The image-to-memory mapping is " + json.dumps(mapping, ensure_ascii=False) + ". "
+                "Use only details visible in the frames. If frame content conflicts with a text description, "
+                "state the conflict and lower confidence; do not infer identity or intent from appearance alone."
+            )
+            response = requests.post(
+                self.api_url + "/analyze_video",
+                files=[("images", (item["name"], item["bytes"], item["mime"]))
+                       for item in images],
+                data={"prompt": prompt, "request_id": ""},
+                timeout=max(self.timeout, 240),
+            )
+            response.raise_for_status()
+            payload = response.json()
+            if payload.get("error"):
+                raise RuntimeError(str(payload["error"]))
+            result = _json_object(str(payload.get("analysis") or ""))
+            model = "Qwen3-VL"
+        else:
+            result = self._infer(prompt)
+            model = "text-only Qwen fallback"
+        human_fields = ("action", "reason", "uncertainty", "world_assumption")
+        needs_translation = any(
+            str(result.get(key) or "").strip()
+            and not re.search(r"[\u4e00-\u9fff]", str(result.get(key)))
+            for key in human_fields
+        )
+        translation_status = "not_needed"
+        if needs_translation:
+            translation_prompt = (
+                "Translate the human-readable values in this JSON into natural Simplified Chinese. "
+                "Return only a JSON object with the same keys. Preserve evidence IDs, risk, follow-up "
+                "queries, and all factual claims. Translate only action, reason, uncertainty, "
+                "world_assumption. Do not add facts.\n"
+                + json.dumps(result, ensure_ascii=False)
+            )
+            try:
+                translated = self._infer(translation_prompt)
+                for key in human_fields:
+                    if translated.get(key):
+                        result[key] = str(translated[key])
+                translation_status = (
+                    "partial" if any(
+                        str(result.get(key) or "").strip()
+                        and not re.search(r"[\u4e00-\u9fff]", str(result.get(key)))
+                        for key in human_fields
+                    ) else "translated"
+                )
+            except Exception:
+                # Keep the decision if only the optional Chinese translation failed;
+                # the UI reports this so English is never presented as Chinese.
+                translation_status = "failed"
+        return result, {
+            "model": model, "language_translation": translation_status,
+            "visual_frames_used": len(images),
+            "audio_transcripts_used": len(audio_texts), **source,
+        }
+
     @staticmethod
     def _compact(moment: dict) -> dict:
         mm = moment.get("multimodal") or {}
@@ -229,9 +346,33 @@ class MemoryReasoner:
 
     def reason(self, situation: str, context: dict | None = None) -> dict:
         situation = str(situation or "").strip()[:1200]
+        context = dict(context) if isinstance(context, dict) else {}
+        current_moment_id = str(context.pop("source_moment_id", "") or "")
+        proactive = bool(context.pop("proactive", False))
+        current_moment = None
+        if current_moment_id:
+            current_moment = self.memory.memory.get("layer7", {}).get("moments", {}).get(current_moment_id)
+            if not current_moment:
+                raise ValueError("当前事件已不在记忆中，请重新运行视频步骤")
+            current_summary = self._compact(current_moment)
+            context["current_event"] = current_summary
+            if not situation:
+                observed = [
+                    "Scene: " + str(current_summary.get("scene") or ""),
+                    "Action: " + str(current_summary.get("action") or ""),
+                    "People: " + ", ".join(map(str, current_summary.get("people") or [])),
+                    "Location: " + str(current_summary.get("location") or ""),
+                    "Activity: " + str(current_summary.get("activity") or ""),
+                    "Objects: " + ", ".join(map(str, current_summary.get("objects") or [])),
+                    "Speech: " + str(current_summary.get("speech") or ""),
+                ]
+                situation = (
+                    "Proactively assess the latest observed event and suggest a useful, safe next step "
+                    "only when evidence supports one. If none is needed, say no reminder is needed. "
+                    + " ".join(part for part in observed if part.split(": ", 1)[-1].strip())
+                )[:1200]
         if not situation:
             raise ValueError("请提供当前事件")
-        context = context if isinstance(context, dict) else {}
         t0 = time.perf_counter()
         planner = self._infer(
             "You are the retrieval planner for a personal memory module. "
@@ -246,10 +387,13 @@ class MemoryReasoner:
         )
         searches = self._strings(planner.get("searches"), 4) or [situation]
         entities = self._strings(planner.get("entities"), 6)
-        seen: set[str] = set()
+        seen: set[str] = {current_moment_id} if current_moment_id else set()
         first_details: dict[str, dict] = {}
-        first = self._recall(searches, entities, seen, limit=9,
-                             priority_details=first_details)
+        first = [current_moment] if current_moment else []
+        recalled = self._recall(searches, entities, seen, limit=9,
+                                priority_details=first_details)
+        first.extend(recalled)
+        first = first[:9]
         media_first, links_first = self._media_neighbors(first, {m["id"] for m in first})
         first.extend(media_first)
         for row in first:
@@ -271,7 +415,10 @@ class MemoryReasoner:
             return (
                 "You are the memory module's decision-support reasoner. "
                 "Write every human-readable output value in Simplified Chinese. "
-                "Recommend a concrete NEXT ACTION grounded in supplied memory. "
+                + ("This is a proactive scan of the latest observed event. Suggest an action only when "
+                   "the visual/audio/text evidence supports a useful next step; otherwise say no reminder is needed. "
+                   if proactive else "")
+                + "Recommend a concrete NEXT ACTION grounded in supplied memory. "
                 "Do not claim an action has been executed. Distinguish memory evidence from general "
                 "world knowledge; cite only provided memory IDs. Do not invent a personal medical "
                 "history or country. If someone fainted, first check responsiveness and normal breathing; "
@@ -297,7 +444,9 @@ class MemoryReasoner:
                 + json.dumps([self._compact(m) for m in items[:20]], ensure_ascii=False)
             )
 
-        decision = self._infer(final_prompt(evidence, True))
+        decision, multimodal_inference = self._infer_with_media(
+            final_prompt(evidence, True), evidence
+        )
         followups = self._strings(decision.get("followup_searches"), 3)
         if followups:
             more_details: dict[str, dict] = {}
@@ -312,7 +461,9 @@ class MemoryReasoner:
                                "media_links": links_more,
                                "candidate_details": self._priority_rows(
                                    more, more_details, links_more)})
-                decision = self._infer(final_prompt(evidence, False))
+                decision, multimodal_inference = self._infer_with_media(
+                    final_prompt(evidence, False), evidence
+                )
 
         model_decision = dict(decision)
         policy_adjustments = []
@@ -433,5 +584,8 @@ class MemoryReasoner:
                     model_decision.get("evidence_ids"), 12) if mid in valid_ids],
             },
             "policy_adjustments": policy_adjustments,
+            "multimodal_inference": multimodal_inference,
+            "proactive_scan": proactive,
+            "source_moment_id": current_moment_id or None,
             "elapsed_ms": round((time.perf_counter() - t0) * 1000),
         }
