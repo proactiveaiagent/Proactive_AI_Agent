@@ -262,7 +262,10 @@ class MemoryReasoner:
             layer: str(self.memory.memory.get(layer, {}).get("summary") or "")[:700]
             for layer in ("layer4", "layer5")
         }
-        profile = self.memory.memory.get("layer6", {}).get("profile") or {}
+        if hasattr(self.memory, "get_profile_for_retrieval"):
+            profile = self.memory.get_profile_for_retrieval()
+        else:
+            profile = self.memory.memory.get("layer6", {}).get("profile") or {}
 
         def final_prompt(items: list[dict], allow_followup: bool) -> str:
             return (

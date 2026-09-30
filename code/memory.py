@@ -342,12 +342,40 @@ def _resolve_conflict(old: Dict, new: Dict) -> Dict:
     winner["history"] = history
     return winner
 
-def _merge_attr_list(old_list: List, new_list: List, threshold: float = MERGE_SIM_THRESHOLD) -> List:
-    """列表型维度：追加去重。相似 → 佐证合并，否则追加新条目。绝不整体覆盖。"""
+def _replace_stale_attr(old: Dict, new: Dict, prior_effective_confidence: Optional[float] = None) -> Dict:
+    """Promote a current observation over a stale scalar while keeping an audit trail."""
+    winner = copy.deepcopy(new)
+    history = []
+    seen = set()
+    for entry in old.get("history", []) if isinstance(old.get("history"), list) else []:
+        if not isinstance(entry, dict):
+            continue
+        signature = (str(entry.get("value", "")),
+                     str((entry.get("resolution") or {}).get("resolved_at", "")),
+                     str(entry.get("source", "")))
+        if signature not in seen:
+            seen.add(signature)
+            history.append(copy.deepcopy(entry))
+    loser = {key: copy.deepcopy(value) for key, value in old.items() if key != "history"}
+    loser["resolution"] = {
+        "winner_value": winner.get("value"),
+        "winner_source": winner.get("source", ""),
+        "basis": "stale_replaced_by_current_observation",
+        "prior_effective_confidence": prior_effective_confidence if prior_effective_confidence is not None else old.get("effective_confidence"),
+        "resolved_at": _now_iso(),
+    }
+    history.append(loser)
+    winner["history"] = history
+    return winner
+
+
+def _merge_attr_list(old_list: List, new_list: List, threshold: float = MERGE_SIM_THRESHOLD, now: Optional[str] = None) -> List:
+    """追加去重；过期条目不再吸收新观察，但仍留存以供追溯。"""
     for na in new_list:
         hit = next(
             (o for o in old_list
-             if isinstance(o, dict) and "value" in o
+             if isinstance(o, dict) and "value" in o and not o.get("stale")
+             and effective_confidence(o, now=now) >= STALE_THRESHOLD
              and _bigram_jaccard(o["value"], na["value"]) >= threshold),
             None,
         )
@@ -684,6 +712,35 @@ def _apply_decay_and_stale(node, daily_decay: float = STABLE_DAILY_DECAY,
                 node[k] = _apply_decay_and_stale(v, daily_decay, now)
         return node
     return node
+
+
+def _active_profile_snapshot(profile: Dict, now: Optional[str] = None) -> Dict:
+    """Return a read-only retrieval view with expired/stale facts omitted.
+
+    Stored profile data remains intact for the UI and audit history. This copy
+    recomputes decay at read time, so a profile that has aged since the last
+    nightly run cannot leak stale facts into a decision prompt.
+    """
+    candidate = copy.deepcopy(profile) if isinstance(profile, dict) else {}
+    candidate = _assign_default_decay(candidate)
+    candidate = _apply_decay_and_stale(candidate, now=now)
+
+    def prune(node):
+        if isinstance(node, list):
+            values = [prune(item) for item in node]
+            return [item for item in values if item not in (None, [], {})]
+        if isinstance(node, dict):
+            if "value" in node:
+                if node.get("stale"):
+                    return None
+                # Conflict history is for audit/display, not current inference.
+                return {key: value for key, value in node.items() if key != "history"}
+            values = {key: prune(value) for key, value in node.items()}
+            return {key: value for key, value in values.items()
+                    if value not in (None, [], {})}
+        return node
+
+    return prune(candidate) or {}
 
 
 def _has_profile_content(profile: Dict) -> bool:
@@ -1270,7 +1327,7 @@ class PersonMemory:
                 a = _finalize_attr(x, source, timestamp)
                 if a and a["confidence"] >= MIN_CONFIDENCE:
                     new_attrs.append(a)
-            return _merge_attr_list(old if isinstance(old, list) else [], new_attrs)
+            return _merge_attr_list(old if isinstance(old, list) else [], new_attrs, now=timestamp)
 
         if isinstance(new, dict):
             if "value" in new:
@@ -1278,6 +1335,9 @@ class PersonMemory:
                 if na is None or na["confidence"] < MIN_CONFIDENCE:
                     return old
                 if isinstance(old, dict) and "value" in old:
+                    old_effective = effective_confidence(old, now=timestamp)
+                    if old.get("stale") or old_effective < STALE_THRESHOLD:
+                        return _replace_stale_attr(old, na, old_effective)
                     if _bigram_jaccard(old["value"], na["value"]) >= MERGE_SIM_THRESHOLD:
                         return _corroborate_attr(old, na)
                     return _resolve_conflict(old, na)
@@ -1324,8 +1384,14 @@ class PersonMemory:
         return profile
 
     def get_profile(self) -> Dict:
-        """返回当前 layer6 画像（规格书骨架结构）。"""
+        """返回完整 layer6 画像（含 stale 项与冲突历史，供页面审计）。"""
         return self.memory["layer6"]["profile"]
+
+    def get_profile_for_retrieval(self, now: Optional[str] = None) -> Dict:
+        """Return only current, non-stale profile facts for reasoning prompts."""
+        return _active_profile_snapshot(
+            self.memory.get("layer6", {}).get("profile") or {}, now=now
+        )
 
     # ------------------------------------------------------------------
     # Operation 3 : QUERY  (called by Part2 before need analysis)
