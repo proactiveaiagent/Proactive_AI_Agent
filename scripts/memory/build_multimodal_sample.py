@@ -7,6 +7,7 @@ hour-long videos into the memory directory. Re-running resumes by source ID.
 import json
 import argparse
 import sys
+from datetime import datetime, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -14,7 +15,7 @@ sys.path.insert(0, str(ROOT / "code"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from memory import PersonMemory
-from multimodal_memory import MultimodalAssetStore
+from multimodal_memory import MultimodalAssetStore, CAPTURE_VERSION
 from qwen_perceive import QwenPerceiver, clip_range, video_path_of
 
 
@@ -26,14 +27,25 @@ OUTPUT = RUNS / "multimodal_baseline_v5_20260929"
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--long-day", action="store_true", help="Use 725 unique English DAY1 moments")
+    parser.add_argument("--dataset", help="Optional dataset JSONL path relative to the repository")
+    parser.add_argument("--output-dir", help="Fresh output directory; existing source IDs are resumed")
+    parser.add_argument("--limit", type=int, default=0)
+    parser.add_argument("--source-id", action="append", default=[])
     args = parser.parse_args()
     data_path = (ROOT / "data" / "egolife" / "testset" / "long_term" / "full_day.jsonl"
                  if args.long_day else DATA)
-    output = RUNS / "multimodal_full_day_v5_20260929" if args.long_day else OUTPUT
+    if args.dataset:
+        data_path = ROOT / args.dataset
+    output = ROOT / args.output_dir if args.output_dir else RUNS / (
+        "multimodal_full_day_v7_20260930" if args.long_day else "multimodal_baseline_v7_20260930")
     rows = [json.loads(line) for line in data_path.read_text(encoding="utf-8").splitlines()
             if line.strip()]
     if args.long_day:
         rows = [row for row in rows if str(row.get("id", "")).endswith("_en")]
+    if args.source_id:
+        rows = [row for row in rows if row.get("id") in set(args.source_id)]
+    if args.limit:
+        rows = rows[:args.limit]
     cache = QwenPerceiver(cache_file=RUNS / "qwen_cache_expanded_eval_v5_visible_actions_full.json").cache
     memory = PersonMemory(memory_dir=str(output))
     assets = MultimodalAssetStore(output)
@@ -58,7 +70,15 @@ def main():
         evidence = assets.capture(video, start, end,
                                   transcript=row.get("transcript") or "",
                                   source_id=source_id, fields=fields,
-                                  recent_media=recent)
+                                  recent_media=recent,
+                                  source_provenance={"source_video_id": row.get("video") or "",
+                                                     "source_segment_id": source_id,
+                                                     "extraction_batch_id": "temporal-v6-20260930"})
+        parts = source_id.split("_")
+        day = int(parts[0].removeprefix("DAY"))
+        clock = parts[3][:6]
+        timestamp = (datetime(2026, 9, 30) + timedelta(days=day - 1)).strftime("%Y-%m-%d") + \
+            f"T{clock[:2]}:{clock[2:4]}:{clock[4:6]}"
         memory.add(
             scene=fields.get("scene") or "", user_action=fields.get("user_action") or "",
             needs=[], solutions=[], people=fields.get("people") or [],
@@ -67,6 +87,8 @@ def main():
             objects=fields.get("objects") or [],
             source_evidence=fields.get("source_evidence") or "",
             multimodal=evidence,
+            timestamp=timestamp,
+            source_provenance=evidence.get("source_provenance"),
         )
         existing.add(source_id)
         captured += 1
@@ -94,6 +116,11 @@ def main():
         "projected_10yr_gib_at_725_moments_per_day": round(projected_10yr_gib, 2)
         if projected_10yr_gib is not None else None,
         "raw_video_included": False,
+        "capture_version": CAPTURE_VERSION,
+        "visual_sample_count": sum(len((m.get("multimodal") or {}).get("visual_frames") or []) for m in moments),
+        "audio_excerpt_count": sum(len((m.get("multimodal") or {}).get("audio_clips") or []) for m in moments),
+        "per_event_media_limit_bytes": 30_000,
+        "asset_budget_bytes": assets.asset_budget,
         "projection_note": "Linear estimate from this sampled mix; not a ten-year measurement.",
     }
     (output / "capacity_report.json").write_text(

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import math
 import os
 import re
@@ -20,6 +21,25 @@ from typing import Any
 
 IMAGE_LIMIT = 12_000
 AUDIO_LIMIT = 6_000
+TEMPORAL_IMAGE_LIMIT = 6_000
+TEMPORAL_AUDIO_BUDGET = 12_000
+CAPTURE_VERSION = "temporal-v3-speech"
+
+
+def media_refs(media: dict, kind: str) -> list[dict]:
+    """Read temporal evidence and legacy single samples without duplicates."""
+    plural = "visual_frames" if kind == "visual" else "audio_clips"
+    refs = media.get(plural)
+    refs = [*refs, media.get(kind)] if isinstance(refs, list) and refs else [media.get(kind)]
+    result, seen = [], set()
+    for ref in refs:
+        if not isinstance(ref, dict) or not ref.get("asset"):
+            continue
+        key = (ref["asset"], ref.get("at_s"))
+        if key not in seen:
+            result.append(ref)
+            seen.add(key)
+    return result
 
 
 def _run_ffmpeg(args: list[str], input_bytes: bytes | None = None) -> bytes:
@@ -101,6 +121,8 @@ class MultimodalAssetStore:
         self.asset_root = self.root / "assets"
         self.asset_budget = int(float(os.environ.get("MEMORY_ASSET_BUDGET_GB", "80"))
                                 * (1024 ** 3))
+        self.total_budget = int(os.environ.get("MEMORY_TOTAL_BUDGET_BYTES", "100000000000"))
+        self.non_asset_reserve = int(os.environ.get("MEMORY_NON_ASSET_RESERVE_BYTES", "2000000000"))
         self._bytes_cached: int | None = None
 
     def _put(self, kind: str, data: bytes, suffix: str, limit: int) -> dict | None:
@@ -111,7 +133,10 @@ class MultimodalAssetStore:
         target = self.root / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         if not target.exists():
-            if self.size_bytes() + len(data) > self.asset_budget:
+            memory_file = self.root / "memory.json"
+            text_bytes = memory_file.stat().st_size if memory_file.is_file() else 0
+            effective_budget = min(self.asset_budget, max(0, self.total_budget - self.non_asset_reserve - text_bytes))
+            if self.size_bytes() + len(data) > effective_budget:
                 return None
             tmp = target.with_name(target.name + f".{os.getpid()}.tmp")
             tmp.write_bytes(data)
@@ -124,17 +149,17 @@ class MultimodalAssetStore:
                 fields: dict | None = None,
                 recent_media: list[dict] | None = None,
                 source_provenance: dict | None = None) -> dict[str, Any]:
-        """Attach one bounded visual frame and, when speech exists, short audio.
+        """Retain three ordered instants and bounded speech excerpts.
 
         The structured Qwen scene/action/entities remain in the parent moment.
         Missing media only removes that modality; it never erases text memory.
         """
         fields = fields or {}
         start = max(0.0, float(start_s or 0))
-        end = max(start + 0.1, float(end_s or start + 30))
-        sample_time = start + min((end - start) / 2, 20.0)
+        end = float(end_s) if end_s is not None else start + 30
         result: dict[str, Any] = {
             "schema": 1,
+            "capture_version": CAPTURE_VERSION,
             "source_id": str(source_id),
             "start_s": round(start, 2),
             "end_s": round(end, 2),
@@ -147,6 +172,7 @@ class MultimodalAssetStore:
                 "speakers": _speaker_names(transcript),
             },
         }
+        result["audio_language_hint"] = "zh" if re.search(r"[\u3400-\u9fff]", transcript) else None
         if isinstance(source_provenance, dict):
             saved_provenance = {
                 key: source_provenance[key]
@@ -160,57 +186,84 @@ class MultimodalAssetStore:
             result["source_provenance"] = saved_provenance
         path = Path(video)
         if not path.is_file():
+            result["capture_status"] = "source_missing"
             return result
-
-        for width, quality in ((288, 48), (224, 35), (176, 28)):
-            image = _run_ffmpeg([
-                "-ss", f"{sample_time:.3f}", "-i", str(path), "-frames:v", "1",
-                "-vf", f"scale={width}:-2", "-c:v", "libwebp",
-                "-quality", str(quality), "-f", "webp", "pipe:1",
-            ])
-            try:
-                image_hash = _visual_hash(image) if image else ""
-            except Exception:
-                # Some truncated videos make ffmpeg return non-decodable bytes.
-                continue
-            if not image_hash:
-                continue
-            reused = None
-            for previous in (recent_media or [])[-100:]:
-                ref = (previous or {}).get("visual") or {}
+        try:
+            probe = subprocess.run([
+                "ffprobe", "-v", "error", "-show_entries", "format=duration",
+                "-of", "json", str(path)], capture_output=True, timeout=10, check=True)
+            duration = float(json.loads(probe.stdout)["format"]["duration"])
+            end = min(end, duration)
+            result["source_duration_s"] = round(duration, 3)
+        except (OSError, ValueError, KeyError, subprocess.SubprocessError):
+            result["capture_status"] = "source_duration_unverified"
+            return result
+        if end <= start:
+            result["capture_status"] = "invalid_interval"
+            return result
+        result["end_s"] = round(end, 3)
+        result.setdefault("source_provenance", {}).setdefault(
+            "source_video_id", _portable_video_id(path))
+        result["source_provenance"].update({"clip_start_s": round(start, 3),
+                                            "clip_end_s": round(end, 3)})
+        # Near-identical pictures remain separate observations. Content-addressed
+        # _put shares only identical encoded bytes; dHash is a retrieval cue.
+        last_time = max(start, end - 0.1)
+        times = sorted(set(round(t, 3) for t in (
+            start, (start + last_time) / 2, last_time)))
+        frames = []
+        for sample_time in times:
+            for width, quality in ((288, 42), (224, 32), (176, 25)):
+                image = _run_ffmpeg([
+                    "-ss", f"{sample_time:.3f}", "-i", str(path), "-frames:v", "1",
+                    "-vf", f"scale={width}:-2", "-c:v", "libwebp",
+                    "-quality", str(quality), "-f", "webp", "pipe:1",
+                ])
                 try:
-                    if image_hash and (int(image_hash, 16) ^ int(ref["dhash"], 16)).bit_count() <= 4:
-                        reused = dict(ref)
-                        break
-                except (KeyError, TypeError, ValueError):
+                    image_hash = _visual_hash(image) if image else ""
+                except Exception:
                     continue
-            if reused:
-                reused["at_s"] = round(sample_time, 2)
-                result["visual"] = reused
-                break
-            saved = self._put("visual", image, "webp", IMAGE_LIMIT)
-            if saved:
-                saved.update({"mime": "image/webp", "dhash": image_hash,
-                              "at_s": round(sample_time, 2)})
-                result["visual"] = saved
-                break
+                if not image_hash:
+                    continue
+                saved = self._put("visual", image, "webp", TEMPORAL_IMAGE_LIMIT)
+                if saved:
+                    saved.update({"mime": "image/webp", "dhash": image_hash,
+                                  "at_s": sample_time, "source_id": str(source_id)})
+                    frames.append(saved)
+                    break
+        if frames:
+            result["visual_frames"] = frames
+            result["visual"] = dict(frames[len(frames) // 2])
 
-        if transcript.strip():
-            audio_start = max(start, sample_time - 1.0)
+        # Up to ten seconds of speech, either the whole short event or two
+        # five-second excerpts at its boundaries. Missing middle speech is explicit.
+        spans = [(start, min(end - start, 10.0))] if end - start <= 10 else [
+            (start, 5.0), (max(start, end - 5.0), 5.0)]
+        clips, audio_bytes = [], 0
+        for audio_start, audio_duration in (spans if transcript.strip() else []):
             audio = _run_ffmpeg([
-                "-ss", f"{audio_start:.3f}", "-i", str(path), "-t", "2",
-                "-vn", "-ac", "1", "-ar", "12000", "-c:a", "libopus",
-                "-b:a", "12k", "-vbr", "off", "-f", "ogg", "pipe:1",
+                "-ss", f"{audio_start:.3f}", "-i", str(path), "-t", f"{audio_duration:.3f}",
+                "-vn", "-ac", "1", "-ar", "16000", "-af", "loudnorm=I=-23:TP=-2:LRA=7", "-c:a", "libopus",
+                "-b:a", "6k", "-vbr", "off", "-f", "ogg", "pipe:1",
             ])
-            saved = self._put("audio", audio, "ogg", AUDIO_LIMIT)
+            saved = self._put("audio", audio, "ogg", TEMPORAL_AUDIO_BUDGET - audio_bytes)
             if saved:
                 try:
                     signature = _audio_signature(audio)
                 except Exception:
                     signature = []
                 saved.update({"mime": "audio/ogg", "signature": signature,
-                              "at_s": round(audio_start, 2), "duration_s": 2})
-                result["audio"] = saved
+                              "at_s": round(audio_start, 3),
+                              "duration_s": round(audio_duration, 3),
+                              "source_id": str(source_id)})
+                clips.append(saved)
+                audio_bytes += len(audio)
+        if clips:
+            result["audio_clips"] = clips
+            result["audio"] = dict(clips[0])
+        result["audio_coverage_s"] = round(sum(x["duration_s"] for x in clips), 3)
+        result["audio_coverage_ratio"] = round(result["audio_coverage_s"] / (end - start), 4)
+        result["capture_status"] = "captured" if frames or clips else "no_decodable_media"
         return result
 
     def size_bytes(self) -> int:
@@ -224,8 +277,7 @@ class MultimodalAssetStore:
         referenced = set()
         for moment in moments.values():
             for kind in ("visual", "audio"):
-                ref = (moment.get("multimodal") or {}).get(kind) or {}
-                if isinstance(ref, dict) and ref.get("asset"):
+                for ref in media_refs(moment.get("multimodal") or {}, kind):
                     referenced.add(ref["asset"])
         removed = []
         for kind in ("visual", "audio"):
@@ -246,13 +298,17 @@ class MultimodalAssetStore:
         Highlighted and the newest window remain protected. Shared assets are
         only removed once their last moment reference has been retired.
         """
-        budget = self.asset_budget if budget_bytes is None else max(0, budget_bytes)
+        memory_file = self.root / "memory.json"
+        text_bytes = memory_file.stat().st_size if memory_file.is_file() else 0
+        effective_budget = min(self.asset_budget, max(0, self.total_budget - self.non_asset_reserve - text_bytes))
+        budget = effective_budget if budget_bytes is None else min(effective_budget, max(0, budget_bytes))
         before = self.size_bytes()
         if before <= budget:
             return {"before_bytes": before, "after_bytes": before,
                     "evicted_moments": 0, "removed_assets": 0}
         ordered = sorted(moments.values(), key=lambda m: str(m.get("timestamp") or ""))
-        protected_ids = {m.get("id") for m in ordered[-protected_recent:]}
+        protected_count = max(0, int(protected_recent))
+        protected_ids = {m.get("id") for m in ordered[-protected_count:]} if protected_count else set()
         candidates = [m for m in ordered if m.get("id") not in protected_ids
                       and not m.get("highlighted")]
         candidates.sort(key=lambda m: (
@@ -266,6 +322,8 @@ class MultimodalAssetStore:
                 continue
             mm.pop("audio", None)
             mm.pop("visual", None)
+            mm.pop("audio_clips", None)
+            mm.pop("visual_frames", None)
             mm["evicted_at"] = datetime.now().isoformat()
             evicted += 1
             removed_assets += len(self.release_unreferenced(moments))

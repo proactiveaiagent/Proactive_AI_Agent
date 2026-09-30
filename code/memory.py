@@ -1069,7 +1069,10 @@ class PersonMemory:
         # 原子落盘：先写临时文件再 rename，防止并发写坏 / 写一半崩溃（04 文档 2.5 步骤⑥）。
         tmp = self.memory_file.with_suffix(".json.tmp")
         with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(self.memory, f, indent=2, ensure_ascii=False)
+            # Windows/archive snapshots retain all fields; whitespace is not data.
+            json.dump(self.memory, f, separators=(",", ":"), ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
         os.replace(tmp, self.memory_file)
 
     def _migrate_from_v2(self, old: Dict) -> Dict:

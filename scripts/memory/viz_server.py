@@ -338,10 +338,32 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, {
                 "short_120": load_json(RUNS / "multimodal_baseline_v5_20260929" / "capacity_report.json"),
                 "long_725": load_json(RUNS / "multimodal_full_day_v5_20260929" / "capacity_report.json"),
+                "temporal_sample": load_json(RUNS / "multimodal_aligned_v7_20260930" / "capacity_report.json"),
+                "temporal_long": load_json(RUNS / "multimodal_full_day_v7_20260930" / "capacity_report.json"),
             })
 
         if url.path == "/api/semantic-scenario-review":
-            report_path = RUNS / "semantic_scenario_review_20260930_v27" / "scenario_review.json"
+            report_path = RUNS / "multimodal_decision_review_v37_20260930" / "scenario_review.json"
+            if not report_path.exists():
+                report_path = RUNS / "multimodal_decision_review_v36_20260930" / "scenario_review.json"
+            if not report_path.exists():
+                report_path = RUNS / "multimodal_decision_review_v35_20260930" / "scenario_review.json"
+            if not report_path.exists():
+                report_path = RUNS / "multimodal_decision_review_v34_20260930" / "scenario_review.json"
+            if not report_path.exists():
+                report_path = RUNS / "multimodal_decision_review_v33_20260930" / "scenario_review.json"
+            if not report_path.exists():
+                report_path = RUNS / "multimodal_decision_review_v32_20260930" / "scenario_review.json"
+            if not report_path.exists():
+                report_path = RUNS / "multimodal_decision_review_v31_20260930" / "scenario_review.json"
+            if not report_path.exists():
+                report_path = RUNS / "multimodal_decision_review_v30_20260930" / "scenario_review.json"
+            if not report_path.exists():
+                report_path = RUNS / "multimodal_decision_review_v29_20260930" / "scenario_review.json"
+            if not report_path.exists():
+                report_path = RUNS / "multimodal_decision_review_v28_20260930" / "scenario_review.json"
+            if not report_path.exists():
+                report_path = RUNS / "semantic_scenario_review_20260930_v27" / "scenario_review.json"
             if not report_path.exists():
                 report_path = RUNS / "semantic_scenario_review_20260930_v26" / "scenario_review.json"
             if not report_path.exists():

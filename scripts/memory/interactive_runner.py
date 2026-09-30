@@ -29,7 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from memory import PersonMemory, _portable_video_id, entity_graph_summary  # noqa: E402
 from daytime_processor import DaytimeProcessor  # noqa: E402
 from nighttime_processor import NightlyProcessor  # noqa: E402
-from multimodal_memory import MultimodalAssetStore  # noqa: E402
+from multimodal_memory import MultimodalAssetStore, media_refs  # noqa: E402
 import run_scenarios as rs               # noqa: E402  复用 snapshot / 夜间整理辅助函数
 from qwen_perceive import QwenPerceiver, golden_eval, clip_range, video_path_of   # noqa: E402
 
@@ -618,9 +618,9 @@ class InteractiveSession:
         }
         if video_path and os.environ.get("MEMORY_CAPTURE_MULTIMODAL", "1") != "0":
             try:
-                if self.media_store.size_bytes() + 18_000 > self.media_store.asset_budget:
+                if self.media_store.size_bytes() + 30_000 > self.media_store.asset_budget:
                     self.mem.compact_multimodal_assets(
-                        max(0, self.media_store.asset_budget - 18_000))
+                        max(0, self.media_store.asset_budget - 30_000))
                     self.media_store._bytes_cached = None
                 multimodal = self.media_store.capture(
                     video_path, clip_start, clip_end,
@@ -1176,6 +1176,8 @@ class InteractiveSession:
             if isinstance(media, dict):
                 d["multimodal"] = copy.deepcopy(media)
                 for kind in ("visual", "audio"):
+                    for temporal_ref in media_refs(d["multimodal"], kind):
+                        temporal_ref["url"] = "/api/memory_asset?p=" + quote(temporal_ref["asset"])
                     ref = d["multimodal"].get(kind)
                     if isinstance(ref, dict) and ref.get("asset"):
                         ref["url"] = "/api/memory_asset?p=" + quote(ref["asset"])
