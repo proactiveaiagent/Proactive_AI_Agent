@@ -656,6 +656,7 @@ body{height:100vh;height:100dvh;min-height:0;display:flex;flex-direction:column}
         <button class="btn" id="autoBtn" title="连续执行相邻的同类步骤，遇到另一种操作时自动停止" onclick="toggleAuto()" disabled>⏩ 连续运行当前类型</button>
       </div>
       <div class="lastres" id="lastRes"></div>
+      <div id="autoSuggestion" class="reason-result" aria-live="polite" style="display:none;margin-top:10px"></div>
       <div id="nightlyProgress" class="note" aria-live="polite" style="display:none;margin:10px 0;padding:12px;border:1px solid #d7deed;border-radius:10px"></div>
       <div id="percBox"></div>
     </div>
@@ -664,7 +665,7 @@ body{height:100vh;height:100dvh;min-height:0;display:flex;flex-direction:column}
   <section class="content-panel" data-view-panel="reason" role="tabpanel" aria-label="语义决策">
     <div class="card">
       <h2><span class="dot"></span>从记忆到行动建议</h2>
-      <p class="note">先检索相关事件，再将可用关键帧（最多 4 张）送入 Qwen3-VL；短音频（最多 2 段）由 Whisper 转写后参与判断。无媒体时会降级为文本。主动建议由下方按钮按需触发，不会在后台持续运行；建议不会自动执行。</p>
+      <p class="note">每次实时识别写入新片段后，会自动针对最新事件生成一条建议；也可手动对最新记忆发起分析。模型最多迭代检索 3 轮，结合实际送入的画面、音频转写和历史记忆推断。推理可停止，建议只供参考，不会自动执行。</p>
       <div class="reason-examples">
         <button class="btn" onclick="setReasonExample('Alice 现在需要帮助，结合已经认识的 Alice 和当前场景，下一步应该做什么？')">Alice</button>
         <button class="btn" onclick="setReasonExample('眼前有人突然晕倒。结合已存的相关健康信息，应该采取什么行动？')">有人晕倒</button>
@@ -673,7 +674,7 @@ body{height:100vh;height:100dvh;min-height:0;display:flex;flex-direction:column}
       <div class="note" style="margin:12px 0 6px"><b>真实记忆场景审阅</b> · 基于 725 条 EgoLife 完整日记忆 · 定性示例，不计入准确率</div>
       <div id="semanticScenarioReview" class="reason-result" aria-live="polite">正在读取场景审阅结果…</div>
       <div class="reason-controls"><textarea id="reasonSituation" aria-label="当前事件" placeholder="描述当下事件、人物和地点"></textarea><button class="btn primary" id="reasonRunBtn" onclick="runMemoryReason(false)">关联检索并推理</button></div>
-      <div style="margin-top:8px"><button class="btn" id="reasonProactiveBtn" onclick="runMemoryReason(true)">🔎 基于最新记忆主动建议</button><span class="note">无需输入问题；以最新事件和关联记忆为依据，页面分开展示模型原始建议与规则校正。</span></div>
+      <div style="margin-top:8px"><button class="btn" id="reasonProactiveBtn" onclick="runMemoryReason(true)">🔎 基于最新记忆主动建议</button><button class="btn" id="reasonCancelBtn" onclick="cancelSemanticReason()" style="display:none">⏹ 停止建议</button><span class="note">无需输入问题；建议依据最新事件、实际媒体和关联记忆生成，并标出模型观察到的画面/音频证据。</span></div>
       <div id="reasonResult" class="reason-result" aria-live="polite"></div>
     </div>
   </section>
@@ -2020,6 +2021,8 @@ async function newSession(key, participant=null, dataset='base'){
       return;
     }
     intState=next;
+    const autoBox=document.getElementById('autoSuggestion');
+    if(autoBox){autoBox.style.display='none';autoBox.innerHTML='';}
     curKey=key;
     renderTabs();
     memory=null;
@@ -2043,6 +2046,7 @@ async function changeInteractiveDataset(value){
 
 async function runStep(force, automatic=false, continuousKind=null){
   if(!intState||intState.finished) return;
+  const completedKind=intState.current&&intState.current.kind;
   const btn=document.getElementById('runStepBtn');
   const live=document.getElementById('liveBtn');
   const cancelBtn=document.getElementById('cancelInferenceBtn');
@@ -2086,6 +2090,13 @@ async function runStep(force, automatic=false, continuousKind=null){
     intState=st;
     if(st.auto_paused) stopAuto();
     renderInt();
+    const lastLog=(st.log||[]).length?st.log[st.log.length-1]:null;
+    const perception=lastLog&&lastLog.perception||{};
+    const perceptionItems=perception.kind==='batch'?(perception.items||[]):[perception];
+    const hasFreshMemory=perceptionItems.some(item=>item&&item.moment_id&&item.source==='qwen'&&!item.cancelled);
+    if(force&&!automatic&&['add','add_batch'].includes(completedKind)&&hasFreshMemory){
+      await runAutoSuggestionAfterLiveStep();
+    }
   }finally{
     if(progressStream) progressStream.close();
     autoBusy=false;
@@ -2756,14 +2767,105 @@ function renderPriorityDetails(rounds){
   }).join('');
   return content?'<details><summary>候选为什么排在这里</summary><div class="note">先按本轮最高文本相关度排序；索引实体、重点标记和时间只用于同分排序。文本相关度是本轮归一化排序值，不是准确率。</div>'+content+'</details>':'';
 }
+function renderMultimodalObservations(rows,modalities={}){
+  const observations=(rows||[]).filter(row=>row&&row.observation);
+  const items=observations.map(row=>{
+    const ids=row.memory_ids||[row.memory_id].filter(Boolean);
+    const sources=(row.sources||[]).map(source=>{
+      const hasFrameTime=source.frame_at_s!==null&&source.frame_at_s!==undefined&&source.frame_at_s!==''&&Number.isFinite(Number(source.frame_at_s));
+      const hasAudioTime=source.audio_at_s!==null&&source.audio_at_s!==undefined&&source.audio_at_s!==''&&Number.isFinite(Number(source.audio_at_s));
+      const clipTime=hasFrameTime?'画面 '+Number(source.frame_at_s).toFixed(2)+' 秒':'';
+      const audioTime=hasAudioTime?'音频 '+Number(source.audio_at_s).toFixed(2)+' 秒':'';
+      return [source.source_video_id,clipTime||audioTime].filter(Boolean).join(' · ');
+    }).filter(Boolean);
+    const hasAudioPosition=row.audio_at_s!==null&&row.audio_at_s!==undefined&&row.audio_at_s!==''&&Number.isFinite(Number(row.audio_at_s));
+    const audioSource=row.modality==='audio'?[row.source_video_id,hasAudioPosition?'音频 '+Number(row.audio_at_s).toFixed(2)+' 秒':''].filter(Boolean).join(' · '):'';
+    const sourceText=[...new Set([...sources,audioSource].filter(Boolean))].join('；');
+    return '<li><code>'+esc(ids.join('、')||'未标来源')+'</code> · '+(row.modality==='visual'?'画面':'音频转写')+(sourceText?' · '+esc(sourceText):'')+'：'+esc(row.observation)+'</li>';
+  }).join('');
+  const visualWithoutObservation=Number(modalities.visual_frames_used)>0&&!observations.some(row=>row.modality==='visual');
+  const audioWithoutObservation=Number(modalities.audio_transcripts_used)>0&&!observations.some(row=>row.modality==='audio');
+  const notes=[];
+  if(visualWithoutObservation)notes.push('已送入 '+Number(modalities.visual_frames_used)+' 帧画面，但模型未返回可核对的视觉事实；不据此声称建议由画面支持。');
+  if(audioWithoutObservation)notes.push('已送入音频转写，但没有可核对的音频观察。');
+  if(!observations.length&&!notes.length)notes.push('没有可核对的直接画面/音频观察；本条建议不能称为多模态支持。');
+  return '<div class="note"><b>多模态证据</b>'+(items?'<ul>'+items+'</ul>':'')+notes.map(esc).join('<br>')+'</div>';
+}
+function renderAutoSuggestionResult(result){
+  const rec=result.recommendation||{}, modalities=result.multimodal_inference||{};
+  const raw=result.model_recommendation||{}, policy=result.policy_adjustments||[];
+  const cited=new Set(rec.evidence_ids||[]);
+  const evidence=(result.candidates||[]).filter(item=>cited.has(item.id)).map(item=>'<li><code>'+esc(item.id||'')+'</code> · '+esc((item.scene||'').slice(0,180))+(item.speech?'<div class="note">记忆中的语音文字：'+esc(String(item.speech).slice(0,260))+'</div>':'')+'</li>').join('');
+  return '<article><b>最新事件的主动建议</b><p>'+esc(rec.action||'模型未给出可靠建议')+'</p>'+
+    '<div class="note">'+esc(rec.reason||'')+'</div>'+
+    (policy.length?'<div class="note">安全边界校正：'+esc(policy.join('；'))+'</div>':'')+
+    (raw.action&&raw.action!==rec.action?'<details><summary>查看模型原始建议</summary><p>'+esc(raw.action)+'</p><p class="note">'+esc(raw.reason||'')+'</p></details>':'')+
+    renderMultimodalObservations(rec.multimodal_observations||[],modalities)+
+    (evidence?'<div><b>引用的历史记忆</b><ul>'+evidence+'</ul></div>':'<div class="note">本次没有引用历史记忆；建议未声称来自个人记忆。</div>')+
+    (rec.uncertainty?'<div class="note">不确定性：'+esc(rec.uncertainty)+'</div>':'')+
+    '<div class="note">实际输入：画面 '+(Number(modalities.visual_frames_used)||0)+' 帧 · 音频转写 '+(Number(modalities.audio_transcripts_used)||0)+' 段 · '+esc(modalities.model||'模型未知')+' · '+Number(result.elapsed_ms||0)+' ms</div>'+
+    renderMediaGateAudit(modalities)+'</article>';
+}
+async function runAutoSuggestionAfterLiveStep(){
+  const box=document.getElementById('autoSuggestion');
+  if(!box)return;
+  box.style.display='block';
+  box.innerHTML='<article><b>正在分析刚写入的事件…</b><div class="note">模型会结合当前片段、可用画面/声音和历史记忆；可以随时停止。</div><button class="btn" onclick="cancelSemanticReason()">⏹ 停止建议</button></article>';
+  try{
+    const response=await fetch(API+'/api/interactive/reason?mode=latest',{cache:'no-store'});
+    const result=await response.json();
+    if(!response.ok) throw new Error(result.error||'主动建议未完成');
+    box.innerHTML=renderAutoSuggestionResult(result);
+  }catch(error){
+    box.innerHTML='<article><b>主动建议未完成</b><div class="note">'+esc(error.message||error)+'</div></article>';
+  }
+}
+async function cancelSemanticReason(){
+  const buttons=[document.getElementById('reasonCancelBtn')];
+  buttons.forEach(button=>{if(button){button.disabled=true;button.textContent='正在停止…';}});
+  try{
+    const response=await fetch(API+'/api/interactive/reason_cancel',{cache:'no-store'});
+    const result=await response.json();
+    if(!response.ok) throw new Error(result.error||'停止请求未接受');
+  }catch(error){
+    const box=document.getElementById('autoSuggestion');
+    if(box&&box.style.display!=='none') box.insertAdjacentHTML('beforeend','<div class="note">停止未确认：'+esc(error.message||error)+'</div>');
+  }finally{
+    buttons.forEach(button=>{if(button){button.disabled=false;button.textContent='⏹ 停止建议';}});
+  }
+}
+function renderMediaGateAudit(modalities){
+  const rows=modalities.media_relevance||[];
+  if(!rows.length)return '';
+  const basis={current_event:'当前事件',event_description:'事件描述命中',transcript_topic_match:'转录主题命中',no_topic_match:'没有主题命中'};
+  const modalityLabel={used:'视觉帧已送入',used_topic_match:'ASR主题匹配并采用',rejected_topic_mismatch:'ASR与主题不符，未采用',rejected_no_content_terms:'ASR无有效主题词，未采用',transcription_failed:'音频转写失败'};
+  const items=rows.map(row=>{
+    const terms=[...(row.description_terms||[]),...(row.transcript_terms||[])];
+    const unique=[...new Set(terms)];
+    const hasVisualPosition=row.visual_at_s!==null&&row.visual_at_s!==undefined&&row.visual_at_s!==''&&Number.isFinite(Number(row.visual_at_s));
+    const hasAudioPosition=row.audio_at_s!==null&&row.audio_at_s!==undefined&&row.audio_at_s!==''&&Number.isFinite(Number(row.audio_at_s));
+    const positions=[row.source_video_id,
+      hasVisualPosition?'画面 '+Number(row.visual_at_s).toFixed(2)+' 秒':'',
+      hasAudioPosition?'音频 '+Number(row.audio_at_s).toFixed(2)+' 秒':''].filter(Boolean).join(' · ');
+    return '<li><code>'+esc(row.memory_id||'')+'</code> · '+(row.used?'已送入推理':'已过滤')+
+      (positions?' · '+esc(positions):'')+' · '+esc(basis[row.basis]||row.basis||'')+
+      (unique.length?' · 命中词：'+esc(unique.join('、')):'')+
+      (row.visual_status?' · '+esc(modalityLabel[row.visual_status]||row.visual_status):'')+
+      (row.audio_status?' · '+esc(modalityLabel[row.audio_status]||row.audio_status):'')+
+      ((row.asr_terms||[]).length?' · ASR识别词：'+esc(row.asr_terms.join('、')):'')+'</li>';
+  }).join('');
+  return '<details><summary>媒体筛选依据（'+rows.filter(row=>row.used).length+'/'+rows.length+' 条已使用）</summary><ul>'+items+'</ul></details>';
+}
 async function runMemoryReason(proactive=false){
   const situation=document.getElementById('reasonSituation').value.trim();
   const box=document.getElementById('reasonResult');
   const button=document.getElementById('reasonRunBtn');
   if(!situation&&!proactive){box.textContent='请先描述当前事件。';return;}
   const proactiveButton=document.getElementById('reasonProactiveBtn');
+  const cancelButton=document.getElementById('reasonCancelBtn');
   button.disabled=true;
   if(proactiveButton) proactiveButton.disabled=true;
+  if(cancelButton){cancelButton.style.display='';cancelButton.disabled=false;cancelButton.textContent='⏹ 停止建议';}
   box.textContent=proactive?'正在读取最新事件与关联记忆，并检查可用的画面/音频…':'正在规划检索并生成有证据的建议…';
   try{
     const endpoint=proactive?API+'/api/interactive/reason?mode=latest':API+'/api/interactive/reason?situation='+encodeURIComponent(situation);
@@ -2775,22 +2877,28 @@ async function runMemoryReason(proactive=false){
     const modalities=result.multimodal_inference||{};
     const visualUsed=Number(modalities.visual_frames_used)||0;
     const audioUsed=Number(modalities.audio_transcripts_used)||0;
+    const filteredMedia=Number(modalities.filtered_irrelevant_media_count)||0;
     const rounds=(result.retrieval_rounds||[]).map((round,index)=>{
       const links=(round.media_links||[]).map(link=>'<li><code>'+esc(link.from_id||'')+'</code> → <code>'+esc(link.to_id||'')+'</code> · 相似度 '+Math.round(Number((link.similarity||{}).score||0)*100)+'%</li>').join('');
       return '<article><b>第 '+(index+1)+' 轮检索</b> · '+esc((round.queries||[]).join(' / '))+'<div class="note">候选记忆 '+(round.candidate_ids||[]).length+' 条；其中画面/音频关联 '+(round.media_links||[]).length+' 条</div>'+(links?'<ul>'+links+'</ul>':'')+'</article>';
     }).join('');
     const candidates=(result.candidates||[]).slice(0,12).map(item=>'<li>'+(cited.has(item.id)?'<b>证据</b> ':'')+'<code>'+esc(item.id||'')+'</code> · '+esc((item.scene||item.action||'').slice(0,230))+'</li>').join('');
     box.innerHTML='<article><b>建议动作</b><div>'+esc(rec.action||'模型未给出可执行建议')+'</div><div class="note">'+esc(rec.reason||'')+'</div>'+
+      renderMultimodalObservations(rec.multimodal_observations||[],modalities)+
       (rec.uncertainty?'<div class="note">不确定性：'+esc(rec.uncertainty)+'</div>':'')+
       (rec.world_assumption?'<div class="note">一般知识假设：'+esc(rec.world_assumption)+'</div>':'')+
       ((result.policy_adjustments||[]).length?'<div class="note">规则校正：'+esc(result.policy_adjustments.join('；'))+'</div>':'')+
       ((result.model_recommendation||{}).action?'<details><summary>查看模型原始建议</summary><p>'+esc(result.model_recommendation.action)+'</p><p>'+esc(result.model_recommendation.reason||'')+'</p></details>':'')+
-      '<div class="note">实际送入推理：'+(visualUsed?'视觉 '+visualUsed+' 帧':'无可用画面')+' · '+(audioUsed?'音频转写 '+audioUsed+' 段':'无可用音频转写')+' · '+esc(modalities.model||'模型状态未知')+'</div>'+
+      '<div class="note">实际送入推理：'+(visualUsed?'视觉 '+visualUsed+' 帧':'无相关画面')+' · '+(audioUsed?'音频转写 '+audioUsed+' 段':'无相关音频转写')+' · '+esc(modalities.model||'模型状态未知')+(filteredMedia?' · 已过滤 '+filteredMedia+' 条主题无关媒体':'')+(Number(modalities.audio_transcription_rejected_count)?' · '+Number(modalities.audio_transcription_rejected_count)+' 段不匹配的 ASR 未采用':'')+'</div>'+
+      renderMediaGateAudit(modalities)+
       ((modalities.language_translation==='failed'||modalities.language_translation==='partial')?'<div class="note">中文翻译未完全完成；请按模型原文核对。</div>':'')+
       '<div class="note">风险：'+esc(rec.risk||'未知')+' · 推理耗时 '+Number(result.elapsed_ms||0)+' ms · 引用 '+cited.size+' 条记忆</div></article>'+
       rounds+renderPriorityDetails(result.retrieval_rounds||[])+'<article><b>检索到的记忆</b>'+(candidates?'<ul>'+candidates+'</ul>':'<div class="note">当前会话没有找到相关记忆；建议应按缺少个人证据理解。</div>')+'</article>';
   }catch(error){box.textContent=String(error.message||error);}
-  finally{button.disabled=false;if(proactiveButton) proactiveButton.disabled=false;}
+  finally{
+    button.disabled=false;if(proactiveButton) proactiveButton.disabled=false;
+    if(cancelButton){cancelButton.style.display='none';cancelButton.disabled=false;cancelButton.textContent='⏹ 停止建议';}
+  }
 }
 
 fetch(API+'/api/semantic-scenario-review',{cache:'no-store'})
@@ -2804,7 +2912,7 @@ fetch(API+'/api/semantic-scenario-review',{cache:'no-store'})
       const raw=item.model_recommendation||{};
       const candidates=item.candidates||[];
       const evidence=candidates.filter(m=>cited.has(m.id)).map(m=>
-        '<li><code>'+esc(m.id||'')+'</code> · '+esc((m.scene||m.action||'').slice(0,240))+'</li>'
+        '<li><code>'+esc(m.id||'')+'</code> · '+esc((m.scene||m.action||'').slice(0,180))+(m.speech?'<div class="note">记忆中的语音文字：'+esc(String(m.speech).slice(0,260))+'</div>':'')+'</li>'
       ).join('');
       const other=candidates.filter(m=>!cited.has(m.id)).slice(0,5).map(m=>
         '<li><code>'+esc(m.id||'')+'</code> · '+esc((m.scene||m.action||'').slice(0,180))+'</li>'
@@ -2812,18 +2920,35 @@ fetch(API+'/api/semantic-scenario-review',{cache:'no-store'})
       const trace=(item.retrieval_rounds||[]).map((round,index)=>
         '<li>第 '+(index+1)+' 轮：'+esc((round.queries||[]).join(' / '))+
         ' · '+(round.candidate_ids||[]).length+' 条候选'+
-        ((round.media_links||[]).length?' · 多模态关联 '+(round.media_links||[]).length+' 条':'')+'</li>'
+        ((round.media_links||[]).length?' · 多模态关联 '+(round.media_links||[]).length+' 条':'')+
+        ((round.filtered_general_knowledge_followups||[]).length?' · 未把常识问题当作个人记忆查询：'+esc(round.filtered_general_knowledge_followups.join(' / ')):'')+'</li>'
       ).join('');
+      const plan=item.search_plan||{};
+      const proposedQueries=plan.proposed_searches||[];
+      const usedQueries=plan.searches||[];
+      const filteredQueries=plan.filtered_general_knowledge_searches||[];
+      const planTrace='<div class="note"><b>个人记忆检索计划</b>'+
+        '<div>模型提出：'+esc(proposedQueries.join(' / ')||'无')+'</div>'+
+        '<div>实际查询：'+esc(usedQueries.join(' / ')||'无')+(plan.used_situation_fallback?'（以当前情境兜底）':'')+'</div>'+
+        (filteredQueries.length?'<div>已排除的通用知识查询：'+esc(filteredQueries.join(' / '))+'</div>':'')+
+        '</div>';
+      const mm=item.multimodal_inference||{};
+      const filteredMedia=Number(mm.filtered_irrelevant_media_count)||0;
+      const mediaNote=(Number(mm.visual_frames_used)||0)+' 帧画面 · '+(Number(mm.audio_transcripts_used)||0)+' 段音频转写'+(mm.model?' · '+mm.model:'')+(filteredMedia?' · 已过滤 '+filteredMedia+' 条主题无关媒体':'')+(Number(mm.audio_transcription_rejected_count)?' · 忽略 '+Number(mm.audio_transcription_rejected_count)+' 段不匹配 ASR':'');
       return '<article><b>'+esc(item.title||'场景')+'</b>'+
         '<div><b>建议：</b>'+esc(rec.action||'未生成')+'</div>'+
+        '<div class="note">实际推理输入：'+esc(mediaNote)+'</div>'+
+        renderMultimodalObservations(rec.multimodal_observations||[],mm)+
         '<div class="note">'+esc(rec.reason||'')+'</div>'+
         (rec.uncertainty?'<div class="note">证据边界：'+esc(rec.uncertainty)+'</div>':'')+
         (rec.world_assumption?'<div class="note">一般知识：'+esc(rec.world_assumption)+'</div>':'')+
         ((item.policy_adjustments||[]).length?'<div class="note">规则校正：'+esc(item.policy_adjustments.join('；'))+'</div>':'')+
         '<div class="note">风险：'+esc(rec.risk||'未知')+' · 引用 '+cited.size+' 条记忆 · '+Number(item.elapsed_ms||0)+' ms</div>'+
         '<details><summary>查看问题、检索过程和记忆</summary><p>'+esc(item.situation||'')+'</p>'+
+      planTrace+
       (trace?'<b>检索过程</b><ul>'+trace+'</ul>':'')+
       renderPriorityDetails(item.retrieval_rounds||[])+
+      renderMediaGateAudit(mm)+
         (raw.action?'<b>模型原始建议</b><p>'+esc(raw.action)+'</p><p class="note">'+esc(raw.reason||'')+'</p>':'')+
         '<b>模型引用的个人记忆</b>'+
         (evidence?'<ul>'+evidence+'</ul>':'<p class="note">本场景没有引用到个人记忆。</p>')+

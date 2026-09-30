@@ -106,6 +106,23 @@ def _generate_video_with_cancel(inputs, cancel_event):
     )
 
 
+def _generate_text_with_cancel(inputs, cancel_event):
+    options = {}
+    if cancel_event is not None:
+        options["stopping_criteria"] = StoppingCriteriaList([
+            _StopGenerationOnEvent(cancel_event)
+        ])
+    return qwen_model.generate(
+        **inputs,
+        max_new_tokens=4096,
+        top_p=0.8,
+        top_k=20,
+        temperature=0.2,
+        repetition_penalty=1.05,
+        **options,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Lifespan (replaces deprecated @app.on_event)
 # ---------------------------------------------------------------------------
@@ -436,12 +453,18 @@ async def analyze_raw_video(
 
 @app.post("/consolidate")
 async def consolidate_memory(request: Request):
-    """Memory consolidation — text-only Qwen call."""
+    """Memory consolidation — text-only Qwen call, cancellable by request ID."""
+    request_id = ""
+    cancel_event = None
     try:
         data = await request.json()
         prompt = data.get("prompt", "")
+        request_id = str(data.get("request_id") or "").strip()
+        cancel_event = _register_inference_cancel_event(request_id)
         if not prompt:
             return JSONResponse(content={"error": "No prompt provided"}, status_code=400)
+        if cancel_event is not None and cancel_event.is_set():
+            return _cancelled_response()
 
         messages = [{
             "role": "user",
@@ -456,17 +479,20 @@ async def consolidate_memory(request: Request):
             return_tensors="pt"
         ).to(qwen_model.device)
 
+        if cancel_event is not None and cancel_event.is_set():
+            return _cancelled_response()
         async with _generate_lock:
-            generated_ids = qwen_model.generate(
-                **inputs,
-                max_new_tokens=4096,
-                top_p=0.8,
-                top_k=20,
-                temperature=0.2,
-                repetition_penalty=1.05
-            )
-            torch.cuda.empty_cache()
+            if cancel_event is not None and cancel_event.is_set():
+                return _cancelled_response()
+            try:
+                generated_ids = await asyncio.to_thread(
+                    _generate_text_with_cancel, inputs, cancel_event
+                )
+            finally:
+                torch.cuda.empty_cache()
 
+        if cancel_event is not None and cancel_event.is_set():
+            return _cancelled_response()
         trimmed = [
             out[len(inp):]
             for inp, out in zip(inputs.input_ids, generated_ids)
@@ -477,7 +503,11 @@ async def consolidate_memory(request: Request):
         return JSONResponse(content={"analysis": output[0]})
 
     except Exception as e:
+        if cancel_event is not None and cancel_event.is_set():
+            return _cancelled_response()
         return JSONResponse(content={"error": str(e)}, status_code=500)
+    finally:
+        _finish_inference_cancel_event(request_id, cancel_event)
 
 
 # ---------------------------------------------------------------------------

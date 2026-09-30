@@ -24,8 +24,8 @@ SCENARIOS = [
         "id": "alice_support",
         "title": "Alice：基于过往事件提供下一步协助",
         "situation": (
-            "Alice says she wants to take a shower. What helpful next action should I take? "
-            "Use relevant remembered context if available; do not invent a preference."
+            "Alice says she wants to take a shower; Tasha replies, ‘Let's go.’ "
+            "What should I say next?"
         ),
         "review_target": "检查是否引用 Alice 的相关事件，并把建议限制在记忆支持的范围内。",
     },
@@ -44,8 +44,8 @@ SCENARIOS = [
         "title": "切换国家：核实小费提醒的个人依据",
         "situation": (
             "The user has moved from China to the United States and is finishing a restaurant meal. "
-            "Should I remind them about tipping? Check memory for a stored location or tipping preference; "
-            "separate remembered facts from general local custom."
+            "Should I give an optional tipping reminder? Check memory for a stored location or tipping preference; "
+            "separate remembered facts from general custom, check for a service charge, and do not frame tipping as compulsory."
         ),
         "review_target": "不得把通用习俗伪装成用户记忆；没有国家或偏好记录时应说明前提。",
     },
@@ -69,6 +69,12 @@ def main() -> None:
     memory_file = output_dir / "memory.json"
     if not memory_file.exists():
         shutil.copy2(source, memory_file)
+    # The isolated reasoner must be able to load real frame/audio assets;
+    # copying only memory.json silently turns multimodal review into text-only.
+    source_assets = source.parent / "assets"
+    output_assets = output_dir / "assets"
+    if source_assets.is_dir() and not output_assets.exists():
+        shutil.copytree(source_assets, output_assets)
 
     memory = PersonMemory(str(output_dir))
     daytime = DaytimeProcessor(memory)
@@ -101,8 +107,10 @@ def main() -> None:
             "situation": scenario["situation"],
             "review_target": scenario["review_target"],
             "recommendation": answer.get("recommendation") or {},
+            "search_plan": answer.get("search_plan") or {},
             "model_recommendation": answer.get("model_recommendation") or {},
             "policy_adjustments": answer.get("policy_adjustments") or [],
+            "multimodal_inference": answer.get("multimodal_inference") or {},
             "retrieval_rounds": answer.get("retrieval_rounds") or [],
             "candidates": candidates,
             "cited_candidate_count": len(cited_candidates),

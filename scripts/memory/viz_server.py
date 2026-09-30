@@ -25,9 +25,11 @@ import shutil
 import subprocess
 import sys
 import threading
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlparse
+from urllib.request import Request as URLRequest, urlopen
 
 ROOT = Path(__file__).resolve().parents[2]
 RUNS = ROOT / "data" / "egolife" / "runs"
@@ -45,6 +47,8 @@ PREVIEW_JOBS = {}
 PREVIEW_LOCK = threading.Lock()
 PREVIEW_SEMAPHORE = threading.BoundedSemaphore(2)
 ACTIVE_STEP_FORCE = False
+ACTIVE_REASON = {"request_id": None, "event": None}
+REASON_LOCK = threading.Lock()
 
 try:
     from interactive_runner import InteractiveSession
@@ -337,7 +341,33 @@ class Handler(BaseHTTPRequestHandler):
             })
 
         if url.path == "/api/semantic-scenario-review":
-            report_path = RUNS / "semantic_scenario_review_20260929_v6" / "scenario_review.json"
+            report_path = RUNS / "semantic_scenario_review_20260930_v27" / "scenario_review.json"
+            if not report_path.exists():
+                report_path = RUNS / "semantic_scenario_review_20260930_v26" / "scenario_review.json"
+            if not report_path.exists():
+                report_path = RUNS / "semantic_scenario_review_20260930_v22" / "scenario_review.json"
+            if not report_path.exists():
+                report_path = RUNS / "semantic_scenario_review_20260930_v21" / "scenario_review.json"
+            if not report_path.exists():
+                report_path = RUNS / "semantic_scenario_review_20260930_v20" / "scenario_review.json"
+            if not report_path.exists():
+                report_path = RUNS / "semantic_scenario_review_20260930_v19" / "scenario_review.json"
+            if not report_path.exists():
+                report_path = RUNS / "semantic_scenario_review_20260930_v18" / "scenario_review.json"
+            if not report_path.exists():
+                report_path = RUNS / "semantic_scenario_review_20260930_v17" / "scenario_review.json"
+            if not report_path.exists():
+                report_path = RUNS / "semantic_scenario_review_20260930_v13" / "scenario_review.json"
+            if not report_path.exists():
+                report_path = RUNS / "semantic_scenario_review_20260930_v12" / "scenario_review.json"
+            if not report_path.exists():
+                report_path = RUNS / "semantic_scenario_review_20260930_v11" / "scenario_review.json"
+            if not report_path.exists():
+                report_path = RUNS / "semantic_scenario_review_20260930_v9" / "scenario_review.json"
+            if not report_path.exists():
+                report_path = RUNS / "semantic_scenario_review_20260930_v7" / "scenario_review.json"
+            if not report_path.exists():
+                report_path = RUNS / "semantic_scenario_review_20260929_v6" / "scenario_review.json"
             if not report_path.exists():
                 report_path = RUNS / "semantic_scenario_review_20260929_v5" / "scenario_review.json"
             if not report_path.exists():
@@ -435,6 +465,27 @@ class Handler(BaseHTTPRequestHandler):
         if url.path == "/api/interactive/options":
             return self._send(200, ir.interactive_dataset_options())
 
+        if url.path == "/api/interactive/reason_cancel":
+            with REASON_LOCK:
+                request_id = ACTIVE_REASON.get("request_id")
+                cancel_event = ACTIVE_REASON.get("event")
+                if not request_id or cancel_event is None:
+                    return self._send(409, {"error": "当前没有正在运行的语义建议"})
+                cancel_event.set()
+            try:
+                payload = json.dumps({"request_id": request_id}).encode("utf-8")
+                req = URLRequest(
+                    "http://127.0.0.1:8000/cancel_inference",
+                    data=payload, headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urlopen(req, timeout=3):
+                    pass
+            except Exception:
+                # The in-process event still prevents later reasoning rounds.
+                pass
+            return self._send(200, {"cancel_requested": True})
+
         if url.path == "/api/interactive/reason":
             if SESSION is None:
                 return self._send(404, {"error": "请先创建交互会话"})
@@ -452,6 +503,15 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(400, {"error": "请填写当前事件"})
             if not STEP_LOCK.acquire(blocking=False):
                 return self._send(409, {"error": "当前步骤正在运行，请完成后再分析"})
+            request_id = uuid.uuid4().hex
+            cancel_event = threading.Event()
+            reason_context.update({
+                "reasoning_request_id": request_id,
+                "cancellation_event": cancel_event,
+            })
+            with REASON_LOCK:
+                ACTIVE_REASON["request_id"] = request_id
+                ACTIVE_REASON["event"] = cancel_event
             try:
                 result = SESSION.daytime.advise(situation, context=reason_context)
                 log_path = SESSION.mem.memory_dir / "reasoning_log.jsonl"
@@ -459,8 +519,14 @@ class Handler(BaseHTTPRequestHandler):
                     f.write(json.dumps(result, ensure_ascii=False) + "\n")
                 return self._send(200, result)
             except Exception as exc:
+                if cancel_event.is_set() or exc.__class__.__name__ == "MemoryReasoningCancelled":
+                    return self._send(409, {"error": "主动建议已停止", "cancelled": True})
                 return self._send(503, {"error": f"语义推理未完成：{exc}"})
             finally:
+                with REASON_LOCK:
+                    if ACTIVE_REASON.get("request_id") == request_id:
+                        ACTIVE_REASON["request_id"] = None
+                        ACTIVE_REASON["event"] = None
                 STEP_LOCK.release()
 
         if url.path == "/api/interactive/new":
