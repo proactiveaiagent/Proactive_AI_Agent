@@ -19,22 +19,36 @@ import os
 import sys
 import threading
 import time
+import uuid
 from pathlib import Path
 from urllib.parse import quote
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "code"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from memory import PersonMemory          # noqa: E402
+from memory import PersonMemory, _portable_video_id, entity_graph_summary  # noqa: E402
 from daytime_processor import DaytimeProcessor  # noqa: E402
 from nighttime_processor import NightlyProcessor  # noqa: E402
+from multimodal_memory import MultimodalAssetStore  # noqa: E402
 import run_scenarios as rs               # noqa: E402  复用 snapshot / 夜间整理辅助函数
-from qwen_perceive import QwenPerceiver, golden_eval   # noqa: E402
+from qwen_perceive import QwenPerceiver, golden_eval, clip_range, video_path_of   # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 TESTSET = ROOT / "data" / "egolife" / "testset"
 RUNS = ROOT / "data" / "egolife" / "runs"
 VIDEO_ROOT = (ROOT / "data" / "egolife").resolve()
+
+
+def _source_video_id(moment, video_path=None):
+    """Return a portable EgoLife-relative video ID, never a host absolute path."""
+    raw = ""
+    if video_path:
+        try:
+            raw = Path(video_path).resolve().relative_to(VIDEO_ROOT).as_posix()
+        except (OSError, ValueError):
+            raw = ""
+    raw = raw or str(moment.get("video_id") or moment.get("video") or "")
+    return _portable_video_id(raw)
 
 SHORT_FILE = TESTSET / "short_term" / "moments_scattered.jsonl"
 SHORT_PLAN = TESTSET / "short_term" / "crud_plan.json"
@@ -219,13 +233,15 @@ class InteractiveSession:
         self.participant = participant
         self.dataset_key = dataset
         self.pos = 0            # 已执行步数 = 下一步索引
-        self.auto_paused = False  # 连续运行只允许执行写入步骤
+        self.auto_paused = False
         self.step_cancelled = False
+        self.nightly_progress = None
         self.log = []           # [{kind, title, msg, snapshot, perception}]
         self._cancel_lock = threading.Lock()
         self._active_step_cancel = None
         self._active_step_force = False
         self._pending_cancel = False
+        self.extraction_batch_id = f"{key}:{dataset}:{uuid.uuid4().hex[:12]}"
         self.perceiver = perceiver or site_perceiver()
         self.qwen_health = self.perceiver.health()
         self._build()
@@ -372,21 +388,6 @@ class InteractiveSession:
             ]
             suffix = " · " + "；".join(examples) if examples else ""
             return f"相似事件候选 {len(candidates)} 组（需人工确认）{suffix}"
-        if name == "merge_moments":
-            details = result if isinstance(result, dict) else {}
-            if not details.get("ok"):
-                return str(details.get("message") or "合并未执行")
-            if details.get("status") == "already_merged":
-                return f"来源 {details.get('source_id')} 已归并到 {details.get('target_id')}（无重复改动）"
-            source_id = details.get("source_id") or "?"
-            target_id = details.get("target_id") or "?"
-            fields = "、".join(details.get("merged_fields") or []) or "没有新增列表字段"
-            conflicts = len(details.get("scalar_conflicts") or [])
-            media = details.get("media_preserved") or []
-            retained = sum(bool(item.get("visual") or item.get("audio")) for item in media)
-            return (f"合并事件 {source_id} → {target_id} · 列表字段：{fields}"
-                    f" · 标量冲突留在来源并记录 {conflicts} 项"
-                    f" · {retained}/{len(media)} 条来源保留多模态引用")
         if name == "update":
             mid = str(arg0 or "")
             updates = args[1] if len(args) > 1 else kwargs.get("updates", {})
@@ -472,6 +473,21 @@ class InteractiveSession:
             if details.get("updated_moments"):
                 summary += f" · 记忆记录更新 {details['updated_moments']} 条"
             return summary
+        if name == "merge_moments":
+            details = result if isinstance(result, dict) else {}
+            if not details.get("ok"):
+                return str(details.get("message") or "合并未执行")
+            if details.get("status") == "already_merged":
+                return f"来源 {details.get('source_id')} 已归并到 {details.get('target_id')}（无重复改动）"
+            source_id = details.get("source_id") or "?"
+            target_id = details.get("target_id") or "?"
+            fields = "、".join(details.get("merged_fields") or []) or "没有新增列表字段"
+            conflicts = len(details.get("scalar_conflicts") or [])
+            media = details.get("media_preserved") or []
+            retained = sum(bool(item.get("visual") or item.get("audio")) for item in media)
+            return (f"合并事件 {source_id} → {target_id} · 列表字段：{fields}"
+                    f" · 标量冲突留在来源并记录 {conflicts} 项"
+                    f" · {retained}/{len(media)} 条来源保留多模态引用")
         if name == "compress":
             payload = arg0 if isinstance(arg0, dict) else {}
             layers = "、".join(k.upper() for k in payload if k in ("layer4", "layer5", "layer6"))
@@ -589,6 +605,34 @@ class InteractiveSession:
                           "source": r.get("source", "error"),
                           "cancelled": bool(r.get("cancelled"))}
         f = r["fields"]
+        multimodal = None
+        media_error = None
+        video_path = video_path_of(m)
+        clip_start, clip_end = clip_range(m)
+        source_provenance = {
+            "source_video_id": _source_video_id(m, video_path),
+            "source_segment_id": dataset_id,
+            "clip_start_s": round(float(clip_start or 0), 2),
+            "clip_end_s": round(float(clip_end), 2) if clip_end is not None else None,
+            "extraction_batch_id": self.extraction_batch_id,
+        }
+        if video_path and os.environ.get("MEMORY_CAPTURE_MULTIMODAL", "1") != "0":
+            try:
+                if self.media_store.size_bytes() + 18_000 > self.media_store.asset_budget:
+                    self.mem.compact_multimodal_assets(
+                        max(0, self.media_store.asset_budget - 18_000))
+                    self.media_store._bytes_cached = None
+                multimodal = self.media_store.capture(
+                    video_path, clip_start, clip_end,
+                    transcript=m.get("transcript") or "",
+                    source_id=dataset_id, fields=f,
+                    recent_media=[x.get("multimodal") for x in
+                                  list(self.mem.memory["layer7"]["moments"].values())[-100:]],
+                    source_provenance=source_provenance,
+                )
+            except Exception as exc:
+                # A media extraction failure must not prevent text memory CRUD.
+                media_error = str(exc)
         mid = self.daytime.ingest(
             scene=f["scene"],
             user_action=f["user_action"],
@@ -602,6 +646,8 @@ class InteractiveSession:
             extra_notes=(f.get("time_occasion") or "")[:200],
             timestamp=(time.strftime("%Y-%m-%d") + "T" + (_clock_from_id(m.get("id", "")) or time.strftime("%H:%M:%S"))),
             source_evidence=f.get("source_evidence") or "",
+            multimodal=multimodal,
+            source_provenance=source_provenance,
         )
         self.id_map[m["id"]] = mid
         self._qwen_fields[m["id"]] = f
@@ -614,6 +660,8 @@ class InteractiveSession:
             "num_frames": r.get("num_frames"),
             "source": r.get("source", "qwen"),
             "eval": golden_eval(f, m.get("ground_truth", {})),
+            "multimodal": multimodal,
+            "media_error": media_error,
         }
         return mid, info
 
@@ -631,6 +679,7 @@ class InteractiveSession:
             os.rename(mem_dir, trash_dir / f"{self.key}_{time.time_ns()}")
             mem_dir.mkdir(parents=True, exist_ok=True)
         self.mem = PersonMemory(memory_dir=str(mem_dir))
+        self.media_store = MultimodalAssetStore(mem_dir)
         self._install_operation_audit()
         self.daytime = DaytimeProcessor(self.mem)
         self.daytime.start_scene(f"{self.key}_{time.strftime('%Y-%m-%d')}")
@@ -762,7 +811,7 @@ class InteractiveSession:
                 "run": run,
             })
 
-        # 相似事件候选只进入待审阅队列，不会自动合并。
+        # 相似事件只进入待确认队列；用户逐条核对后才会写入归并关系。
         def run_merge_candidates(force=False):
             candidates = self.mem.find_merge_candidates(limit=100)
             result = {
@@ -1018,7 +1067,6 @@ class InteractiveSession:
                 "run": run,
             })
 
-        # 相似事件候选只进入待审阅队列，不会自动合并。
         def run_merge_candidates(force=False):
             candidates = self.mem.find_merge_candidates(limit=100)
             result = {
@@ -1036,12 +1084,35 @@ class InteractiveSession:
         })
 
         # 夜间整理：使用真实记忆输入，不将测试集 ground-truth 写入画像。
-        def run_nightly(force=False):
-            result = NightlyProcessor(self.mem).run(
-                day=self.mem.memory["metadata"]["today"],
-                daytime_processor=self.daytime,
-                force=force,
-            )
+        def run_nightly(force=False, use_cache=True):
+            self.nightly_progress = {"running": True, "stage": "start",
+                                     "label": "启动夜间整理", "current": 0,
+                                     "total": 0, "message": "", "updated_at": time.time()}
+            def on_progress(event):
+                self.nightly_progress = {"running": True, **event, "updated_at": time.time()}
+            try:
+                result = NightlyProcessor(self.mem).run(
+                    day=self.mem.memory["metadata"]["today"],
+                    daytime_processor=self.daytime,
+                    force=force,
+                    use_cache=use_cache,
+                    progress_callback=on_progress,
+                )
+            except Exception as exc:
+                self.nightly_progress = {
+                    "running": False, "stage": "error", "label": "夜间整理失败",
+                    "current": 0, "total": 0, "message": str(exc)[:300],
+                    "updated_at": time.time(),
+                }
+                raise
+            self.nightly_progress = {
+                "running": False, "stage": "done", "label": "夜间整理完成",
+                "current": 1, "total": 1,
+                "message": f"缓存命中 {result.get('cache_hits', 0)} 项，模型调用 {result.get('model_calls', 0)} 次",
+                "cache_hits": result.get("cache_hits", 0),
+                "model_calls": result.get("model_calls", 0),
+                "updated_at": time.time(),
+            }
             if not result.get("ok"):
                 return "夜间整理失败", {"kind": "nightly", "result": result}
             cleared = self.daytime.end_scene()
@@ -1101,13 +1172,22 @@ class InteractiveSession:
                 d["merged_into"] = x.get("merged_into", "")
                 d["merged_sources"] = copy.deepcopy(x.get("merged_sources", []))
                 d["merge_history"] = copy.deepcopy(x.get("merge_history", [])[-5:])
+            media = x.get("multimodal")
+            if isinstance(media, dict):
+                d["multimodal"] = copy.deepcopy(media)
+                for kind in ("visual", "audio"):
+                    ref = d["multimodal"].get(kind)
+                    if isinstance(ref, dict) and ref.get("asset"):
+                        ref["url"] = "/api/memory_asset?p=" + quote(ref["asset"])
+            source = x.get("source_provenance")
+            if isinstance(source, dict):
+                d["source_provenance"] = copy.deepcopy(source)
+                d["source_provenance"]["source_video_id"] = _portable_video_id(
+                    d["source_provenance"].get("source_video_id"))
             v = vid_of(x.get("id", ""))
             if v:
                 d["video"] = v
             return d
-
-        layer7_moments = list(l7.get("moments", {}).values())
-        merged_count = sum(bool(item.get("merged_into")) for item in layer7_moments)
 
         # 索引：列出每个维度下的 tag 及其命中的 moment id（限每个维度 15 个 tag，每个 tag 5 个 id）
         indices = {}
@@ -1115,6 +1195,8 @@ class InteractiveSession:
             idx = l7.get(dim, {})
             indices[dim] = {tag: ids[:5] for tag, ids in list(idx.items())[:15]}
 
+        layer7_moments = list(l7.get("moments", {}).values())
+        merged_count = sum(bool(item.get("merged_into")) for item in layer7_moments)
         return {
             "layer1": [fmt(x) for x in m.get("layer1", [])[:30]],
             "layer2": [fmt(x) for x in m.get("layer2", [])[:30]],
@@ -1128,6 +1210,8 @@ class InteractiveSession:
             "layer7_merged_total": merged_count,
             "indices": indices,
             "metadata": m.get("metadata", {}),
+            "entity_relationships": entity_graph_summary(l7, limit=12),
+            "multimodal_asset_bytes": self.media_store.size_bytes(),
             "daytime": self.daytime.snapshot(),
         }
 
@@ -1139,7 +1223,7 @@ class InteractiveSession:
         self.log.append({"kind": kind, "title": title, "msg": msg,
                          "snapshot": snap, "perception": perception})
 
-    def run_step(self, force=False, automatic=False, continuous_kind=None):
+    def run_step(self, force=False, automatic=False, continuous_kind=None, use_cache=True):
         """执行当前步；连续模式仅跨越相邻的同类步骤。"""
         self.auto_paused = False
         self.step_cancelled = False
@@ -1162,7 +1246,10 @@ class InteractiveSession:
         self._active_step_no = self.pos + 1
         self._active_step_title = step["title"]
         try:
-            msg, perception = step["run"](force=force)
+            if step["kind"] == "nightly":
+                msg, perception = step["run"](force=force, use_cache=use_cache)
+            else:
+                msg, perception = step["run"](force=force)
         finally:
             self._active_step_no = None
             self._active_step_title = None
@@ -1241,6 +1328,7 @@ class InteractiveSession:
             "current": cur,
             "auto_paused": self.auto_paused,
             "step_cancelled": self.step_cancelled,
+            "nightly_progress": dict(self.nightly_progress) if self.nightly_progress else None,
             "log": slim,
             "operations": [dict(event) for event in self.operation_log[-2000:]],
             "snapshot": self.log[-1]["snapshot"] if self.log else None,

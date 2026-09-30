@@ -113,9 +113,10 @@ class DaytimeProcessor:
                environments: List[str] = None,
                objects: List[str] = None,
                extra_notes: str = "",
-               timestamp: str = None,
-               source_evidence: str = "",
-               multimodal: Dict = None) -> str:
+                timestamp: str = None,
+                source_evidence: str = "",
+                multimodal: Dict = None,
+                source_provenance: Dict = None) -> str:
         """
         实时写入一条记忆。
 
@@ -138,6 +139,7 @@ class DaytimeProcessor:
                 timestamp=timestamp,
                 source_evidence=source_evidence,
                 multimodal=multimodal,
+                source_provenance=source_provenance,
             )
         self.stats["ingested"] += 1
 

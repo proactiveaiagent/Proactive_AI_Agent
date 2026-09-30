@@ -285,6 +285,8 @@ body{height:100vh;height:100dvh;min-height:0;display:flex;flex-direction:column}
 .moment-preview{font-size:11px;line-height:1.45;color:#27344c;overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;margin-top:5px}
 .moment-action-preview,.moment-notes-preview{font-size:10px;line-height:1.4;color:#69758c;margin-top:3px;overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:1;overflow:hidden}
 .moment-action-preview b,.moment-notes-preview b{color:#596781;margin-right:4px}
+.moment-source-provenance{font-size:9px;line-height:1.35;color:#7a879d;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.moment-source-provenance b{color:#596781;margin-right:4px}
 .moment-detail.is-expanded .moment-preview,.moment-detail.is-expanded .moment-action-preview,.moment-detail.is-expanded .moment-notes-preview{display:block;-webkit-line-clamp:unset;overflow:visible;white-space:pre-wrap}
 .layer-memory-row.is-expanded .layer-memory-copy{display:block;-webkit-line-clamp:unset;overflow:visible}
 .memory-inline-detail{grid-column:1/-1;margin:8px 0 2px;padding:10px 12px;border:1px solid #dfe6f1;border-radius:9px;background:#f8faff}
@@ -563,6 +565,12 @@ body{height:100vh;height:100dvh;min-height:0;display:flex;flex-direction:column}
 .media-evidence{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:7px 0 2px;padding:6px 8px;border:1px solid #dbe5f2;border-radius:8px;background:#f7faff;color:#52647e;font-size:12px}
 .media-evidence img{width:96px;height:54px;object-fit:cover;border-radius:5px;background:#dce4ef}
 .media-evidence audio{width:190px;height:30px}
+.entity-graph-panel{margin-top:8px;padding:8px 10px;border:1px solid #dbe5f2;border-radius:9px;background:#f8faff}
+.entity-graph-head{display:flex;justify-content:space-between;gap:8px;color:#43516b;font-size:11px;font-weight:800}
+.entity-graph-rows{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px;margin-top:6px}
+.entity-graph-row{min-width:0;padding:6px 8px;background:#fff;border:1px solid #e4eaf3;border-radius:7px;font-size:10px;line-height:1.45;overflow-wrap:anywhere}
+.entity-graph-row small{display:block;color:#7b879c;font-size:9px;margin-top:3px}
+.entity-graph-panel .layer-strip-meta{display:block;margin-top:6px;color:#78849a;font-size:9px}
 .reason-controls{display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap}
 .reason-controls textarea{flex:1 1 480px;min-height:76px;resize:vertical;border:1px solid #d4ddec;border-radius:8px;padding:9px;font:inherit}
 .reason-examples{display:flex;gap:6px;flex-wrap:wrap;margin:9px 0}
@@ -1151,6 +1159,16 @@ function renderMultimodalEvidence(x){
   if(audio.url) bits.push('<audio controls preload="none" src="'+esc(audio.url)+'" aria-label="记忆音频证据"></audio>');
   return '<div class="media-evidence">'+bits.join('')+'</div>';
 }
+function renderSourceProvenance(x){
+  const source=(x&&x.source_provenance)||{};
+  if(!source.source_video_id&&!source.source_segment_id) return '';
+  const clip=source.clip_start_s!=null&&source.clip_end_s!=null
+    ? ' · '+Number(source.clip_start_s).toFixed(2)+'–'+Number(source.clip_end_s).toFixed(2)+'s' : '';
+  const sourceText=(source.source_video_id||'video unavailable')+
+    (source.source_segment_id?' · '+source.source_segment_id:'')+clip;
+  const batch=source.extraction_batch_id||'';
+  return '<div class="moment-source-provenance"'+(batch?' title="batch '+esc(batch).replace(/"/g,'&quot;')+'"':'')+'><b>Source clip:</b> '+esc(sourceText)+'</div>';
+}
 function renderMomentDetail(x, compact){
   if(!x) return '';
   const scene=String(x.scene||'');
@@ -1185,8 +1203,10 @@ function renderMomentDetail(x, compact){
         '」；来源记录「'+esc(fieldText(c.source_value))+'」</div>').join('');
       const media=(entry.media_preserved||[]).map(m=>
         esc(m.id)+' · '+(m.visual?'画面保留 ':'')+(m.audio?'音频保留':'')).join('；');
-      return '<div style="margin:5px 0"><b>'+esc(entry.source_id||'来源')+' → '+esc(entry.target_id||id)+'</b>'+
+      return '<div style="margin:5px 0"><b>'+esc(entry.source_id||'来源')+' → '+esc(entry.target_id||id)+
+        (entry.undone_at?' · 已撤销':'')+'</b>'+
         '<small style="display:block">确认时间 '+esc(String(entry.at||'').replace('T',' ').slice(0,19))+
+        (entry.undone_at?' · 撤销时间 '+esc(String(entry.undone_at).replace('T',' ').slice(0,19)):'')+
         ' · '+esc(entry.reason||'未记录原因')+'</small>'+
         (conflicts?'<div>字段冲突保留在来源：'+conflicts+'</div>':'')+
         (media?'<small>多模态资产：'+media+'</small>':'')+'</div>';
@@ -1199,6 +1219,7 @@ function renderMomentDetail(x, compact){
   if(scene&&action) html+='<div class="moment-action-preview"><b>Action:</b> '+excerpt(action,64)+'</div>';
   if(notes&&notes!==headline&&notes!==action) html+='<div class="moment-notes-preview"><b>Additional context</b> '+excerpt(notes,72)+'</div>';
   html+=renderMultimodalEvidence(x);
+  html+=renderSourceProvenance(x);
   const expandNeeded=headline.length>previewLimit||(action&&action!==headline&&action.length>64)||(notes&&notes!==headline&&notes!==action&&notes.length>72);
   html+='<button type="button" class="memory-expand-toggle" data-expand-truncated="'+(expandNeeded?'true':'false')+'" data-memory=\''+payload+'\' aria-label="展开完整记忆" title="展开完整记忆" hidden onclick="toggleLayerMemoryDetail(this)">∨</button>';
   return html+'</article>';
@@ -1216,7 +1237,7 @@ function renderLayerMemoryRow(x, sourceLabel){
   const excerpt=content.length>150?content.slice(0,150).trimEnd()+'…':content;
   const context=[sourceLabel||'',String(x.timestamp||'').replace('T',' ').slice(0,16),x.location||'',x.activity||'',...(Array.isArray(x.people)?x.people.slice(0,2):[])].filter(Boolean).join(' · ');
   const payload=esc(JSON.stringify(x)).replace(/'/g,'&#39;');
-  return '<div class="layer-memory-row"><div class="layer-memory-context">'+esc(context||'已归档记忆')+'</div><div class="layer-memory-copy">'+esc(excerpt)+'</div>'+renderMultimodalEvidence(x)+'<button type="button" class="memory-expand-toggle" data-expand-truncated="'+(content.length>150?'true':'false')+'" data-memory=\''+payload+'\' aria-label="展开完整记忆" title="展开完整记忆" hidden onclick="toggleLayerMemoryDetail(this)">∨</button></div>';
+  return '<div class="layer-memory-row"><div class="layer-memory-context">'+esc(context||'已归档记忆')+'</div><div class="layer-memory-copy">'+esc(excerpt)+'</div>'+renderMultimodalEvidence(x)+renderSourceProvenance(x)+'<button type="button" class="memory-expand-toggle" data-expand-truncated="'+(content.length>150?'true':'false')+'" data-memory=\''+payload+'\' aria-label="展开完整记忆" title="展开完整记忆" hidden onclick="toggleLayerMemoryDetail(this)">∨</button></div>';
 }
 function renderLayerTextButton(text,label,title){
   const payload=esc(JSON.stringify(String(text||''))).replace(/'/g,'&#39;');
@@ -1346,6 +1367,20 @@ function renderLayer7Archive(samples){
     return '<div class="archive-dimension"><div class="archive-dimension-title">'+label+'索引命中的记忆</div><div class="layer-index-grid">'+cells+'</div></div>';
   }).join('');
 }
+function renderEntityGraph(graph){
+  if(!graph) return '';
+  const rows=Array.isArray(graph.samples)?graph.samples:[];
+  const body=rows.map(row=>{
+    const parts=[];
+    if(row.people&&row.people.length) parts.push('<b>人物</b> '+esc(row.people.join('、')));
+    if(row.activity) parts.push('<b>活动</b> '+esc(row.activity));
+    if(row.location) parts.push('<b>地点</b> '+esc(row.location));
+    if(row.objects&&row.objects.length) parts.push('<b>物品</b> '+esc(row.objects.join('、')));
+    if(row.environments&&row.environments.length) parts.push('<b>环境</b> '+esc(row.environments.join('、')));
+    return '<div class="entity-graph-row">'+(row.event?'<div><b>事件</b> '+esc(row.event)+'</div>':'')+(parts.join(' · ')||'<span>未抽取到其他关联字段</span>')+'<small>'+esc(row.timestamp||'')+' · 来源 '+esc(row.moment_id||'原始记忆')+'</small></div>';
+  }).join('');
+  return '<div class="entity-graph-panel"><div class="entity-graph-head"><span>事件实体关系</span><span>'+Number(graph.entity_count||0)+' 个实体 · '+Number(graph.relation_count||0)+' 条有来源关系</span></div><div class="entity-graph-rows">'+(body||'<div class="layer-empty-evidence">暂无可展示的实体关系。</div>')+'</div><small class="layer-strip-meta">关系由记忆明确记录的字段即时生成，不另存一份重复索引；人物同段出现只表示共同参与该事件，不代表私人关系。</small></div>';
+}
 function renderLayer7Snapshot(s, full){
   const count=Number((full&&(full.moments_count||full.layer7_total))||s.layer7_moments||0);
   const active=Number((full&&full.layer7_active_total)??s.layer7_active_moments??count);
@@ -1411,6 +1446,7 @@ function renderFullMemory(full){
   const total=full.layer7_total??full.moments_count??0;
   html+='<div class="layer-section layer-tone-l7"><div class="sublayer"><span class="layer-token layer-tone-l7">L7</span> 归档记忆样例 <span class="scount">主存储共 '+total+' 条</span></div>';
   html+=renderLayer7Archive(full.archive_samples||full.layer7_moments);
+  html+=renderEntityGraph(full.entity_relationships);
   html+='<div class="layer-note">每个样例由对应六维索引键定位到 moment_id，再回到 L7 主存储读取正文；同一条记忆不会因多个索引而复制存储。</div></div>';
 
   const dayKeys=Object.keys((indices.time_nodes)||{}).filter(k=>/^\d{4}-\d{2}-\d{2}$/.test(k));
@@ -2133,12 +2169,30 @@ async function mergeDuplicate(button){
     note.textContent='合并失败：'+(error.message||error); button.after(note);
   }
 }
+async function unmergeDuplicate(button){
+  const source=button.dataset.mergeSource,target=button.dataset.mergeTarget;
+  if(!source||!target||button.disabled) return;
+  button.disabled=true; button.textContent='正在恢复归并前状态…';
+  try{
+    const response=await fetch(API+'/api/interactive/unmerge',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({source_id:source,target_id:target,
+        reason:'用户在可视化页面撤销最近一次事件归并'})});
+    const state=await response.json();
+    if(!response.ok||state.error) throw new Error(state.error||'撤销未完成');
+    intState=state; renderInt();
+  }catch(error){
+    button.disabled=false; button.textContent='↶ 撤销本次归并';
+    const note=document.createElement('div'); note.className='note'; note.style.color='#c0393a';
+    note.textContent='撤销失败：'+(error.message||error); button.after(note);
+  }
+}
 function renderPerception(p){
   const box=document.getElementById('percBox');
   if(!p){ box.innerHTML=''; return; }
 
   if(p.kind==='operation_result'){
-    const opNames={query:'检索结果',update:'字段更新',update_feedback:'反馈修正',highlight:'重点标记',delete:'删除'};
+    const opNames={query:'检索结果',update:'字段更新',update_feedback:'反馈修正',highlight:'重点标记',delete:'删除',merge_moments:'事件归并',unmerge_moments:'撤销事件归并'};
     if(p.operation==='merge_candidates'){
       box.innerHTML='<div class="percbox operation-result"><h4>相似事件候选 · 需要逐条确认</h4>'+
         '<div class="prec-sum">系统不会自动合并。请核对两条记忆是否指向同一事件；确认后来源原文和多模态引用仍保留。</div>'+
@@ -2159,8 +2213,19 @@ function renderPerception(p){
       if(media.length) html+='<div class="prec-row"><b>来源多模态</b>'+media.map(m=>esc(m.id)+'（'+(m.visual?'画面 ':'')+(m.audio?'音频':'')+'）').join('；')+'</div>';
       html+='<div class="prec-row"><b>目标事件</b>'+esc((p.target||{}).scene||'')+' · '+esc((p.target||{}).action||'')+'</div>';
       html+='<div class="prec-row"><b>来源事件</b>'+esc((p.source||{}).scene||'')+' · '+esc((p.source||{}).action||'')+'</div>';
+      if(merge.status==='merged') html+='<button type="button" style="margin-top:8px;border:1px solid #9aa8c4;border-radius:7px;padding:7px 11px;background:#fff;color:#394867;font-weight:700;cursor:pointer" data-merge-source="'+esc(merge.source_id||'')+'" data-merge-target="'+esc(merge.target_id||'')+'" onclick="unmergeDuplicate(this)">↶ 撤销本次归并</button>';
       html+='<details style="margin-top:9px"><summary>其他相似候选</summary>'+renderMergeCandidateList(p.candidates||[])+'</details></div>';
       box.innerHTML=html; return;
+    }
+    if(p.operation==='unmerge_moments'){
+      const result=p.merge||{};
+      let html='<div class="percbox operation-result"><h4>撤销归并：'+(result.status==='unmerged'?'已完成':'未执行')+'</h4>';
+      html+='<div class="prec-sum">'+esc(result.message||((result.status==='unmerged')?'来源记忆已恢复为独立记录；索引和 L1–L3 窗口已还原。':'为保护后续修改，系统没有改变记忆。'))+'</div>';
+      html+='<div class="prec-row"><b>规范事件</b>'+esc(result.target_id||'—')+' · '+esc((p.target||{}).scene||'')+'</div>';
+      html+='<div class="prec-row"><b>恢复来源</b>'+esc(result.source_id||'—')+' · '+esc((p.source||{}).scene||'')+' · '+(Number(result.restored_source_count)||0)+' 条</div>';
+      const media=result.media_preserved||[];
+      if(media.length) html+='<div class="prec-row"><b>多模态资产</b>'+media.map(m=>esc(m.id)+'（'+(m.visual?'画面 ':'')+(m.audio?'音频':'')+'保留）').join('；')+'</div>';
+      html+='</div>'; box.innerHTML=html; return;
     }
     const valueText=v=>{
       if(v===null||v===undefined||v==='') return '—';
@@ -2641,7 +2706,7 @@ function setReasonExample(text){
   document.getElementById('reasonSituation').focus();
 }
 function renderPriorityDetails(rounds){
-  const labels={people:'人物',locations:'地点',activity_events:'活动',objects:'物品',environments:'环境'};
+  const labels={people:'人物',locations:'地点',activity_events:'活动',objects:'物品',environments:'环境',same_event_entities:'同事件实体关联'};
   const content=(rounds||[]).map((round,index)=>{
     const rows=(round.candidate_details||[]).slice(0,6).map(item=>{
       const why=[];

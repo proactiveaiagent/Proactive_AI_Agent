@@ -118,18 +118,34 @@ class NightlyProcessor:
             chunks.append(current)
         return chunks
 
-    def _call(self, prompt):
+    @staticmethod
+    def _write_cache(path, cache):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temp = path.with_suffix(path.suffix + ".tmp")
+        temp.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8")
+        temp.replace(path)
+
+    def _call(self, prompt, cache, cache_path, use_cache):
+        key = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+        if use_cache and key in cache["responses"]:
+            cache["hits"] = cache.get("hits", 0) + 1
+            return cache["responses"][key], True
         if self.llm_call:
             value = self.llm_call(prompt)
-            return json.dumps(value, ensure_ascii=False) if isinstance(value, dict) else str(value)
-        r = requests.post(f"{self.qwen_api_url}/consolidate",
-                          json={"prompt": prompt}, timeout=self.timeout)
-        if r.status_code != 200:
-            raise RuntimeError(f"Qwen consolidate API {r.status_code}: {r.text[:300]}")
-        value = r.json().get("analysis")
-        if not isinstance(value, str) or not value.strip():
-            raise RuntimeError("Qwen consolidate API returned empty analysis")
-        return value
+            raw = json.dumps(value, ensure_ascii=False) if isinstance(value, dict) else str(value)
+        else:
+            r = requests.post(f"{self.qwen_api_url}/consolidate",
+                              json={"prompt": prompt}, timeout=self.timeout)
+            if r.status_code != 200:
+                raise RuntimeError(f"Qwen consolidate API {r.status_code}: {r.text[:300]}")
+            raw = r.json().get("analysis")
+            if not isinstance(raw, str) or not raw.strip():
+                raise RuntimeError("Qwen consolidate API returned empty analysis")
+        self._json(raw)
+        cache["misses"] = cache.get("misses", 0) + 1
+        cache["responses"][key] = raw
+        self._write_cache(cache_path, cache)
+        return raw, False
 
     @staticmethod
     def _json(raw):
@@ -139,7 +155,7 @@ class NightlyProcessor:
             raise ValueError(f"Model response is not a JSON object: {raw[:240]}")
         return value
 
-    def _summarize(self, day, i, total, chunk):
+    def _summarize(self, day, i, total, chunk, cache, cache_path, use_cache):
         prompt = f"""TASK: NIGHTLY_CHUNK_SUMMARY
 Summarize this chronological slice of memories for {day}. Use only observations
 provided; distinguish repeated patterns from one-off events; preserve uncertainty.
@@ -148,14 +164,15 @@ Return JSON only:
 Slice {i}/{total}:
 {json.dumps(chunk, ensure_ascii=False, separators=(',', ':'))}
 """
-        value = self._json(self._call(prompt))
+        raw, cache_hit = self._call(prompt, cache, cache_path, use_cache)
+        value = self._json(raw)
         if not isinstance(value.get("summary"), str):
             raise ValueError(f"Chunk {i} has no summary")
         for key in ("key_events", "patterns"):
             if not isinstance(value.get(key, []), list):
                 value[key] = []
         value["profile_evidence"] = str(value.get("profile_evidence") or "")
-        return value
+        return value, cache_hit
 
     def _sort_analysis(self, day, moments):
         result = {key: {} for key in _INDEX_FIELDS}
@@ -182,7 +199,7 @@ Slice {i}/{total}:
                             ids.append(mid)
         return result
 
-    def _rollup(self, day, summaries, sort_data):
+    def _rollup(self, day, summaries, sort_data, cache, cache_path, use_cache):
         old = self.memory.memory
         prior = {"layer4": old.get("layer4", {}),
                  "layer5": old.get("layer5", {}),
@@ -215,10 +232,11 @@ Prior memory: {json.dumps(prior, ensure_ascii=False, separators=(',', ':'))}
 Today's summaries: {json.dumps(summaries, ensure_ascii=False, separators=(',', ':'))}
 Today's tags: {json.dumps(tags, ensure_ascii=False, separators=(',', ':'))}
 """
-        data = self._json(self._call(prompt))
+        raw, cache_hit = self._call(prompt, cache, cache_path, use_cache)
+        data = self._json(raw)
         if not isinstance(data.get("layer4"), dict) or not isinstance(data.get("layer5"), dict):
             raise ValueError("Rollup must contain layer4 and layer5 objects")
-        return data
+        return data, cache_hit
 
     @staticmethod
     def _compress_payload(data):
@@ -263,67 +281,112 @@ Today's tags: {json.dumps(tags, ensure_ascii=False, separators=(',', ':'))}
                 accepted[key] = pairs
         return accepted
 
-    def run(self, day=None, daytime_processor=None, force=False):
-        """Run once per day. Identical source data is skipped unless forced."""
+    def run(self, day=None, daytime_processor=None, force=False, use_cache=True,
+            progress_callback=None):
+        """Run once per day, resuming completed model calls from a prompt cache."""
+        cache = {"responses": {}, "hits": 0, "misses": 0}
+        def report(stage, label, current=0, total=0, message=""):
+            if progress_callback:
+                progress_callback({"stage": stage, "label": label, "current": current,
+                                   "total": total, "message": message,
+                                   "cache_hits": cache["hits"], "model_calls": cache["misses"]})
         with self._run_lock:
             day = day or self.memory.memory.get("metadata", {}).get("today") or _today_str()
             try:
                 day = date.fromisoformat(day).isoformat()
             except ValueError as exc:
                 raise ValueError("day must be YYYY-MM-DD") from exc
+            report("prepare", "准备夜间整理", message=f"日期 {day}")
             translation_flushed = None
             if daytime_processor is not None:
+                report("translations", "等待白天翻译任务完成", message="最多等待 30 秒")
                 translation_flushed = daytime_processor.flush_translations(timeout=30)
 
             moments = self._moments(day)
             if not moments:
-                return {"ok": True, "day": day, "skipped": "no_moments", "moment_count": 0}
+                report("done", "夜间整理已跳过", 1, 1, "当天没有可整理的记忆")
+                return {"ok": True, "day": day, "skipped": "no_moments",
+                        "moment_count": 0, "chunk_count": 0, "profile_updated": False,
+                        "cache_hits": 0, "model_calls": 0}
             source = [self._brief(item) for item in moments]
             digest = hashlib.sha256(json.dumps(
                 source, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+            cache_path = Path(self.memory.memory_dir) / "nightly_cache" / f"{day}-{digest}.json"
+            if use_cache and cache_path.exists():
+                try:
+                    loaded = json.loads(cache_path.read_text(encoding="utf-8"))
+                    if loaded.get("source_digest") == digest and isinstance(loaded.get("responses"), dict):
+                        cache["responses"] = loaded["responses"]
+                except (OSError, ValueError, TypeError):
+                    pass
+            cache["source_digest"] = digest
+            report("cache", "检查整理缓存", message=(
+                f"已缓存 {len(cache['responses'])} 项；" + ("启用缓存" if use_cache else "本次不读缓存")))
             metadata = self.memory.memory.setdefault("metadata", {})
             previous = metadata.setdefault("nightly_processed_days", {}).get(day)
             if not force and previous and previous.get("source_digest") == digest:
+                media_compaction = self.memory.compact_multimodal_assets()
+                report("done", "夜间整理已跳过", 1, 1, "记忆内容未变化")
                 return {"ok": True, "day": day, "skipped": "unchanged",
-                        "moment_count": len(moments), "source_digest": digest}
+                        "moment_count": len(moments), "chunk_count": 0,
+                        "profile_updated": False, "source_digest": digest,
+                        "cache_hits": 0, "model_calls": 0,
+                        "multimodal_compaction": media_compaction}
 
             file = getattr(self.memory, "memory_file", None)
             before = file.stat().st_size if file and file.exists() else 0
             start = time.perf_counter()
             chunks = self._chunks(moments)
-            summaries = [self._summarize(day, i, len(chunks), chunk)
-                         for i, chunk in enumerate(chunks, 1)]
+            summaries = []
+            for i, chunk in enumerate(chunks, 1):
+                report("summarize", "分批归纳当天记忆", i - 1, len(chunks), f"正在处理第 {i}/{len(chunks)} 批")
+                summary, hit = self._summarize(day, i, len(chunks), chunk, cache, cache_path, use_cache)
+                summaries.append(summary)
+                report("summarize", "分批归纳当天记忆", i, len(chunks),
+                       f"第 {i}/{len(chunks)} 批完成（{'缓存命中' if hit else '模型生成'}）")
+            report("sort", "建立六维分类索引", 0, 1, f"整理 {len(moments)} 条记忆")
             sort_data = self._sort_analysis(day, moments)
-            rollup = self._rollup(day, summaries, sort_data)
+            report("sort", "建立六维分类索引", 1, 1, "六个索引维度已整理")
+            report("rollup", "合并近期与长期摘要", 0, 1, "调用整理模型")
+            rollup, rollup_hit = self._rollup(day, summaries, sort_data, cache, cache_path, use_cache)
+            report("rollup", "合并近期与长期摘要", 1, 1,
+                   "完成（缓存命中）" if rollup_hit else "模型生成完成")
             evidence = str(rollup.get("profile_evidence") or "").strip()
             if not evidence:
                 evidence = "\n".join(x["profile_evidence"] for x in summaries
                                      if x.get("profile_evidence"))
             profile_prompt = "TASK: NIGHTLY_PROFILE_EXTRACTION\n" + \
                 build_profile_extraction_prompt(evidence or json.dumps(summaries, ensure_ascii=False))
-            profile_raw = self._call(profile_prompt)
+            report("profile", "抽取并校验长期画像", 0, 1, "分析稳定偏好和行为模式")
+            profile_raw, profile_hit = self._call(profile_prompt, cache, cache_path, use_cache)
             parsed = parse_profile_output(profile_raw)
             if parsed is None:
                 raise ValueError(f"Profile response is invalid: {profile_raw[:240]}")
             profile, rejected = validate_profile(parsed)
             combine = self._combine_map(rollup.get("combine"), sort_data)
+            report("profile", "抽取并校验长期画像", 1, 1,
+                   "校验通过（缓存命中）" if profile_hit else "模型生成并校验通过")
 
             # Finish all model calls and validation before persistent mutations.
+            report("apply", "写入整理结果", 0, 4, "更新六维索引")
             self.memory.sort(sort_data)
+            report("apply", "写入整理结果", 1, 4, "更新实体合并关系")
             # Call both APIs even when there are no aliases/new profile fields:
             # the operation audit should record the attempted maintenance action,
             # and update_profile also recomputes confidence decay / stale flags.
             self.memory.combine(combine)
+            report("apply", "写入整理结果", 2, 4, "压缩近期与长期摘要")
             self.memory.compress(self._compress_payload(rollup))
+            report("apply", "写入整理结果", 3, 4, "更新长期画像")
             self.memory.update_profile(
                 profile, moment_id=f"nightly:{day}",
                 timestamp=datetime.now().astimezone().isoformat())
 
             completed = self.memory.memory["metadata"].setdefault(
                 "nightly_processed_days", {})
-            # combine() may canonicalize source tags and mark duplicates as
-            # highlighted. Store the post-apply digest so the next invocation
-            # recognizes those deterministic outputs instead of repeating a day.
+            # combine() may canonicalize source tags. Store the post-apply
+            # digest so the next invocation recognizes those deterministic
+            # outputs instead of repeating a day.
             processed_source = [self._brief(item) for item in self._moments(day)]
             digest = hashlib.sha256(json.dumps(
                 processed_source, ensure_ascii=False, sort_keys=True
@@ -339,6 +402,8 @@ Today's tags: {json.dumps(tags, ensure_ascii=False, separators=(',', ':'))}
                 if not isinstance(old_day, str) or old_day < cutoff:
                     del completed[old_day]
             self.memory._save()
+            report("apply", "写入整理结果", 4, 4, "保存整理结果")
+            media_compaction = self.memory.compact_multimodal_assets()
             elapsed = time.perf_counter() - start
             after = file.stat().st_size if file and file.exists() else 0
             return {
@@ -353,6 +418,10 @@ Today's tags: {json.dumps(tags, ensure_ascii=False, separators=(',', ':'))}
                 "memory_file_bytes_before": before,
                 "memory_file_bytes_after": after,
                 "source_digest": digest,
+                "cache_hits": cache["hits"],
+                "model_calls": cache["misses"],
+                "cache_enabled": bool(use_cache),
+                "multimodal_compaction": media_compaction,
             }
 
 

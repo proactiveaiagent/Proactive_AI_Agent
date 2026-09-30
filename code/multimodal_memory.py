@@ -77,6 +77,22 @@ def _speaker_names(transcript: str) -> list[str]:
     return names[:12]
 
 
+def _portable_video_id(value: Any) -> str:
+    """Keep a dataset-relative source identifier, never a host absolute path."""
+    normalized = str(value or "").replace("\\", "/")
+    absolute = normalized.startswith("/")
+    parts = [part for part in normalized.strip("/").split("/")
+             if part and part not in {".", ".."}]
+    absolute = absolute or bool(parts and parts[0].endswith(":"))
+    marker = next((i for i, part in enumerate(parts)
+                   if part.casefold() == "egolife"), None)
+    if marker is not None:
+        parts = parts[marker + 1:]
+    elif absolute:
+        parts = parts[-1:]
+    return "/".join(parts)[:512]
+
+
 class MultimodalAssetStore:
     """Store selected evidence beside a PersonMemory database."""
 
@@ -106,7 +122,8 @@ class MultimodalAssetStore:
     def capture(self, video: str | Path, start_s: float, end_s: float | None,
                 transcript: str = "", source_id: str = "",
                 fields: dict | None = None,
-                recent_media: list[dict] | None = None) -> dict[str, Any]:
+                recent_media: list[dict] | None = None,
+                source_provenance: dict | None = None) -> dict[str, Any]:
         """Attach one bounded visual frame and, when speech exists, short audio.
 
         The structured Qwen scene/action/entities remain in the parent moment.
@@ -130,6 +147,17 @@ class MultimodalAssetStore:
                 "speakers": _speaker_names(transcript),
             },
         }
+        if isinstance(source_provenance, dict):
+            saved_provenance = {
+                key: source_provenance[key]
+                for key in ("source_video_id", "source_segment_id", "clip_start_s",
+                            "clip_end_s", "extraction_batch_id")
+                if source_provenance.get(key) not in (None, "")
+            }
+            if saved_provenance.get("source_video_id"):
+                saved_provenance["source_video_id"] = _portable_video_id(
+                    saved_provenance["source_video_id"])
+            result["source_provenance"] = saved_provenance
         path = Path(video)
         if not path.is_file():
             return result

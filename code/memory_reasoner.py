@@ -16,6 +16,7 @@ from typing import Any
 import requests
 
 from multimodal_memory import compare_multimodal
+from memory import entity_relation_evidence
 
 
 def _json_object(text: str) -> dict:
@@ -54,7 +55,8 @@ class MemoryReasoner:
 
     def _recall(self, searches: list[str], entities: list[str], seen: set[str],
                 limit: int = 12, priority_details: dict | None = None) -> list[dict]:
-        archive = self.memory.memory["layer7"]["moments"]
+        layer7 = self.memory.memory["layer7"]
+        archive = layer7["moments"]
         found: dict[str, dict] = {}
 
         def candidate(mid: str, moment: dict) -> dict:
@@ -76,6 +78,28 @@ class MemoryReasoner:
                                 match = {"dimension": dimension, "tag": str(tag)}
                                 if match not in row["entity_matches"]:
                                     row["entity_matches"].append(match)
+        # Expand an exact entity hit through the event that supports it. These
+        # are event co-occurrences, not inferred personal relationships; each
+        # edge is returned with its source moment ID for inspection.
+        for relation in entity_relation_evidence(layer7, entities, limit=12):
+            mid = relation.get("evidence_id")
+            moment = archive.get(mid)
+            if not moment or mid in seen:
+                continue
+            row = candidate(mid, moment)
+            associated = relation.get("associated_entities") or []
+            summary = ", ".join(
+                f"{item.get('type')}: {item.get('name')}" for item in associated[:8]
+                if isinstance(item, dict) and item.get("name")
+            )
+            match = {
+                "dimension": "same_event_entities",
+                "tag": f"{relation.get('entity')}: {summary}" if summary else str(relation.get("entity") or ""),
+                "evidence_id": mid,
+                "relation": relation.get("relation"),
+            }
+            if match not in row["entity_matches"]:
+                row["entity_matches"].append(match)
         for query in searches:
             if hasattr(self.memory, "query_ranked"):
                 ranked = self.memory.query_ranked(query, top_k=limit)

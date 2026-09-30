@@ -385,6 +385,7 @@ class Handler(BaseHTTPRequestHandler):
             mem = load_json(RUNS / cfg["memory"])
             if mem is None:
                 return self._send(404, {"error": "memory state not found"})
+            from memory import entity_graph_summary
             # 按六维高频索引挑少量正文样例，避免把全部归档重复发给浏览器。
             l7 = mem.get("layer7", {})
             moments = l7.get("moments", {})
@@ -406,6 +407,7 @@ class Handler(BaseHTTPRequestHandler):
                                 for key in ("id", "timestamp", "scene", "user_action",
                                             "people", "location", "activity",
                                             "environments", "objects", "notes",
+                                            "source_provenance",
                                             "highlighted", "highlight_source",
                                             "highlighted_at", "merged_into",
                                             "merged_sources", "merge_history")
@@ -422,6 +424,7 @@ class Handler(BaseHTTPRequestHandler):
                 "layer6": mem.get("layer6", {}),
                 "indices": indices,
                 "archive_samples": archive_samples,
+                "entity_relationships": entity_graph_summary(l7, limit=12),
                 "moments_count": len(moments),
                 "active_moments_count": sum(not item.get("merged_into") for item in moments.values()),
                 "merged_moments_count": sum(bool(item.get("merged_into")) for item in moments.values()),
@@ -584,12 +587,12 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         global SESSION
         url = urlparse(self.path)
-        if url.path != "/api/interactive/merge":
+        if url.path not in ("/api/interactive/merge", "/api/interactive/unmerge"):
             return self._send(404, {"error": "not found"})
         if SESSION is None:
             return self._send(404, {"error": "请先创建交互会话"})
         if not STEP_LOCK.acquire(blocking=False):
-            return self._send(409, {"error": "当前步骤正在运行，请完成后再合并"})
+            return self._send(409, {"error": "当前步骤正在运行，请稍后再执行归并操作"})
         try:
             try:
                 length = int(self.headers.get("Content-Length", "0"))
@@ -600,28 +603,40 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(400, {"error": "请求内容必须是有效 JSON"})
             source_id = str(payload.get("source_id") or "")[:160]
             target_id = str(payload.get("target_id") or "")[:160]
-            reason = str(payload.get("reason") or "网页人工确认重复事件")[:240]
-            confirmed = payload.get("confirmed_duplicate") is True
-            result = SESSION.mem.merge_moments(
-                source_id, target_id, confirmed_duplicate=confirmed, reason=reason)
+            if url.path.endswith("/merge"):
+                reason = str(payload.get("reason") or "网页人工确认重复事件")[:240]
+                result = SESSION.mem.merge_moments(
+                    source_id, target_id,
+                    confirmed_duplicate=payload.get("confirmed_duplicate") is True,
+                    reason=reason)
+                operation, label = "merge_moments", "用户确认合并相似事件"
+                message = (
+                    f"已合并 {source_id} → {target_id}；原始来源与多模态资产保留"
+                    if result.get("ok") and result.get("status") == "merged"
+                    else result.get("message") or
+                         ("两条记录此前已合并" if result.get("status") == "already_merged"
+                          else "合并未执行")
+                )
+            else:
+                reason = str(payload.get("reason") or "网页撤销最近一次事件归并")[:240]
+                result = SESSION.mem.unmerge_moments(source_id, target_id, reason=reason)
+                operation, label = "unmerge_moments", "用户撤销事件归并"
+                message = (
+                    f"已撤销 {source_id} → {target_id}；来源记忆和多模态资产已恢复"
+                    if result.get("ok") and result.get("status") == "unmerged"
+                    else result.get("message") or "撤销未执行"
+                )
             archive = SESSION.mem.memory.get("layer7", {}).get("moments", {})
             source = SESSION._moment_detail(archive.get(source_id, {}))
             target = SESSION._moment_detail(archive.get(target_id, {}))
             candidates = SESSION.mem.find_merge_candidates(limit=20)
             perception = {
-                "kind": "operation_result", "operation": "merge_moments",
-                "title": "事件合并记录", "merge": result,
-                "source": source, "target": target, "candidates": candidates,
+                "kind": "operation_result", "operation": operation,
+                "title": "事件合并记录" if operation == "merge_moments" else "撤销归并记录",
+                "merge": result, "source": source, "target": target,
+                "candidates": candidates,
             }
-            message = (
-                f"已合并 {source_id} → {target_id}；原始来源与多模态资产保留"
-                if result.get("ok") and result.get("status") == "merged"
-                else result.get("message") or
-                     ("两条记录此前已合并" if result.get("status") == "already_merged"
-                      else "合并未执行")
-            )
-            SESSION._log_snapshot("用户确认合并相似事件", "merge_moments",
-                                  message, perception)
+            SESSION._log_snapshot(label, operation, message, perception)
             state = SESSION.state()
             state["last_result"] = message
             return self._send(200, state)

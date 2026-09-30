@@ -471,6 +471,7 @@ def _rank_memory_docs(query_text: str, documents: list) -> list:
         "id", "timestamp", "created_at", "updated_at", "last_used",
         "access_count", "stale", "decay_type", "decay_rate", "expires_at",
         "confidence", "highlighted", "feedback", "source_ids", "layer",
+        "source_provenance",
         "canonicalization_history",
         "multimodal",
         "merged_into", "merged_sources", "merge_history", "merge_event",
@@ -740,6 +741,158 @@ def _empty_moment() -> Dict:
     }
 
 
+def _portable_video_id(value: Any) -> str:
+    """Store a dataset-relative source ID, never a host-specific absolute path."""
+    normalized = str(value or "").replace("\\", "/")
+    absolute = normalized.startswith("/")
+    parts = [part for part in normalized.strip("/").split("/")
+             if part and part not in {".", ".."}]
+    absolute = absolute or bool(parts and parts[0].endswith(":"))
+    marker = next((i for i, part in enumerate(parts)
+                   if part.casefold() == "egolife"), None)
+    if marker is not None:
+        parts = parts[marker + 1:]
+    elif absolute:
+        parts = parts[-1:]
+    return "/".join(parts)[:512]
+
+
+def _moment_entities(moment: Dict) -> List[Dict[str, str]]:
+    """Read typed entities from one event; these links are derived, not duplicated in storage."""
+    rows = []
+    media = moment.get("multimodal")
+    mm_entities = (media.get("entities") or {}) if isinstance(media, dict) else {}
+    if not isinstance(mm_entities, dict):
+        mm_entities = {}
+    fields = [
+        ("person", moment.get("people") or []),
+        ("location", [moment.get("location")] if moment.get("location") else []),
+        ("activity", [moment.get("activity")] if moment.get("activity") else []),
+        ("object", moment.get("objects") or []),
+        ("environment", moment.get("environments") or []),
+        ("person", mm_entities.get("people") or []),
+        ("location", [mm_entities.get("location")] if mm_entities.get("location") else []),
+        ("activity", [mm_entities.get("activity")] if mm_entities.get("activity") else []),
+        ("object", mm_entities.get("objects") or []),
+        ("environment", mm_entities.get("environments") or []),
+    ]
+    seen_by_type = {}
+    for entity_type, values in fields:
+        if not isinstance(values, (list, tuple)):
+            continue
+        seen = seen_by_type.setdefault(entity_type, set())
+        for value in values:
+            if not isinstance(value, str) or not value.strip():
+                continue
+            label = " ".join(value.strip().split())[:180]
+            key = label.casefold()
+            if key not in seen:
+                rows.append({"type": entity_type, "name": label})
+                seen.add(key)
+    speakers = mm_entities.get("speakers") or []
+    if isinstance(speakers, (list, tuple)):
+        known_people = {row["name"].casefold() for row in rows if row["type"] == "person"}
+        for speaker in speakers:
+            if isinstance(speaker, str) and speaker.strip() and speaker.casefold() not in known_people:
+                rows.append({"type": "person", "name": " ".join(speaker.strip().split())[:180]})
+                known_people.add(speaker.casefold())
+    return rows
+
+
+def entity_graph_summary(layer7: Dict, limit: int = 8) -> Dict:
+    """Build a compact, event-grounded entity graph view without storing duplicate indexes."""
+    moments = layer7.get("moments") or {}
+    entity_keys = set()
+    relation_count = 0
+    for moment in moments.values():
+        entities = _moment_entities(moment)
+        entity_keys.update((row["type"], row["name"].casefold()) for row in entities)
+        relation_count += len(entities)  # each typed entity is linked to its source event
+        people_count = sum(row["type"] == "person" for row in entities)
+        relation_count += min(people_count * (people_count - 1) // 2, 66)
+
+    samples = []
+    ordered = sorted(moments.values(), key=lambda item: str(item.get("timestamp") or ""),
+                     reverse=True)
+    for moment in ordered[:max(0, int(limit))]:
+        entities = _moment_entities(moment)
+        people = [row["name"] for row in entities if row["type"] == "person"]
+        provenance = dict(moment.get("source_provenance") or {})
+        if provenance.get("source_video_id"):
+            provenance["source_video_id"] = _portable_video_id(
+                provenance["source_video_id"])
+        relations = []
+        for entity in entities:
+            predicate = {
+                "person": "participated_in",
+                "location": "occurred_at",
+                "activity": "classified_as",
+                "object": "involves_object",
+                "environment": "has_environment",
+            }[entity["type"]]
+            relations.append({"entity": entity["name"], "type": entity["type"],
+                              "relation": predicate, "evidence_id": moment.get("id")})
+        for i, left in enumerate(people[:12]):
+            for right in people[i + 1:12]:
+                relations.append({"entity": left, "related_entity": right,
+                                  "relation": "co_present_in_event",
+                                  "evidence_id": moment.get("id")})
+        samples.append({
+            "moment_id": moment.get("id"),
+            "timestamp": moment.get("timestamp"),
+            "event": str(moment.get("scene") or moment.get("activity") or "")[:200],
+            "people": [row["name"] for row in entities if row["type"] == "person"],
+            "activity": str(moment.get("activity") or ""),
+            "location": str(moment.get("location") or ""),
+            "objects": [row["name"] for row in entities if row["type"] == "object"],
+            "environments": [row["name"] for row in entities if row["type"] == "environment"],
+            "entities": entities[:24],
+            "relations": relations[:48],
+            "source_provenance": provenance,
+        })
+    return {"entity_count": len(entity_keys), "relation_count": relation_count,
+            "storage_mode": "derived_from_source_moments", "samples": samples}
+
+
+def entity_relation_evidence(layer7: Dict, names: List[str], limit: int = 4) -> List[Dict]:
+    """Return only source moments that directly support a requested entity association."""
+    moments = layer7.get("moments") or {}
+    indexes = [layer7.get(key) or {} for key in
+               ("people", "locations", "activity_events", "objects", "environments")]
+    matches = []
+    for requested in names:
+        wanted = str(requested or "").strip().casefold()
+        if not wanted:
+            continue
+        candidate_ids = []
+        for index in indexes:
+            for tag, ids in index.items():
+                if str(tag).casefold() == wanted:
+                    candidate_ids.extend(ids[-max(1, limit * 2):])
+        seen_ids = set()
+        for moment_id in reversed(candidate_ids):
+            if moment_id in seen_ids:
+                continue
+            seen_ids.add(moment_id)
+            moment = moments.get(moment_id)
+            if not moment or moment.get("stale") or moment.get("merged_into"):
+                continue
+            entities = _moment_entities(moment)
+            associated = [row for row in entities if row["name"].casefold() != wanted]
+            if not associated:
+                continue
+            matches.append({
+                "entity": str(requested),
+                "associated_entities": associated[:12],
+                "relation": "observed_in_same_source_event",
+                "evidence_id": moment_id,
+                "timestamp": str(moment.get("timestamp") or ""),
+            })
+            if len(matches) >= max(1, limit):
+                return matches
+    return matches
+
+
 def _empty_db() -> Dict:
     return {
         # --- raw episodic layers ---
@@ -898,7 +1051,8 @@ class PersonMemory:
             extra_notes: str = "",
             timestamp: str = None,
             source_evidence: str = "",
-            multimodal: Dict = None) -> str:
+            multimodal: Dict = None,
+            source_provenance: Dict = None) -> str:
         """
         Store a complete Part1+2+3 result.
         Returns the moment_id so Part4 can reference it later.
@@ -929,6 +1083,18 @@ class PersonMemory:
             moment["notes"] = extra_notes
         if isinstance(multimodal, dict) and multimodal.get("schema") == 1:
             moment["multimodal"] = multimodal
+        if isinstance(source_provenance, dict):
+            provenance = {}
+            for key in ("source_video_id", "source_segment_id", "clip_start_s",
+                        "clip_end_s", "extraction_batch_id"):
+                value = source_provenance.get(key)
+                if value not in (None, ""):
+                    provenance[key] = value
+            if provenance.get("source_video_id"):
+                provenance["source_video_id"] = _portable_video_id(
+                    provenance["source_video_id"])
+            if provenance:
+                moment["source_provenance"] = provenance
 
         moment_id = self._new_moment_id()
         moment["id"] = moment_id
@@ -1312,7 +1478,9 @@ class PersonMemory:
                     or stored.get("merged_into")):
                 continue
             moment = self._retrieval_group_moment(stored)
-            searchable = json.dumps(moment, ensure_ascii=False).lower()
+            searchable = json.dumps({key: value for key, value in moment.items()
+                                     if key not in {"source_provenance", "multimodal"}},
+                                    ensure_ascii=False).lower()
             score = sum(1 for token in query_tokens if token in searchable)
             if score:
                 scored.append((score, bool(moment.get("highlighted")
@@ -1770,6 +1938,20 @@ class PersonMemory:
             }
             for alias_id in alias_ids
         }
+        target_window_membership = {
+            layer_key: [i for i, row in enumerate(self.memory.get(layer_key, []))
+                        if row.get("id") == target_id]
+            for layer_key in ("layer1", "layer2", "layer3")
+        }
+        source_merge_state_before = {
+            alias_id: {
+                "merged_into": copy.deepcopy(archive[alias_id].get("merged_into")),
+                "merge_event": copy.deepcopy(archive[alias_id].get("merge_event")),
+            }
+            for alias_id in alias_ids
+        }
+        target_merged_sources_before = copy.deepcopy(
+            target.get("merged_sources") if isinstance(target.get("merged_sources"), list) else [])
         merged_fields = []
         for field in list_fields:
             values = []
@@ -1826,6 +2008,10 @@ class PersonMemory:
             "source_index_tags_before": source_index_tags,
             "target_index_tags_before": target_index_tags,
             "source_window_membership_before": source_window_membership,
+            "target_window_membership_before": target_window_membership,
+            "source_merge_state_before": source_merge_state_before,
+            "target_merged_sources_before": target_merged_sources_before,
+            "target_merged_sources_after": copy.deepcopy(target["merged_sources"]),
             "scalar_conflicts": scalar_conflicts,
             "source_highlighted": any(
                 bool(archive.get(mid, {}).get("highlighted")) for mid in alias_ids),
@@ -1863,6 +2049,132 @@ class PersonMemory:
             "merged_fields": merged_fields, "scalar_conflicts": scalar_conflicts,
             "media_preserved": media_preserved,
             "merged_source_count": len(target["merged_sources"]), "at": now,
+        }
+
+    def unmerge_moments(self, source_id: str, target_id: str,
+                        reason: str = "manual merge undo") -> Dict:
+        """Undo the latest explicit event merge without deleting source records/assets.
+
+        The operation refuses legacy merge entries without full window/index snapshots,
+        edits made after a merge, and attempts to undo an older merge in a chain.
+        """
+        if not source_id or not target_id or source_id == target_id:
+            return {"ok": False, "status": "invalid_ids",
+                    "message": "source_id 与 target_id 必须是不同的有效记忆 ID。"}
+        archive = self.memory.get("layer7", {}).get("moments", {})
+        source, target = archive.get(source_id), archive.get(target_id)
+        if not source or not target:
+            return {"ok": False, "status": "not_found",
+                    "message": "来源或规范记忆不存在。"}
+        history = target.get("merge_history")
+        if not isinstance(history, list) or not history:
+            return {"ok": False, "status": "no_merge_history",
+                    "message": "没有可撤销的归并记录。"}
+        event = history[-1]
+        if event.get("undone_at"):
+            return {"ok": False, "status": "already_undone",
+                    "message": "最近一次归并已经撤销。"}
+        if event.get("source_id") != source_id or event.get("target_id") != target_id:
+            return {"ok": False, "status": "not_latest_merge",
+                    "message": "只能撤销该规范记录最近一次归并；请先撤销后续归并。"}
+
+        required = ("source_ids", "target_fields_before", "target_fields_after",
+                    "source_index_tags_before", "target_index_tags_before",
+                    "source_window_membership_before", "target_window_membership_before",
+                    "source_merge_state_before", "target_merged_sources_before",
+                    "target_merged_sources_after")
+        if any(key not in event for key in required):
+            return {"ok": False, "status": "undo_snapshot_missing",
+                    "message": "该归并缺少完整的撤销快照；为避免误改数据，未执行撤销。"}
+
+        source_ids = list(dict.fromkeys(event.get("source_ids") or []))
+        if source_id not in source_ids or any(mid not in archive for mid in source_ids):
+            return {"ok": False, "status": "source_missing",
+                    "message": "归并来源记录不完整；未执行撤销。"}
+        list_fields = ("people", "objects", "environments", "needs", "solutions")
+        current_target_fields = {field: copy.deepcopy(target.get(field)) for field in list_fields}
+        if current_target_fields != event.get("target_fields_after"):
+            return {"ok": False, "status": "target_changed",
+                    "message": "归并后目标记忆字段已有变化；请先处理后续修改，未执行撤销。"}
+        if target.get("merged_sources", []) != event.get("target_merged_sources_after"):
+            return {"ok": False, "status": "merge_chain_changed",
+                    "message": "归并链已有后续变化；请按最近归并顺序撤销。"}
+        relations = event.get("source_merge_state_before") or {}
+        for mid in source_ids:
+            if mid not in relations or archive[mid].get("merged_into") != target_id:
+                return {"ok": False, "status": "source_relation_changed",
+                        "message": "来源归并关系已变化；未执行撤销。"}
+
+        for field in list_fields:
+            target[field] = copy.deepcopy(event["target_fields_before"].get(field))
+        target["merged_sources"] = copy.deepcopy(event["target_merged_sources_before"])
+
+        # Restore the source aliases' original relationships. A source may itself
+        # have contained older aliases before it was merged into the target.
+        for mid in source_ids:
+            prior = relations[mid]
+            alias = archive[mid]
+            if prior.get("merged_into"):
+                alias["merged_into"] = copy.deepcopy(prior["merged_into"])
+            else:
+                alias.pop("merged_into", None)
+            if prior.get("merge_event") is not None:
+                alias["merge_event"] = copy.deepcopy(prior["merge_event"])
+            else:
+                alias.pop("merge_event", None)
+
+        # Rebuild only affected index memberships from the saved pre-merge tags.
+        source_tags = event["source_index_tags_before"]
+        target_tags = event["target_index_tags_before"]
+        for index_key in LAYER7_INDICES:
+            index = self.memory["layer7"].setdefault(index_key, {})
+            source_tag_map = {
+                mid: set((source_tags.get(mid) or {}).get(index_key) or [])
+                for mid in source_ids
+            }
+            target_tag_set = set(target_tags.get(index_key) or [])
+            affected = set(target_tag_set)
+            affected.update(tag for tags in source_tag_map.values() for tag in tags)
+            affected.update(tag for tag, ids in index.items()
+                            if target_id in ids or any(mid in ids for mid in source_ids))
+            for tag in affected:
+                ids = [mid for mid in index.get(tag, [])
+                       if mid not in source_ids and mid != target_id]
+                if tag in target_tag_set:
+                    ids.append(target_id)
+                for mid in source_ids:
+                    if tag in source_tag_map[mid]:
+                        ids.append(mid)
+                ids = list(dict.fromkeys(ids))
+                if ids:
+                    index[tag] = ids
+                else:
+                    index.pop(tag, None)
+
+        # Restore exact L1-L3 membership and relative order using original positions.
+        source_windows = event["source_window_membership_before"]
+        target_windows = event["target_window_membership_before"]
+        for layer_key in ("layer1", "layer2", "layer3"):
+            rows = [row for row in self.memory.get(layer_key, [])
+                    if row.get("id") not in source_ids and row.get("id") != target_id]
+            restored = []
+            for mid in source_ids:
+                for position in (source_windows.get(mid) or {}).get(layer_key, []):
+                    restored.append((int(position), mid, archive[mid]))
+            for position in target_windows.get(layer_key, []):
+                restored.append((int(position), target_id, target))
+            for position, _mid, record in sorted(restored, key=lambda item: item[0]):
+                rows.insert(max(0, min(position, len(rows))), record)
+            self.memory[layer_key] = rows
+
+        event["undone_at"] = _now_iso()
+        event["undo_reason"] = str(reason)[:240]
+        self._save()
+        return {
+            "ok": True, "status": "unmerged", "source_id": source_id,
+            "source_ids": source_ids, "target_id": target_id,
+            "restored_source_count": len(source_ids), "undone_at": event["undone_at"],
+            "media_preserved": copy.deepcopy(event.get("media_preserved", [])),
         }
 
     # ------------------------------------------------------------------
