@@ -347,7 +347,7 @@ class Handler(BaseHTTPRequestHandler):
             })
 
         if url.path == "/api/semantic-scenario-review":
-            report_path = RUNS / "multimodal_decision_review_v40_20261007" / "scenario_review.json"
+            report_path = RUNS / "multimodal_decision_review_v41_20261007" / "scenario_review.json"
             if not report_path.exists():
                 report_path = RUNS / "multimodal_decision_review_v39_20261007" / "scenario_review.json"
             if not report_path.exists():

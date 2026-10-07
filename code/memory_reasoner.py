@@ -812,7 +812,7 @@ class MemoryReasoner:
             "is fully assembled, powered correctly, or safe from a vague frame. If the device model or power arrangement "
             "is unknown, recommend checking its actual instructions rather than assuming how it is powered. "
             "For an unsolicited scan, a complete event with no unresolved need can reasonably have no reminder; "
-            "do not fabricate new needs. If a current goal is explicit, respond to it while preserving source constraints. "
+            "do not fabricate new needs. If a current goal is explicit, respond to it while preserving source constraints. Treat a third party's quoted proposal, question, or hypothetical option as that speaker's suggestion, not proof that the camera wearer chose it or intends to act. Do not turn 'can we' or 'maybe' into an immediate imperative or confirmed plan. If useful, attribute it and frame it as optional or ask whether the wearer wants to proceed; do not imply venue availability or agreement. "
             "Return {constraints:[{memory_id,field,quote,actor,object,requirement}], "
             "issues:[{kind,explanation,constraint_indices:[int]}], "
             "requires_revision:bool, recommendation:{action,reason,evidence_ids,uncertainty,risk,world_assumption}}. "
@@ -892,7 +892,7 @@ class MemoryReasoner:
                     "Check every concrete claim in the action sentence, not only whether its cited memory ID exists. "
                     "A place, product, price, availability, device specification, connection state, completed step, "
                     "or personal preference must be stated in the current situation or source record; do not invent "
-                    "a venue, free item, compatibility, wiring state, or next step from general plausibility. "
+                    "a venue, free item, compatibility, wiring state, or next step from general plausibility. A third party's question or tentative proposal is not the wearer's confirmed intent; if the action turns it into a directive or says the wearer has chosen it, flag that overstatement. "
                     "Do not infer progress, identity, power requirements or safety without source support. "
                     "If the proposed action adds an unsupported concrete claim, mark it unresolved and name that claim. "
                     "Return ONLY a valid JSON object with double-quoted keys, in the format "
@@ -910,7 +910,7 @@ class MemoryReasoner:
                     "specific instruction; do not hide an exception only in reason. Broad discard/all "
                     "instructions cannot erase an explicitly named retain exception. Unknown object "
                     "identity requires checking, not irreversible disposal. Respect what the sampled "
-                    "images cannot verify. No new factual claims. Return JSON with action, reason, "
+                    "images cannot verify. Do not convert a third party's tentative suggestion or question into the wearer's confirmed plan; attribute it and state it as optional, or ask for confirmation. No new factual claims. Return JSON with action, reason, "
                     "evidence_ids, uncertainty, risk, world_assumption in Simplified Chinese.\n"
                     + json.dumps({"situation": situation, "records": records, "constraints": constraints,
                                   "observations": observations, "proposal": proposed,
