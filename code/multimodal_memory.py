@@ -235,10 +235,19 @@ class MultimodalAssetStore:
             result["visual_frames"] = frames
             result["visual"] = dict(frames[len(frames) // 2])
 
-        # Up to ten seconds of speech, either the whole short event or two
-        # five-second excerpts at its boundaries. Missing middle speech is explicit.
-        spans = [(start, min(end - start, 10.0))] if end - start <= 10 else [
-            (start, 5.0), (max(start, end - 5.0), 5.0)]
+        # Up to ten seconds of speech. For long clips, sample start/middle/end
+        # so a short instruction in the middle is not systematically omitted.
+        # The three windows are deliberately bounded and their coverage is saved.
+        if end - start <= 10:
+            spans = [(start, min(end - start, 10.0))]
+        else:
+            window = min(10.0 / 3.0, (end - start) / 3.0)
+            midpoint = (start + end) / 2.0
+            spans = [
+                (start, window),
+                (max(start, midpoint - window / 2.0), window),
+                (max(start, end - window), window),
+            ]
         clips, audio_bytes = [], 0
         for audio_start, audio_duration in (spans if transcript.strip() else []):
             audio = _run_ffmpeg([
@@ -263,6 +272,7 @@ class MultimodalAssetStore:
             result["audio"] = dict(clips[0])
         result["audio_coverage_s"] = round(sum(x["duration_s"] for x in clips), 3)
         result["audio_coverage_ratio"] = round(result["audio_coverage_s"] / (end - start), 4)
+        result["audio_sampling"] = "whole_event" if end - start <= 10 else "three_point_start_middle_end"
         result["capture_status"] = "captured" if frames or clips else "no_decodable_media"
         return result
 

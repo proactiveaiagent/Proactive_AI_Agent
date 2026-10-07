@@ -465,7 +465,7 @@ class MemoryReasoner:
                             if row is not None:
                                 row["visual_status"] = "used"
             for ref in (media_refs(mm, "audio") if self.media_mode in {"all", "audio"} else []):
-                if len(audio_paths) >= 2:
+                if len(audio_paths) >= 3:
                     break
                 _check_cancelled(cancel_event)
                 asset = str(ref.get("asset") or "")
@@ -889,7 +889,12 @@ class MemoryReasoner:
                     "those explicitly excluded in the actionable sentence. Preserve every specific "
                     "exception relevant to the current goal. Do not ask again about an explicit choice. "
                     "A proactive event scan may reasonably have no reminder if no unresolved need is shown. "
+                    "Check every concrete claim in the action sentence, not only whether its cited memory ID exists. "
+                    "A place, product, price, availability, device specification, connection state, completed step, "
+                    "or personal preference must be stated in the current situation or source record; do not invent "
+                    "a venue, free item, compatibility, wiring state, or next step from general plausibility. "
                     "Do not infer progress, identity, power requirements or safety without source support. "
+                    "If the proposed action adds an unsupported concrete claim, mark it unresolved and name that claim. "
                     "Return ONLY a valid JSON object with double-quoted keys, in the format "
                     "{\"resolved\":true,\"remaining_issues\":[]}; use false and concrete Chinese issues when unresolved.\n"
                     + json.dumps({"situation": situation, "constraints": constraints,
@@ -922,6 +927,45 @@ class MemoryReasoner:
                 verification = verify_action(proposed)
             audit["revision_verification"] = verification
             audit["requires_revision"] = needs_revision
+            # A hardware interface claim must be supported by the supplied
+            # record. This is intentionally generic: it does not prescribe a
+            # device-specific answer, it only withholds unsupported certainty.
+            action_text = str(proposed.get("action") or "")
+            source_text = " ".join(str(row.get("speech") or "") + " " +
+                                    str(row.get("action") or "") for row in records)
+            interface_claim = bool(re.search(
+                r"(?:电源|供电|充电|power|powered|supply|charger|adapter).{0,18}"
+                r"(?:接口|端口|线|cable|port|connector)|"
+                r"(?:接口|端口|port|connector).{0,18}(?:电源|供电|power|supply|charger)",
+                action_text, re.I))
+            source_supports_interface = bool(re.search(
+                r"(?:电源|供电|充电|power|powered|supply|charger|adapter|"
+                r"DC|USB).{0,24}(?:接口|端口|线|cable|port|connector)|"
+                r"(?:接口|端口|port|connector).{0,24}(?:电源|供电|power|supply|charger|USB)",
+                source_text, re.I))
+            spec_pattern = (r"\b(?:SATA|IDE|M\.2|NVMe|Thunderbolt|HDMI|"
+                            r"USB[- ]?C|USB\s*[23](?:\.\d)?)\b|"
+                            r"\b[23]\.5\s*(?:英寸|inch(?:es)?)")
+            claimed_specs = [x.lower().replace(" ", "") for x in re.findall(spec_pattern, action_text, re.I)]
+            source_specs = {x.lower().replace(" ", "") for x in re.findall(spec_pattern, source_text, re.I)}
+            unsupported_specs = sorted(set(claimed_specs) - source_specs)
+            unsupported_interface = interface_claim and not source_supports_interface
+            if unsupported_interface or unsupported_specs:
+                audit.setdefault("issues", []).append({
+                    "kind": "unsupported_device_specification" if unsupported_specs else "unsupported_interface_claim",
+                    "explanation": ("行动句使用了来源未记录的设备规格：" + ", ".join(unsupported_specs)
+                                    if unsupported_specs else
+                                    "行动句涉及具体供电/接口关系，但来源记录没有提供对应设备接口事实；暂不采纳该关系。"),
+                    "constraint_indices": [],
+                })
+                audit["status"] = "revision_unresolved"
+                audit["withheld"] = True
+                changed = dict(decision)
+                changed.update(action="建议暂缓：先核对设备型号和说明书，再决定接线或处置。",
+                               reason="当前来源没有明确记录设备规格或具体接口用途，不能据此判断兼容性和接电方式。",
+                               uncertainty="设备型号、规格或接口用途没有被当前记忆明确记录。",
+                               world_assumption="", evidence_ids=[])
+                return changed, audit
             resolved = verification.get("resolved") is True and verification.get("remaining_issues") == []
             if resolved:
                 changed = dict(decision)
