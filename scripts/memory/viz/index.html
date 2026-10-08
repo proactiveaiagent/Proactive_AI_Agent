@@ -2946,10 +2946,15 @@ fetch(API+'/api/semantic-scenario-review',{cache:'no-store'})
       const proposedQueries=plan.proposed_searches||[];
       const usedQueries=plan.searches||[];
       const filteredQueries=plan.filtered_general_knowledge_searches||[];
+      const actionableCues=plan.verified_action_cues||[];
+      const cueTrace=actionableCues.length
+        ? '<div>来源核验的待处理线索：'+esc(actionableCues.map(c=>(c.speaker||'参与者')+'：“'+(c.quote||'')+'” → '+(c.suggestion_zh||'')).join('；'))+'</div>'
+        : '<div>来源核验的待处理线索：无</div>';
       const planTrace='<div class="note"><b>个人记忆检索计划</b>'+
         '<div>模型提出：'+esc(proposedQueries.join(' / ')||'无')+'</div>'+
         '<div>实际查询：'+esc(usedQueries.join(' / ')||'无')+(plan.used_situation_fallback?'（以当前情境兜底）':'')+'</div>'+
         (filteredQueries.length?'<div>已排除的通用知识查询：'+esc(filteredQueries.join(' / '))+'</div>':'')+
+        cueTrace+
         '</div>';
       const mm=item.multimodal_inference||{};
       const ablations=item.ablations||{};

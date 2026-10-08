@@ -1087,6 +1087,7 @@ class MemoryReasoner:
             "Return ONLY JSON: {\"situation\":str,\"entities\":[str],"
             "\"searches\":[str],\"decision_question\":str,"
             "\"current_country\":str|null}. Set current_country only when the present country is explicit or clear; otherwise null. "
+            "Also return actionable_cues as a JSON array separately from search queries. Each cue has memory_id, speaker, quote, type (explicit_instruction or proposal), status (open/resolved/unclear), relevance (high/medium/low), and suggestion_zh. Use only verbatim quotes and memory IDs present in supplied records. Include explicit keep/discard instructions only when they affect this same task. Include another speaker proposal only when it is a concrete next-step question/request relevant to the current activity and not shown completed or declined. Mark accepted/completed/declined cues resolved; generic discussion is not a cue. suggestion_zh must be attributed and optional, never claim the wearer accepted it. Return an empty cue array if none qualifies. "
             "Return at most 3 searches, and use an empty list when no prior fact could change the next action. Every search must be anchored to a person, event, action, place, symptom, or stated preference explicitly present in the situation. Never add hypothetical allergies, plumbing, maintenance, temperature, schedules, or other concerns not raised by the situation. Do not recommend an action yet.\n"
             f"Current situation: {situation}\nCurrent context: "
             + json.dumps(context, ensure_ascii=False),
@@ -1113,6 +1114,48 @@ class MemoryReasoner:
         for row in first:
             seen.add(row["id"])
         evidence = first[:]
+        raw_actionable_cues = planner.get("actionable_cues")
+        if not isinstance(raw_actionable_cues, list):
+            raw_actionable_cues = []
+        sources_by_id = {str(row.get("id") or ""): row for row in evidence}
+        verified_action_cues = []
+        for cue in raw_actionable_cues[:8]:
+            if not isinstance(cue, dict):
+                continue
+            mid = str(cue.get("memory_id") or "")
+            source = sources_by_id.get(mid)
+            quote = str(cue.get("quote") or "").strip()
+            cue_type = str(cue.get("type") or "")
+            if (not source or not quote or cue.get("status") not in {"open", "unclear"}
+                    or cue.get("relevance") != "high"
+                    or cue_type not in {"explicit_instruction", "proposal"}):
+                continue
+            source_fields = (
+                source.get("speech") or source.get("source_evidence"),
+                source.get("action") or source.get("user_action"),
+                source.get("scene"),
+            )
+            def normalized_quote(value: str) -> str:
+                # Ignore speaker labels and punctuation, but require the full
+                # quoted word sequence to occur contiguously in a source field.
+                without_speakers = re.sub(r"(?u)\b[\w.-]+\s*:", " ", value)
+                return re.sub(r"(?u)[^\w]+", " ", without_speakers).strip().casefold()
+
+            normalized_cue = normalized_quote(quote)
+            if not normalized_cue or not any(
+                    normalized_cue in normalized_quote(str(value or ""))
+                    for value in source_fields):
+                continue
+            suggestion = str(cue.get("suggestion_zh") or "").strip()[:240]
+            if not suggestion:
+                continue
+            verified_action_cues.append({
+                "memory_id": mid, "speaker": str(cue.get("speaker") or "对话参与者")[:80],
+                "quote": quote[:320], "type": cue_type, "status": cue["status"],
+                "relevance": cue["relevance"], "suggestion_zh": suggestion,
+            })
+        planner["verified_action_cues"] = verified_action_cues
+        context["verified_action_cues"] = verified_action_cues
         rounds = [{"queries": searches, "candidate_ids": [m["id"] for m in first],
                    "media_links": links_first,
                    "candidate_details": self._priority_rows(first, first_details, links_first)}]
@@ -1134,6 +1177,7 @@ class MemoryReasoner:
                 "When multimodal_observations contains a visual row, the reason MUST mention one concrete visual fact from that row and explain whether it supports, contradicts, or cannot verify the current event. Include its source moment ID; for a mismatch, explicitly say the sampled frame cannot verify progress and do not claim the activity did not happen before or after it. Never attribute an action or identity to the frame unless its observation says so. "
                 "A frame is a timestamped sample, not proof of what happened across the whole clip. If no audio observation is supplied, do not claim direct audio support; stored speech text is a prior transcript, not a new verified audio perception. "
                 "Do not treat keyword overlap as proof of intent. Clearly separate direct observation, remembered fact, and general knowledge. "
+                "Context may contain verified_action_cues whose source quotes were checked verbatim against an available memory. In a proactive scan, address every high-relevance open/unclear cue: preserve instructions or present a third-party proposal only as an attributed optional next step. Do not discard a verified cue and then answer no reminder. "
                 "Choose one specific, low-risk next step that responds to this episode; do not answer only with generic advice when a clear request or offer is present. "
                 "Preserve actor-object relationships and distinct instructions. Instructions to keep one item and discard another are not a conflict. During a proactive scan, treat a keep/discard instruction as actionable only within the same concrete task: if the wearer is sorting/discarding an item named by the instruction, name it; if the wearer is handling an unidentified item while that task has a broad discard instruction and an explicit keep exception, advise identifying the item before disposal without guessing its identity. Also surface another speaker's concrete, task-relevant next-step proposal as an optional suggestion with attribution when it is phrased as an actionable question/request and no completion/decline is recorded; never claim the wearer accepted it. Do not extend these rules to unrelated remarks, vague suggestions, generic timing discussion, or different activities. A no-reminder answer is appropriate otherwise. "
                 "In the action sentence itself, name every specific item and its disposition relevant to the current goal; "
@@ -1228,10 +1272,64 @@ class MemoryReasoner:
 
         # Preserve the original model proposal separately from evidence review.
         model_decision = copy.deepcopy(decision)
+        cue_fallback_used = False
+        if proactive and verified_action_cues and str(decision.get("action") or "").strip() in {"无提醒需要", "无需提醒", "暂无提醒", "没有需要提醒的事项"}:
+            keep_cues = []
+            discard_cues = []
+            proposal_cues = []
+            for cue in verified_action_cues:
+                quote = cue["quote"]
+                suggestion = cue["suggestion_zh"].strip().rstrip("。；，,;")
+                is_keep = bool(re.search(r"\b(?:keep|save|retain|preserve)\b|保留|留下", quote, re.I))
+                is_discard = bool(re.search(r"\b(?:discard|throw\s+(?:all|away)|throw\s+away|toss)\b|丢弃|扔掉", quote, re.I))
+                if is_keep:
+                    item = re.sub(r"^(?:请|务必)?\s*保留\s*", "", suggestion).strip()
+                    keep_cues.append((item or suggestion, cue))
+                elif is_discard:
+                    discard_cues.append((suggestion, cue, bool(re.search(r"\b(?:all|everything)\b|所有|全部", quote, re.I))))
+                elif cue["type"] == "proposal":
+                    proposal_cues.append(cue)
+            fallback_parts = []
+            fallback_ids = []
+            if keep_cues:
+                keep_items = list(dict.fromkeys(item for item, _ in keep_cues))
+                quote_refs = [cue["quote"] for _, cue in keep_cues]
+                narrow_discards = [item for item, cue, broad in discard_cues if not broad]
+                broad_discard = any(broad for _, _, broad in discard_cues)
+                keep_text = "、".join(keep_items)
+                if narrow_discards:
+                    fallback_parts.append(
+                        f"按明确指令保留{keep_text}；只丢弃与这些保留项不重叠的盒内物品。")
+                else:
+                    fallback_parts.append(f"按明确指令保留{keep_text}。")
+                if broad_discard:
+                    fallback_parts.append(
+                        "“全部东西都丢弃”的范围可能与上述保留项冲突；确认排除保留项后再处理。")
+                fallback_ids.extend(cue["memory_id"] for _, cue in keep_cues)
+                fallback_ids.extend(cue["memory_id"] for _, cue, _ in discard_cues)
+            elif discard_cues:
+                for suggestion, cue, broad in discard_cues:
+                    fallback_parts.append(
+                        f"执行丢弃前，先确认范围与当前物品相符：{suggestion}。")
+                    fallback_ids.append(cue["memory_id"])
+            for cue in proposal_cues:
+                speaker = cue.get("speaker") or "对话参与者"
+                fallback_parts.append(
+                    f"可选建议（{speaker} 提出，尚未见采纳记录）：{cue['suggestion_zh'].rstrip('。')}。")
+                fallback_ids.append(cue["memory_id"])
+            if fallback_parts:
+                decision = dict(decision)
+                decision["action"] = " ".join(fallback_parts)
+                decision["reason"] = "建议依据已逐字核验的来源线索：" + "；".join(
+                    str(cue["quote"]) for cue in verified_action_cues)
+                decision["evidence_ids"] = list(dict.fromkeys(fallback_ids))
+                cue_fallback_used = True
         decision, evidence_review = self._review_decision(
             situation, context, decision, prompt_items(evidence),
             multimodal_inference.get("source_observations") or [], request_id, cancel_event)
         policy_adjustments = []
+        if cue_fallback_used:
+            policy_adjustments.append("结构化线索兜底：模型原答为无需提醒；线索须来源逐字匹配、相关且未显示已完成。")
         if self._enforce_personal_care_boundary(situation, decision):
             policy_adjustments.append(
                 "个人护理同意边界：模型建议涉及未经明确同意的陪同或进入私人空间，"
@@ -1307,6 +1405,7 @@ class MemoryReasoner:
                 "multimodal_observations": observations,
             },
             "policy_adjustments": policy_adjustments,
+            "actionable_cue_fallback": cue_fallback_used,
             "evidence_review": evidence_review,
             "multimodal_inference": multimodal_inference,
             "proactive_scan": proactive,

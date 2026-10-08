@@ -78,6 +78,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", default="data/egolife/runs/multimodal_aligned_v8_20261007/memory.json")
     parser.add_argument("--output-dir", default="data/egolife/runs/multimodal_decision_review_v40_20261007")
+    parser.add_argument("--version", default="v40")
     args = parser.parse_args()
     source = ROOT / args.source
     output = ROOT / args.output_dir
@@ -89,7 +90,7 @@ def main():
     source_by_id = {m["multimodal"]["source_id"]: m for m in original["layer7"]["moments"].values()}
     path = output / "scenario_review.json"
     report = json.loads(path.read_text()) if path.exists() else {
-        "title": "真实时序证据与文本消融复核", "version": "v40",
+        "title": "真实时序证据与文本消融复核", "version": args.version,
         "source_memory": str(source.relative_to(ROOT)),
         "source_moments": len(source_by_id),
         "review_type": "paired_qualitative_review_not_action_accuracy_benchmark",
