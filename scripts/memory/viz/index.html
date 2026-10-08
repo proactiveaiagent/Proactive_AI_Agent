@@ -2978,6 +2978,11 @@ fetch(API+'/api/semantic-scenario-review',{cache:'no-store'})
         return '<tr><td>'+({'all':'画面 + 声音 + 文本',text:'仅文本'})[key]+'</td><td>'+Number(inputs.visual_frames_used||0)+' 帧 / '+Number(inputs.audio_transcripts_used||0)+' 段有效转写</td><td>'+esc((result.recommendation||{}).action||'未生成')+'</td><td>'+Number(check.passed||0)+'/'+Number(check.total||0)+'</td><td><b>'+esc(quality.verdict||'未审阅')+'</b><div class="note">'+esc(quality.summary||'')+'</div></td></tr>';
       }).join('');
       const comparison=compareRows?'<details><summary>与仅文本比较</summary><div class="note">同一事件、同一人物，历史截止 '+esc(item.cutoff_time||'')+'；过程检查只统计来源、消融执行和复核完成情况，不表示建议答对。Codex AI 定性审阅是逐条分析，不是官方答案或准确率。</div><div style="overflow-x:auto"><table><thead><tr><th>输入条件</th><th>实际输入</th><th>下一步建议</th><th>过程检查</th><th>Codex AI 定性审阅</th></tr></thead><tbody>'+compareRows+'</tbody></table></div></details>':'';
+      const followupHtml=(item.targeted_followups||[]).map(f=>{
+        const rows=Object.entries(f.conditions||{}).map(([mode,r])=>'<tr><td>'+({'all':'画面 + 声音 + 文本',text:'仅文本'})[mode]+'</td><td>'+esc(r.action||'')+'</td><td>'+Number((r.process_checks||{}).passed||0)+'/'+Number((r.process_checks||{}).total||0)+'</td><td>'+Number(r.visual_frames||0)+' 帧 / '+Number(r.audio_transcripts||0)+' 段转写</td></tr>').join('');
+        const falseMatches=(f.v55_false_matches||[]).map(m=>esc((m.source_segment_id||'')+'：'+(m.evidence_phrase||''))).join('；');
+        return '<details><summary>专项回归 · '+esc(f.title||f.version||'')+'</summary><div class="note">'+esc(f.summary||'')+'</div>'+(rows?'<div style="overflow-x:auto"><table><thead><tr><th>条件</th><th>修复后建议</th><th>过程检查</th><th>实际模态</th></tr></thead><tbody>'+rows+'</tbody></table></div>':'')+(falseMatches?'<div class="note">v55 暴露的误关联：'+falseMatches+'</div>':'')+'</details>';
+      }).join('');
       const filteredMedia=Number(mm.filtered_irrelevant_media_count)||0;
       const mediaNote=(Number(mm.visual_frames_used)||0)+' 帧画面 · '+(Number(mm.audio_transcripts_used)||0)+' 段音频转写'+(mm.model?' · '+mm.model:'')+(filteredMedia?' · 已过滤 '+filteredMedia+' 条主题无关媒体':'')+(Number(mm.audio_transcription_rejected_count)?' · 忽略 '+Number(mm.audio_transcription_rejected_count)+' 段不匹配 ASR':'');
       const qualitySummary=(data.action_quality_review||{}).summary||'';
@@ -2996,6 +3001,7 @@ fetch(API+'/api/semantic-scenario-review',{cache:'no-store'})
         '<div class="note">风险：'+esc(rec.risk||'未知')+' · 引用 '+cited.size+' 条记忆 · '+Number(item.elapsed_ms||0)+' ms</div>'+
         renderDecisionEvidenceReview(item.evidence_review)+
         comparison+
+        followupHtml+
         '<details><summary>查看问题、检索过程和记忆</summary><p>'+esc(item.situation||'')+'</p>'+
       planTrace+
       (trace?'<b>检索过程</b><ul>'+trace+'</ul>':'')+
