@@ -319,3 +319,26 @@ v53 在固定的 8 个 DAY1 案例上完成完整多模态与仅文本配对，�
 详细输出、媒体引用和版本哈希见 data/egolife/runs/multimodal_decision_benchmark_v3_20261008/scenario_review.json；两个专项回归分别见 data/egolife/runs/multimodal_decision_gate_v54_20261008/scenario_review.json、data/egolife/runs/multimodal_decision_media_v55_20261008/scenario_review.json 和 data/egolife/runs/multimodal_decision_media_v56_20261008/scenario_review.json。
 
 v56 的词锚点规则偏保守：它可以挡住共享“做饭、冰箱、颜色”等泛主题但缺少具体证据的媒体，也可能漏掉没有共用词的同义表达。它不等于语义向量检索；多模态检索的召回收益、误关联率、跨日表现、音频误纳/误拒和延迟仍需扩充样本评测。以上行动判断均为 Codex 对固定标准的定性复核，不是官方准确率或人工金标准。
+
+### 2026-10-08 语义向量召回离线对照
+
+为核对“语义检索仍主要依赖 BM25”这一会后差距，在同一 v5 Qwen 缓存、同一批 810 道官方 EgoLifeQA 问题、同一人物约束与提问时点因果截断下，运行了 GTE-base 文本向量检索试验。每题检索目标是官方标注对应的视频片段；没有把官方答案用于排序。
+
+| 排序方法 | Top-5 命中官方目标 | 命中率 |
+|---|---:|---:|
+| 当前 BM25 | 416 / 810 | 51.4% |
+| GTE-base 语义向量 | 637 / 810 | 78.6% |
+| BM25 + GTE reciprocal-rank fusion | 646 / 810 | 79.8% |
+
+RRF 离线对照比 BM25 多命中 230 题（+28.4 个百分点）。这表示目标视频片段更常出现在前五项，不代表题目答案答对，也不代表行动建议质量提高。当前实验的 GTE 输入是 Qwen/ASR 生成的 Scene、Action、人物、地点、活动、物品等文本；没有对原始画面或声音生成语义向量，因此仍不是完整的跨模态语义相似检索。
+
+该实验暂不代表线上检索。CPU 冷启动加载模型约 2.99 秒，120 条记忆建文本向量约 37.1 秒；810 道问题批量编码约 17.3 秒，索引构建后的向量余弦扫描 P95 约 0.11 毫秒。按每天 725 条线性外推十年，向量本体约占 2.03 GB（int8）或 4.06 GB（float16），尚未计索引元数据。线上接入前需要实现可复用、增量更新的索引，计入实际磁盘占用，并在保留集比较召回、答案表现、误关联、P95 与冷启动成本。逐题结果和复现脚本分别为 `data/egolife/runs/gte_semantic_retrieval_v2_20261008.json` 与 `scripts/memory/benchmark_semantic_retrieval.py`。
+
+
+### 持久化语义索引原型（2026-10-08）
+
+为解决离线 GTE 试验无法直接上线的问题，新增 SQLite sidecar 原型。每条向量按源 moment ID 保存，并记录编码模型版本、检索字段哈希、向量维数及更新时刻。显式同步时只重新编码字段发生变化的新建/更新记忆，并清除源记录已删除、标记 stale 或并入其他记忆的索引项。向量使用 float16 保存。
+
+代码：`code/semantic_retrieval.py`；同步入口：`scripts/memory/sync_semantic_index.py <memory_dir>`。索引保存在对应 memory_dir 的 `semantic_index.sqlite3`，便于随用户记忆库隔离备份和统计。同步入口目前是显式维护命令，尚未连接 PersonMemory 的 add/update/delete/merge CRUD，也未在在线 query 中启用；它不应被描述为已经上线的语义检索。模型加载和首次向量构建仍可能超过交互检索的 1 秒目标，因此后续应在服务内后台预热并做增量队列，失败时保留 BM25 回退。
+
+该索引目前编码由多模态感知字段与来源对话整理出的文本，不对原始像素和音频波形生成 embedding。原始视频证据仍以有预算的关键帧/音频片段存储，dHash 与音频频谱签名用于低成本相似线索。实现完整跨模态相似度仍需将视觉/音频 embedding 与事件 ID、时间范围和来源证据绑定，并单独测量模态消融及误关联率。
