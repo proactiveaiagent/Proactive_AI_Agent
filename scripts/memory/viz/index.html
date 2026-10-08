@@ -373,6 +373,15 @@ body{height:100vh;height:100dvh;min-height:0;display:flex;flex-direction:column}
 .memory-expand-toggle:focus-visible{outline:2px solid #6b83dc;outline-offset:2px}
 .memory-expand-toggle[hidden]{display:none!important}
 .layer-memory-row .memory-expand-toggle{grid-column:2;grid-row:1/3;align-self:center}
+.layer-memory-row .media-evidence,.layer-memory-row .moment-source-provenance{grid-column:1/-1;width:100%;min-width:0;box-sizing:border-box}
+.layer-memory-row .media-evidence{display:grid;grid-template-columns:minmax(0,1fr);align-items:start;gap:7px}
+.layer-memory-row .media-evidence .media-timeline{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,190px));align-items:start;gap:7px;width:100%;min-width:0}
+.layer-memory-row .media-evidence .media-timeline figure{width:100%;min-width:0}
+.layer-memory-row .media-evidence .media-timeline img{width:100%;height:96px;object-fit:contain;background:#e8edf4}
+.layer-memory-row .media-audio-list{display:flex;flex-wrap:wrap;align-items:flex-start;gap:7px;width:100%;min-width:0}
+.layer-memory-row .media-audio-list figure{flex:0 1 250px;min-width:0;max-width:100%}
+.layer-memory-row .media-audio-list audio{display:block;width:100%;max-width:100%;height:34px}
+.layer-memory-row .media-evidence>span{display:block;min-width:0;line-height:1.45;overflow-wrap:anywhere}
 .moment-detail .memory-expand-toggle{margin-top:5px}
 .layer-window{margin:3px 0 0}
 .layer-window-label{display:none}
@@ -580,6 +589,26 @@ body{height:100vh;height:100dvh;min-height:0;display:flex;flex-direction:column}
 .reason-result{margin-top:12px;line-height:1.55}
 .reason-result article{padding:10px 12px;margin:8px 0;background:#f7faff;border:1px solid #dde5f3;border-radius:9px}
 .reason-result ul{margin:6px 0 0 20px}
+.reason-page-intro{margin:0;color:#62708a;font-size:11px;line-height:1.55}
+.reason-guide{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;margin:10px 0}
+.reason-guide>div{padding:8px 10px;border:1px solid #e1e7f0;border-radius:9px;background:#f8faff;color:#5e6d85;font-size:10px;line-height:1.45}
+.reason-guide b{display:block;margin-bottom:2px;color:#354b7d;font-size:10px}
+.reason-section{margin-top:9px;border:1px solid #e1e7f0;border-radius:9px;background:#fff;overflow:hidden}
+.reason-section>summary{padding:9px 11px;color:#40558e;font-size:11px;font-weight:800;cursor:pointer;background:#f8faff}
+.reason-section[open]>summary{border-bottom:1px solid #e8edf4}
+.reason-section-body{padding:7px 10px}
+.semantic-case{margin:6px 0;border:1px solid #e1e7f0;border-radius:8px;background:#fff;overflow:hidden}
+.semantic-case>summary{padding:8px 10px;cursor:pointer;list-style-position:inside;background:#fbfcff}
+.semantic-case[open]>summary{border-bottom:1px solid #e7ebf2;background:#f5f8ff}
+.semantic-case-title{display:inline;font-size:11px;color:#34466d}
+.semantic-case-action{display:block;padding:3px 0 0 17px;color:#53647f;font-size:10px;line-height:1.4;font-weight:500}
+.semantic-case-meta{display:block;padding:3px 0 0 17px;color:#8691a3;font-size:9px;font-weight:500}
+.semantic-case-body{padding:7px 9px}
+.eval-inline-mm{display:grid;gap:4px;margin-top:6px;padding-top:6px;border-top:1px solid #e9edf4}
+.eval-inline-mm-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:baseline;font-size:9px;line-height:1.4;color:#68758d}
+.eval-inline-mm-row b{color:#40558e;font-size:10px;text-align:right;white-space:nowrap}
+.eval-inline-mm-note{font-size:8px;line-height:1.4;color:#8490a4}
+@media(max-width:700px){.reason-guide{grid-template-columns:1fr}.eval-inline-mm-row{grid-template-columns:1fr}.eval-inline-mm-row b{text-align:left}}
 </style>
 </head>
 <body>
@@ -667,17 +696,16 @@ body{height:100vh;height:100dvh;min-height:0;display:flex;flex-direction:column}
 
   <section class="content-panel" data-view-panel="reason" role="tabpanel" aria-label="语义决策">
     <div class="card">
-      <h2><span class="dot"></span>从记忆到行动建议</h2>
-      <p class="note">每次实时识别写入新片段后，会自动针对最新事件生成一条建议；也可手动分析。先读取当前画面和有效语音，再规划历史检索，最多检索 3 轮；同一次分析复用已读取的媒体。推理可停止，建议只供参考，不会自动执行。</p>
+      <h2><span class="dot"></span>语义决策 · 从当前事件生成可核验的建议</h2>
+      <p class="reason-page-intro">系统结合眼前事件、可用画面与语音、以及时间上有效的个人记忆，判断是否需要行动。建议会附上证据和不确定点；它不会自动替用户执行操作。</p>
+      <div class="reason-guide"><div><b>1 · 感知当前情况</b>读取当前事件和相关画面、语音；没有证据的模态会明确标出。</div><div><b>2 · 找相关记忆</b>按人物、地点、事件和时间检索，只保留与当前情况相关且未过期的记忆。</div><div><b>3 · 给出下一步</b>说明建议、依据、风险与不确定点；证据不足时先询问或说明无法判断。</div></div>
       <div class="reason-examples">
         <button class="btn" onclick="setReasonExample('Alice 现在需要帮助，结合已经认识的 Alice 和当前场景，下一步应该做什么？')">Alice</button>
         <button class="btn" onclick="setReasonExample('眼前有人突然晕倒。结合已存的相关健康信息，应该采取什么行动？')">有人晕倒</button>
         <button class="btn" onclick="setReasonExample('用户刚从中国到美国，在餐厅用餐后忘记付小费。是否需要提醒？')">跨国付小费</button>
       </div>
-      <div class="note" style="margin:12px 0 6px"><b>固定评测案例 v1</b> · 预先定义判断边界；不是官方行动答案</div>
-      <div id="decisionBenchmark" class="reason-result" aria-live="polite">正在读取固定评测案例…</div>
-      <div class="note" style="margin:12px 0 6px"><b>真实记忆场景审阅</b> · 时序画面、语音与仅文本对照 · 定性复核，不计入准确率</div>
-      <div id="semanticScenarioReview" class="reason-result" aria-live="polite">正在读取场景审阅结果…</div>
+      <details class="reason-section"><summary>固定评测案例 · 8 条，展示判断边界</summary><div class="reason-section-body"><div class="note">这些案例由项目审阅者制定，不是 EgoLife 官方行动答案，因此只用于逐条检查证据和安全边界，不计算官方准确率。</div><div id="decisionBenchmark" class="reason-result" aria-live="polite">正在读取固定评测案例…</div></div></details>
+      <details class="reason-section"><summary>真实记忆场景审阅 · 多模态与纯文本对照</summary><div class="reason-section-body"><div class="note">逐条审阅模型是否用对画面、声音和记忆；这是定性复核，不是官方答案准确率。</div><div id="semanticScenarioReview" class="reason-result" aria-live="polite">正在读取场景审阅结果…</div></div></details>
       <div class="reason-controls"><textarea id="reasonSituation" aria-label="当前事件" placeholder="描述当下事件、人物和地点"></textarea><button class="btn primary" id="reasonRunBtn" onclick="runMemoryReason(false)">关联检索并推理</button></div>
       <div style="margin-top:8px"><button class="btn" id="reasonProactiveBtn" onclick="runMemoryReason(true)">🔎 基于最新记忆主动建议</button><button class="btn" id="reasonCancelBtn" onclick="cancelSemanticReason()" style="display:none">⏹ 停止建议</button><span class="note">无需输入问题；建议依据最新事件、实际媒体和关联记忆生成，并标出模型观察到的画面/音频证据。</span></div>
       <div id="reasonResult" class="reason-result" aria-live="polite"></div>
@@ -757,7 +785,7 @@ body{height:100vh;height:100dvh;min-height:0;display:flex;flex-direction:column}
 
   <section class='content-panel' data-view-panel='evaluation' role='tabpanel' aria-label='记忆评估指标'>
     <div class='evaluation-page'>
-      <header class='eval-heading'><div><h2>评估结果：短期和长期分开看</h2><p>同一批官方视频问答分别测短期、当前缓存记忆；长期另有 Jake 的 500 道跨日选择题。</p></div></header>
+      <header class='eval-heading'><div><h2>评估结果：短期和长期分开看</h2><p>多模态数据并入存储、检索速度和内容准确性三项验收指标；视频识别和大模型推理耗时单独说明，不与记忆库检索混算。</p></div></header>
       <section class='eval-block eval-storage-projection'>
         <div class='eval-block-heading'><h3>单人长期存储量推算</h3><span>按每天 725 条唯一记忆估算</span></div>
         <div class='storage-projection-wrap'>
@@ -777,16 +805,12 @@ body{height:100vh;height:100dvh;min-height:0;display:flex;flex-direction:column}
         <p class='storage-projection-note'>估算依据：长期样本的一个完整 A1_JAKE 日包含 725 条唯一记忆；容量测试实测约 3,005.85 B/条（4.36 MB/1,450 条，含索引），据此按每天同等使用量线性外推。1450 条长测标注对应 725 个唯一片段，已按唯一记忆计数。实际一天记忆文件约 1.84 MB，因此表格基准略保守。</p>
         <p class='storage-projection-note'>按 1 个月 30 天、半年 182.5 天、1 年 365 天计算；不含原始视频。十年估算约 7.95 GB，低于 100 GB 目标。实际用量会随每天记忆条数、摘要压缩和索引变化而变化。</p>
       </section>
-      <section class='eval-block' id='multimodalCapacityBlock'>
-        <div class='eval-block-heading'><h3>多模态记忆容量 · 新样本</h3><span>关键帧、短音频、文本与索引；不含原始视频</span></div>
-        <div id='multimodalCapacityContent' class='eval-plain'>正在读取多模态样本…</div>
-      </section>
       <section class='eval-block eval-acceptance'>
-        <div class='eval-block-heading'><h3>飞书文档的三项验收标准</h3><span>问答分数不能替代基础操作准确率</span></div>
+        <div class='eval-block-heading'><h3>三项验收标准 · 含多模态结果</h3><span>问答分数不能替代基础操作准确率</span></div>
         <div class='eval-acceptance-grid'>
-          <article class='eval-card'><h3>存储容量 · 目标 ≤100 GB</h3><div class='eval-main'>4.36 MB</div><p>1450 条容量测试记忆，含索引；不含原始视频。</p><small>单人周期推算见上表。</small><span class='eval-status'>符合验收标准</span></article>
-          <article class='eval-card'><h3>提取速度 · 目标 ≤1 秒</h3><div class='eval-main'>24.3 ms</div><p>1450 条记忆库检索 P95。</p><small>不含视频处理和 Qwen 推理。</small><span class='eval-status'>符合验收标准</span></article>
-          <article class='eval-card'><h3>记忆内容准确率 · 目标 ≥95%</h3><div class='eval-accuracy-pair'><div class='eval-accuracy-metric'><span class='eval-accuracy-label'>严格全符合 · 加权估计</span><div class='eval-main eval-warn'>70.6%</div><span class='eval-accuracy-denom'>287 / 400 完全符合；原始比例 71.8%</span></div><div class='eval-accuracy-metric eval-accuracy-reference'><span class='eval-accuracy-label'>至少部分被支持 · 参考值</span><div class='eval-main'>96.8%</div><span class='eval-accuracy-denom'>387 / 400：287 完全 + 100 部分</span><span class='eval-status'>部分符合验收标准</span></div></div></article>
+          <article class='eval-card'><h3>存储容量 · 目标 ≤100 GB</h3><div class='eval-main'>4.36 MB</div><p>1450 条文本记忆，含索引；不含原始视频。</p><small>纯文本十年推算见上表。</small><div id='multimodalCapacityContent' class='eval-inline-mm'><span class='eval-inline-mm-note'>正在读取多模态样本…</span></div><span class='eval-status'>符合验收标准</span></article>
+          <article class='eval-card'><h3>提取速度 · 目标 ≤1 秒</h3><div class='eval-main'>24.3 ms</div><p>1450 条文本记忆库检索 P95。</p><small>不含视频处理和 Qwen 推理。</small><div id='multimodalLatencyMetric' class='eval-inline-mm'><span class='eval-inline-mm-note'>正在读取多模态检索耗时…</span></div><span class='eval-status'>符合验收标准</span></article>
+          <article class='eval-card'><h3>记忆内容准确率 · 目标 ≥95%</h3><div class='eval-accuracy-pair'><div class='eval-accuracy-metric'><span class='eval-accuracy-label'>严格全符合 · 加权估计</span><div class='eval-main eval-warn'>70.6%</div><span class='eval-accuracy-denom'>287 / 400 完全符合；原始比例 71.8%</span></div><div class='eval-accuracy-metric eval-accuracy-reference'><span class='eval-accuracy-label'>至少部分被支持 · 参考值</span><div class='eval-main'>96.8%</div><span class='eval-accuracy-denom'>387 / 400：287 完全 + 100 部分</span><span class='eval-status'>部分符合验收标准</span></div></div><div class='eval-inline-mm'><div class='eval-inline-mm-row'><span>多模态行动场景</span><b>8 例 · 定性审阅</b></div><span class='eval-inline-mm-note'>有画面/音频与仅文本对照；EgoLife 无官方行动答案，不折算为准确率。</span></div></article>
         </div>
       </section>
       <header class='eval-heading eval-person-heading'><div><h2>评测人物与说明</h2><p>选择人物切换短期与长期同题问答、短期 AI 抽查；选择总体查看 6 人汇总。飞书验收标准保持全体汇总。</p></div><div class='eval-heading-tools'><label class='eval-person-filter'><span>评测人物</span><select id='evalPersonSelect' aria-label='切换评测人物' title='切换短期与长期同题评测、短期内容抽查的人物；总体汇总选择全部' onchange='selectEvalParticipant(this.value)'><option value='all'>总体 · 全部人物</option><option value='A1_JAKE'>Jake · A1</option><option value='A2_ALICE'>Alice · A2</option><option value='A3_TASHA'>Tasha · A3</option><option value='A4_LUCIA'>Lucia · A4</option><option value='A5_KATRINA'>Katrina · A5</option><option value='A6_SHURE'>Shure · A6</option></select></label><button type='button' class='eval-help-btn' aria-haspopup='dialog' aria-controls='evalHelpModal' onclick='openEvalHelp()'>评估说明</button></div></header>
@@ -1190,7 +1214,8 @@ function renderMultimodalEvidence(x){
   const visibleFrames=frames.filter(ref=>ref.url);
   if(visibleFrames.length)bits.push('<div class="media-timeline">'+visibleFrames.map(ref=>'<figure><img loading="lazy" alt="源片段 '+Number(ref.at_s||0).toFixed(2)+' 秒关键帧" src="'+esc(ref.url)+'"><figcaption>'+Number(ref.at_s||0).toFixed(2)+' s</figcaption></figure>').join('')+'</div>');
   bits.push('<span>多模态证据 · '+visibleFrames.length+' 帧 · '+clips.filter(ref=>ref.url).length+' 段声音 · '+(bytes/1024).toFixed(1)+' KB'+(speakers.length?' · 原文字标注说话人 '+esc(speakers.join(', ')):'')+'</span>');
-  clips.filter(ref=>ref.url).forEach(ref=>bits.push('<figure><audio controls preload="none" src="'+esc(ref.url)+'" aria-label="记忆音频证据"></audio><figcaption>'+Number(ref.at_s||0).toFixed(2)+'–'+(Number(ref.at_s||0)+Number(ref.duration_s||0)).toFixed(2)+' s</figcaption></figure>'));
+  const audioClips=clips.filter(ref=>ref.url);
+  if(audioClips.length)bits.push('<div class="media-audio-list">'+audioClips.map(ref=>'<figure><audio controls preload="none" src="'+esc(ref.url)+'" aria-label="记忆音频证据"></audio><figcaption>'+Number(ref.at_s||0).toFixed(2)+'–'+(Number(ref.at_s||0)+Number(ref.duration_s||0)).toFixed(2)+' s</figcaption></figure>').join('')+'</div>');
   if(media.audio_coverage_ratio!=null)bits.push('<span>保留事件声音 '+Math.round(Number(media.audio_coverage_ratio)*100)+'%；未保留时段不能用于判断没有说过。</span>');
   return '<div class="media-evidence">'+bits.join('')+'</div>';
 }
@@ -2069,18 +2094,28 @@ async function runStep(force, automatic=false, continuousKind=null){
   const isNightly=intState.current&&intState.current.kind==='nightly';
   let progressStream=null;
   if(cacheOption) cacheOption.style.display=isNightly?'inline-flex':'none';
-  if(progressBox){progressBox.style.display=isNightly?'block':'none';progressBox.innerHTML='';}
-  if(isNightly){
-    progressStream=new EventSource(API+'/api/interactive/progress?after='+(Date.now()/1000));
-    progressStream.addEventListener('progress',event=>{
-      const p=JSON.parse(event.data||'null');
-      if(!p||!progressBox) return;
-      const step=p.total?(' · '+p.current+'/'+p.total):'';
-      progressBox.innerHTML='<b>'+esc(p.label||'夜间整理')+esc(step)+'</b>'
-        +(p.message?'<div style="margin-top:5px">'+esc(p.message)+'</div>':'')
-        +'<div style="margin-top:5px;color:#667085">缓存命中 '+(Number(p.cache_hits)||0)+' 项 · 模型调用 '+(Number(p.model_calls)||0)+' 次</div>';
-    });
-  }
+  if(progressBox){progressBox.style.display='block';progressBox.innerHTML='<b>正在连接进度…</b><div style="margin-top:5px;color:#667085">步骤开始后会显示处理阶段和已完成内容。</div>';}
+  progressStream=new EventSource(API+'/api/interactive/progress?after='+(Date.now()/1000));
+  progressStream.addEventListener('progress',event=>{
+    let p; try{p=JSON.parse(event.data||'null');}catch(_){return;}
+    if(!p||!progressBox) return;
+    const isNightProgress=!!(p.cache_hits!==undefined||p.model_calls!==undefined)&&p.step_index===undefined;
+    const step=p.step_index&&p.step_total?('步骤 '+p.step_index+'/'+p.step_total):'';
+    const item=p.item_total?(' · 当前片段 '+(p.item_index||0)+'/'+p.item_total):'';
+    const pct=p.total?Math.max(0,Math.min(100,Math.round((Number(p.current)||0)*100/Number(p.total)))):
+      (p.item_total?Math.max(0,Math.min(100,Math.round((Number(p.item_index)||0)*100/Number(p.item_total)))):0);
+    const output=p.output;
+    const completed=Array.isArray(p.completed)?p.completed:[];
+    const completedHtml=completed.length?'<div style="margin-top:9px"><b>最近完成</b>'+completed.map(x=>
+      '<div style="margin-top:4px;padding:6px 8px;background:#fff;border-radius:7px"><span style="color:#53627c">'+esc(x.id||'')+'</span><div>'+esc(x.text||'')+'</div></div>'
+    ).join('')+'</div>':'';
+    const outputHtml=output?'<div style="margin-top:8px;padding:8px 10px;background:#fff;border-radius:8px"><b>当前片段结果</b><div style="margin-top:4px">'+esc((output.id?output.id+' · ':'')+(output.text||''))+'</div></div>':'';
+    progressBox.innerHTML='<div style="display:flex;justify-content:space-between;gap:12px;align-items:center"><b>'+esc(p.label||(isNightProgress?'夜间整理':intState.current?.title||'当前步骤'))+'</b><span style="color:#667085;white-space:nowrap">'+esc(step+item)+'</span></div>'
+      +'<div style="height:5px;background:#e6eaf2;border-radius:8px;margin-top:9px;overflow:hidden"><div style="height:100%;width:'+pct+'%;background:#5965e8;transition:width .25s"></div></div>'
+      +(p.message?'<div style="margin-top:7px">'+esc(p.message)+'</div>':'')
+      +(isNightProgress?'<div style="margin-top:5px;color:#667085">缓存命中 '+(Number(p.cache_hits)||0)+' 项 · 模型调用 '+(Number(p.model_calls)||0)+' 次</div>':'')
+      +outputHtml+completedHtml;
+  });
   try{
     const params=new URLSearchParams();
     if(isNightly && !document.getElementById('useNightlyCache')?.checked) params.set('use_cache','0');
@@ -2102,9 +2137,10 @@ async function runStep(force, automatic=false, continuousKind=null){
     const lastLog=(st.log||[]).length?st.log[st.log.length-1]:null;
     const perception=lastLog&&lastLog.perception||{};
     const perceptionItems=perception.kind==='batch'?(perception.items||[]):[perception];
-    const hasFreshMemory=perceptionItems.some(item=>item&&item.moment_id&&item.source==='qwen'&&!item.cancelled);
-    if(force&&!automatic&&['add','add_batch'].includes(completedKind)&&hasFreshMemory){
-      await runAutoSuggestionAfterLiveStep();
+    const hasFreshMemory=perceptionItems.some(item=>item&&item.moment_id&&!item.cancelled);
+    const shouldSuggest=['add','add_batch'].includes(completedKind)&&hasFreshMemory&&(!automatic||st.auto_paused||st.finished);
+    if(shouldSuggest){
+      await runAutoSuggestionAfterStep();
     }
   }finally{
     if(progressStream) progressStream.close();
@@ -2805,7 +2841,7 @@ function renderAutoSuggestionResult(result){
   const raw=result.model_recommendation||{}, policy=result.policy_adjustments||[];
   const cited=new Set(rec.evidence_ids||[]);
   const evidence=(result.candidates||[]).filter(item=>cited.has(item.id)).map(item=>'<li><code>'+esc(item.id||'')+'</code> · '+esc((item.scene||'').slice(0,180))+(item.speech?'<div class="note">记忆中的语音文字：'+esc(String(item.speech).slice(0,260))+'</div>':'')+'</li>').join('');
-  return '<article><b>最新事件的主动建议</b><p>'+esc(rec.action||'模型未给出可靠建议')+'</p>'+
+  return '<article><b>本步骤 · 最新片段的多模态依据与建议</b><p>'+esc(rec.action||'模型未给出可靠建议')+'</p>'+
     '<div class="note">'+esc(rec.reason||'')+'</div>'+
     (policy.length?'<div class="note">安全边界校正：'+esc(policy.join('；'))+'</div>':'')+
     (raw.action&&raw.action!==rec.action?'<details><summary>查看模型原始建议</summary><p>'+esc(raw.action)+'</p><p class="note">'+esc(raw.reason||'')+'</p></details>':'')+
@@ -2824,11 +2860,11 @@ function renderDecisionEvidenceReview(review){
   const issues=list(review.issues).filter(row=>row&&typeof row==='object').map(row=>'<li>'+esc(row.explanation||'')+'</li>').join('')+list((review.initial_action_verification||{}).remaining_issues).map(text=>'<li>'+esc(text)+'</li>').join('');
   return '<details><summary>建议证据复核 · '+esc(status)+'</summary><div class="note">由模型复核指令和事实，程序核对来源原句；不等于官方正确率。</div>'+(constraints?'<b>与当前目标相关的明确指令</b><ul>'+constraints+'</ul>':'')+(issues?'<b>发现的问题</b><ul>'+issues+'</ul>':'')+(review.error?'<div class="note">'+esc(review.error)+'</div>':'')+list((review.revision_verification||{}).remaining_issues).map(text=>'<div class="note">'+esc(text)+'</div>').join('')+'</details>';
 }
-async function runAutoSuggestionAfterLiveStep(){
+async function runAutoSuggestionAfterStep(){
   const box=document.getElementById('autoSuggestion');
   if(!box)return;
   box.style.display='block';
-  box.innerHTML='<article><b>正在分析刚写入的事件…</b><div class="note">模型会结合当前片段、可用画面/声音和历史记忆；可以随时停止。</div><button class="btn" onclick="cancelSemanticReason()">⏹ 停止建议</button></article>';
+  box.innerHTML='<article><b>正在分析本步骤最新写入的片段…</b><div class="note">批量写入时仅针对时间最新的片段生成一条建议，并结合其画面、有效语音和相关历史记忆；可以随时停止。</div><button class="btn" onclick="cancelSemanticReason()">⏹ 停止建议</button></article>';
   try{
     const response=await fetch(API+'/api/interactive/reason?mode=latest',{cache:'no-store'});
     const result=await response.json();
@@ -2940,7 +2976,11 @@ fetch(API+'/api/semantic-scenario-review',{cache:'no-store'})
     const rows=Object.entries(data.scenarios||{}).map(([caseId,item])=>({...item,case_id:caseId}));
     const host=document.getElementById('semanticScenarioReview');
     if(!rows.length){host.textContent='场景审阅尚无结果。';return;}
-    host.innerHTML=rows.map(item=>{
+    const qualitySummary=(data.action_quality_review||{}).summary||'';
+    const qualityLimit=(data.action_quality_review||{}).limitation||'';
+    const reviewIntro='<div class="note"><b>'+rows.length+' 条场景 · 定性审阅</b>。每例配对多模态和纯文本条件；检查建议是否有证据支持，不是官方行动答案准确率。点开单条看详情。'+
+      ((qualitySummary||qualityLimit)?'<details><summary>查看审阅结论与适用范围</summary><div class="note">'+esc(qualitySummary)+'<br>'+esc(qualityLimit)+'</div></details>':'')+'</div>';
+    host.innerHTML=reviewIntro+rows.map(item=>{
       const rec=item.recommendation||{}, cited=new Set(rec.evidence_ids||[]);
       const raw=item.model_recommendation||{};
       const candidates=item.candidates||[];
@@ -2985,10 +3025,10 @@ fetch(API+'/api/semantic-scenario-review',{cache:'no-store'})
       }).join('');
       const filteredMedia=Number(mm.filtered_irrelevant_media_count)||0;
       const mediaNote=(Number(mm.visual_frames_used)||0)+' 帧画面 · '+(Number(mm.audio_transcripts_used)||0)+' 段音频转写'+(mm.model?' · '+mm.model:'')+(filteredMedia?' · 已过滤 '+filteredMedia+' 条主题无关媒体':'')+(Number(mm.audio_transcription_rejected_count)?' · 忽略 '+Number(mm.audio_transcription_rejected_count)+' 段不匹配 ASR':'');
-      const qualitySummary=(data.action_quality_review||{}).summary||'';
-      const qualityLimit=(data.action_quality_review||{}).limitation||'';
-      return '<article><b>'+esc(item.title||'场景')+'</b>'+
-        (qualitySummary?'<div class="note"><b>Codex AI 行动审阅：</b>'+esc(qualitySummary)+'<br>'+esc(qualityLimit)+'</div>':'')+
+      const title=item.title||'场景';
+      const scenarioAction=(rec.action||'未生成');
+      const mmBrief=(Number(mm.visual_frames_used)||0)+' 帧画面 · '+(Number(mm.audio_transcripts_used)||0)+' 段有效转写';
+      return '<details class="semantic-case"><summary><b class="semantic-case-title">'+esc(title)+'</b><span class="semantic-case-action"><b>建议：</b>'+esc(scenarioAction.slice(0,220))+'</span><span class="semantic-case-meta">'+esc(item.participant||'')+(item.day?' / '+esc(item.day):'')+' · '+esc(mmBrief)+' · 引用 '+cited.size+' 条记忆</span></summary><div class="semantic-case-body">'+
         (item.case_type==='controlled_goal_real_media'?'<div class="note">真实媒体＋评测构造的当前目标；不是官方行动答案。</div>':'')+
         ((item.qualitative_review||{}).summary?'<div class="note"><b>定性核对：</b>'+esc(item.qualitative_review.summary)+'</div>':'')+
         '<div><b>建议：</b>'+esc(rec.action||'未生成')+'</div>'+
@@ -3011,7 +3051,7 @@ fetch(API+'/api/semantic-scenario-review',{cache:'no-store'})
         '<b>模型引用的个人记忆</b>'+
         (evidence?'<ul>'+evidence+'</ul>':'<p class="note">本场景没有引用到个人记忆。</p>')+
         (other?'<b>检索到但未引用</b><ul>'+other+'</ul>':'')+
-        '<p class="note">审阅要点：'+esc(item.review_target||'')+'</p></details></article>';
+        '<p class="note">审阅要点：'+esc(item.review_target||'')+'</p></details></div></details>';
     }).join('');
   })
   .catch(error=>{document.getElementById('semanticScenarioReview').textContent='场景审阅结果尚未生成：'+error.message;});
@@ -3020,12 +3060,22 @@ fetch(API+'/api/multimodal-capacity',{cache:'no-store'})
   .then(response=>{if(!response.ok)throw new Error('HTTP '+response.status);return response.json();})
   .then(data=>{
     const short=data.short_120, long=data.long_725, temporal=data.temporal_sample, temporalLong=data.temporal_long;
-    const format=(name,item)=>item?'<article class="eval-card"><h3>'+esc(name)+'</h3><div class="eval-main">'+(Number(item.total_bytes||0)/1048576).toFixed(2)+' MiB</div><p>'+Number(item.stored_moments||0)+' 条记忆 · '+Number(item.visual_sample_count??item.visual_evidence_count??0)+' 帧 · '+Number(item.audio_excerpt_count??item.audio_evidence_count??0)+' 段声音</p><small>单人十年线性推算 '+(Number(item.projected_10yr_gib_at_725_moments_per_day||0)*1.073741824).toFixed(2)+' GB；样本估算，尚未作为多模态验收结果。</small></article>':'';
-    document.getElementById('multimodalCapacityContent').innerHTML='<div class="eval-grid eval-summary-grid">'+(temporal?format('新版时序证据 · 六人物样本',temporal):format('旧版短期 120 条 · 单帧',short))+(temporalLong?format('新版完整日 725 条 · 三帧',temporalLong):format('旧版完整日 725 条 · 单帧',long))+'</div>'+
-      (temporal?'<p>每条最多 3 帧（合计 18 KB）和 10 秒声音（合计 12 KB）；只复用内容完全相同的文件。80 GiB 媒体预算另预留文本与索引空间，十年值是样本外推，不包含原视频。</p>':(!short&&!long)?'<p>样本正在生成；当前上方 7.95 GB 为纯文本记忆推算。</p>':'<p>旧版每条资产分别受 12 KB 画面、6 KB 声音限制。新版时序证据正在生成；十年值为样本外推，不包含源视频。</p>')+
-      ((temporalLong||{}).retrieval_latency?'<p>新版 '+Number(temporalLong.retrieval_latency.moments)+' 条记忆 · '+Number(temporalLong.retrieval_latency.queries)+' 次快速检索 · P95 <b>'+Number(temporalLong.retrieval_latency.p95_ms).toFixed(1)+' ms</b>；不包含媒体识别和大模型推理。</p>':'');
+    const capacity=temporalLong||temporal||long||short;
+    const visuals=capacity?Number(capacity.visual_sample_count??capacity.visual_evidence_count??0):0;
+    const audios=capacity?Number(capacity.audio_excerpt_count??capacity.audio_evidence_count??0):0;
+    const sampleBytes=capacity?Number(capacity.total_bytes||0):0;
+    const projectedGiB=capacity?Number(capacity.projected_10yr_gib_at_725_moments_per_day||0):0;
+    const projectedGB=projectedGiB*1.073741824;
+    const stored=capacity?Number(capacity.stored_moments||0):0;
+    document.getElementById('multimodalCapacityContent').innerHTML=capacity
+      ?'<div class="eval-inline-mm-row"><span>多模态完整日样本 · '+stored+' 条记忆 / '+visuals+' 帧 / '+audios+' 段音频</span><b>'+(sampleBytes/1048576).toFixed(2)+' MB</b></div><div class="eval-inline-mm-row"><span>按每天 725 条外推 10 年 · 含文本、媒体资产与索引</span><b>'+projectedGiB.toFixed(1)+' GiB ≈ '+projectedGB.toFixed(1)+' GB / 100 GB</b></div><span class="eval-inline-mm-note">样本线性推算，不含原始视频；时序样本资产每条最多 3 帧与 10 秒音频。不是十年实测。</span>'
+      :'<span class="eval-inline-mm-note">多模态容量样本暂不可用；当前展示的容量仅为文本记忆。</span>';
+    const latency=(temporalLong||{}).retrieval_latency;
+    document.getElementById('multimodalLatencyMetric').innerHTML=latency
+      ?'<div class="eval-inline-mm-row"><span>多模态记忆库检索 P95 · '+Number(latency.moments||0)+' 条记忆 / '+Number(latency.queries||0)+' 次查询</span><b>'+Number(latency.p95_ms||0).toFixed(1)+' ms</b></div><span class="eval-inline-mm-note">已预热的记忆检索；包括多模态记忆数据，不含媒体解码、视觉/语音识别和大模型推理。</span>'
+      :'<span class="eval-inline-mm-note">多模态检索耗时样本暂不可用；下方文本检索值仍可查看。</span>';
   })
-  .catch(error=>{document.getElementById('multimodalCapacityContent').textContent='多模态样本暂不可用：'+error.message;});
+  .catch(error=>{document.getElementById('multimodalCapacityContent').textContent='多模态容量暂不可用：'+error.message;document.getElementById('multimodalLatencyMetric').textContent='多模态检索耗时暂不可用：'+error.message;});
 
 fetch(API+'/api/evaluation-data',{cache:'no-store'})
   .then(response=>{if(!response.ok)throw new Error('HTTP '+response.status);return response.json();})

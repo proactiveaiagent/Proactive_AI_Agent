@@ -308,7 +308,11 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             last = None
             while True:
-                progress = dict(SESSION.nightly_progress) if SESSION.nightly_progress else None
+                nightly = SESSION.nightly_progress
+                step_progress = getattr(SESSION, "step_progress", None)
+                progress = (dict(nightly) if nightly and nightly.get("running")
+                            else dict(step_progress) if step_progress else
+                            dict(nightly) if nightly else None)
                 fresh = progress and progress.get("updated_at", 0) >= after
                 payload = json.dumps(progress, ensure_ascii=False)
                 if fresh and payload != last:

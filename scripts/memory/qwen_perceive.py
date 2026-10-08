@@ -325,7 +325,8 @@ class QwenPerceiver:
             return {"model_loaded": False, "error": str(e)}
 
     # -- 核心 ---------------------------------------------------------------
-    def perceive(self, m: dict, force: bool = False, cancel_event=None):
+    def perceive(self, m: dict, force: bool = False, cancel_event=None,
+                 progress_callback=None):
         """
         产出一条记忆条目。force=True 强制实时调用真模型（忽略缓存）。
 
@@ -333,6 +334,12 @@ class QwenPerceiver:
         source: 'cache' | 'qwen'
         """
         mid = m.get("id", "")
+        def emit(stage, message):
+            if progress_callback:
+                try:
+                    progress_callback({"stage": stage, "message": message})
+                except Exception:
+                    pass
         if cancel_event is not None and cancel_event.is_set():
             return self._cancelled_result()
         if not force and mid in self.cache:
@@ -345,6 +352,7 @@ class QwenPerceiver:
             fields_text = json.dumps(hit.get("fields") or {}, ensure_ascii=False)
             if not _contains_cjk(fields_text) and not _contains_cjk(hit.get("raw", "")):
                 hit["source"] = "cache"
+                emit("cache", "命中 Qwen 缓存，直接读取已有感知结果")
                 return hit
             # Do not let an old non-English cache entry re-enter memory.
             self.cache.pop(mid, None)
@@ -357,6 +365,7 @@ class QwenPerceiver:
         start, end = clip_range(m)
         t0 = time.time()
         try:
+            emit("extract_frames", "正在从视频片段抽取关键帧")
             bufs = extract_frames(vp, start, end, self.num_frames)
             base_prompt = build_prompt(m.get("transcript", ""), len(bufs))
             files = [("images", (f"f{i}.jpg", b, "image/jpeg"))
@@ -378,6 +387,7 @@ class QwenPerceiver:
                 with self._active_request_lock:
                     self._active_request_id = request_id
                 try:
+                    emit("model_inference", f"正在请求 Qwen3-VL 分析 {len(bufs)} 帧（尝试 {attempt + 1}/3）")
                     resp = requests.post(
                         f"{self.api_url}/analyze_video",
                         files=files,
@@ -399,6 +409,7 @@ class QwenPerceiver:
                             "error": f"API {resp.status_code}: {resp.text[:200]}",
                             "fields": None}
                 raw = resp.json().get("analysis", "")
+                emit("parse_output", "模型已返回，正在校验语言并整理 Scene / Action 等字段")
                 if not _contains_cjk(raw):
                     break
             if _contains_cjk(raw):

@@ -236,6 +236,7 @@ class InteractiveSession:
         self.auto_paused = False
         self.step_cancelled = False
         self.nightly_progress = None
+        self.step_progress = None
         self.log = []           # [{kind, title, msg, snapshot, perception}]
         self._cancel_lock = threading.Lock()
         self._active_step_cancel = None
@@ -581,14 +582,44 @@ class InteractiveSession:
         cancel_sent = bool(getattr(self.perceiver, "cancel_active", lambda: False)())
         return {"requested": True, "model_cancel_sent": cancel_sent}
 
-    def _add_one(self, m, force=False):
+    def _set_step_progress(self, **updates):
+        current = dict(self.step_progress or {})
+        completed = list(current.get("completed") or [])
+        if "completed_item" in updates:
+            item = updates.pop("completed_item")
+            if item:
+                completed.append(item)
+                completed = completed[-4:]
+        current.update(updates)
+        current["completed"] = completed
+        current["updated_at"] = time.time()
+        self.step_progress = current
+
+    @staticmethod
+    def _progress_text(m, info):
+        fields = info.get("qwen") or {}
+        scene = fields.get("scene") or ""
+        action = fields.get("user_action") or ""
+        people = fields.get("people") or []
+        if isinstance(people, list):
+            people = ", ".join(str(x) for x in people[:5])
+        text = " · ".join(x for x in (scene, action) if x)
+        if people:
+            text += f" · People: {people}"
+        return {"id": m.get("id", ""), "text": text or info.get("error") or "处理完成"}
+
+    def _add_one(self, m, force=False, progress=None):
         """用 Qwen 的感知产出写入一条记忆，返回 (moment_id, info)。"""
         dataset_id = m.get("id", "")
+        def update(stage, message, output=None):
+            if progress:
+                self._set_step_progress(**progress, stage=stage, message=message,
+                                        output=output)
         existing_mid = self.id_map.get(dataset_id)
         if existing_mid:
             cached = self.perceiver.cache.get(dataset_id) or {}
             fields = self._qwen_fields.get(dataset_id) or cached.get("fields") or {}
-            return existing_mid, {
+            info = {
                 "dataset_id": dataset_id,
                 "moment_id": existing_mid,
                 "qwen": fields,
@@ -598,13 +629,27 @@ class InteractiveSession:
                 "source": "cache",
                 "eval": golden_eval(fields, m.get("ground_truth", {})),
             }
+            update("cached_memory", "这条记忆已在当前会话中，复用现有记录",
+                   self._progress_text(m, info))
+            self._set_step_progress(completed_item=self._progress_text(m, info))
+            return existing_mid, info
         cancel_event = self._active_step_cancel
-        r = self.perceiver.perceive(m, force=force, cancel_event=cancel_event)
+        update("prepare", "正在准备视频片段与记忆写入")
+        def on_perception(event):
+            update(event.get("stage", "model_inference"),
+                   event.get("message", "正在处理当前片段"))
+        r = self.perceiver.perceive(m, force=force, cancel_event=cancel_event,
+                                    progress_callback=on_perception)
         if not r.get("fields"):
-            return None, {"error": r.get("error", "感知失败"),
+            info = {"error": r.get("error", "感知失败"),
                           "source": r.get("source", "error"),
                           "cancelled": bool(r.get("cancelled"))}
+            update("cancelled" if info.get("cancelled") else "error",
+                   info.get("error") or "感知失败", self._progress_text(m, info))
+            self._set_step_progress(completed_item=self._progress_text(m, info))
+            return None, info
         f = r["fields"]
+        update("write_memory", "感知结果已生成，正在写入记忆", self._progress_text(m, {"qwen": f}))
         multimodal = None
         media_error = None
         video_path = video_path_of(m)
@@ -663,6 +708,8 @@ class InteractiveSession:
             "multimodal": multimodal,
             "media_error": media_error,
         }
+        update("done", "当前片段已写入记忆", self._progress_text(m, info))
+        self._set_step_progress(completed_item=self._progress_text(m, info))
         return mid, info
 
     # ------------------------------------------------------------------
@@ -798,7 +845,9 @@ class InteractiveSession:
         # 1) add：每条视频片段一步（Qwen 感知 → 记忆）
         for i, m in enumerate(moments, 1):
             def run(m=m, i=i, force=False):
-                mid, info = self._add_one(m, force=force)
+                context = {"item_index": 1, "item_total": 1,
+                           "label": f"写入记忆 · {i}/{len(moments)}"}
+                mid, info = self._add_one(m, force=force, progress=context)
                 if mid is None:
                     msg = ("实时推理已停止" if info.get("cancelled") else "感知失败")
                     return f"{msg}：{info.get('error')}", {"kind": "single", **info}
@@ -1045,8 +1094,12 @@ class InteractiveSession:
             def run(group=group, h=h, force=False):
                 items, ok = [], 0
                 cancelled = False
-                for m in group:
-                    mid, info = self._add_one(m, force=force)
+                for item_index, m in enumerate(group, 1):
+                    context = {"item_index": item_index, "item_total": len(group),
+                               "label": f"{h}:00 时段 · 逐条写入"}
+                    self._set_step_progress(**context, stage="item_start",
+                                            message=f"正在处理第 {item_index}/{len(group)} 条：{m.get('id', '')}")
+                    mid, info = self._add_one(m, force=force, progress=context)
                     if mid:
                         ok += 1
                     items.append(info)
@@ -1247,11 +1300,21 @@ class InteractiveSession:
                 self._pending_cancel = False
         self._active_step_no = self.pos + 1
         self._active_step_title = step["title"]
+        step_item_total = len(step.get("inputs") or []) if step["kind"] == "add_batch" else 1
+        self._set_step_progress(
+            running=True, stage="starting", label=step["title"],
+            step_index=self.pos + 1, step_total=len(self.steps),
+            item_index=0, item_total=step_item_total, message="正在启动当前步骤",
+            output=None, completed=[],
+        )
         try:
             if step["kind"] == "nightly":
                 msg, perception = step["run"](force=force, use_cache=use_cache)
             else:
                 msg, perception = step["run"](force=force)
+        except Exception as exc:
+            self._set_step_progress(running=False, stage="error", message=str(exc)[:300])
+            raise
         finally:
             self._active_step_no = None
             self._active_step_title = None
@@ -1259,6 +1322,9 @@ class InteractiveSession:
                 if self._active_step_cancel is cancel_event:
                     self._active_step_cancel = None
                     self._active_step_force = False
+        self._set_step_progress(running=False,
+                                stage="cancelled" if cancel_event.is_set() else "done",
+                                message=msg, output=None)
         if cancel_event.is_set():
             self.step_cancelled = True
             if isinstance(perception, dict):
@@ -1331,6 +1397,7 @@ class InteractiveSession:
             "auto_paused": self.auto_paused,
             "step_cancelled": self.step_cancelled,
             "nightly_progress": dict(self.nightly_progress) if self.nightly_progress else None,
+            "step_progress": dict(self.step_progress) if self.step_progress else None,
             "log": slim,
             "operations": [dict(event) for event in self.operation_log[-2000:]],
             "snapshot": self.log[-1]["snapshot"] if self.log else None,
