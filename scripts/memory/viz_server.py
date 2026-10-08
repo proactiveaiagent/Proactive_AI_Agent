@@ -346,6 +346,12 @@ class Handler(BaseHTTPRequestHandler):
                 "temporal_long": temporal_long,
             })
 
+        if url.path == "/api/decision-benchmark":
+            benchmark = load_json(ROOT / "data/egolife/testset/multimodal_decision_benchmark_v1.json")
+            if benchmark is None:
+                return self._send(503, {"error": "decision benchmark is not ready"})
+            return self._send(200, benchmark)
+
         if url.path == "/api/semantic-scenario-review":
             report_path = RUNS / "multimodal_decision_review_v50_20261007" / "scenario_review.json"
             if not report_path.exists():

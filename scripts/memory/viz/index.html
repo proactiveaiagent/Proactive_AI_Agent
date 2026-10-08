@@ -674,6 +674,8 @@ body{height:100vh;height:100dvh;min-height:0;display:flex;flex-direction:column}
         <button class="btn" onclick="setReasonExample('眼前有人突然晕倒。结合已存的相关健康信息，应该采取什么行动？')">有人晕倒</button>
         <button class="btn" onclick="setReasonExample('用户刚从中国到美国，在餐厅用餐后忘记付小费。是否需要提醒？')">跨国付小费</button>
       </div>
+      <div class="note" style="margin:12px 0 6px"><b>固定评测案例 v1</b> · 预先定义判断边界；不是官方行动答案</div>
+      <div id="decisionBenchmark" class="reason-result" aria-live="polite">正在读取固定评测案例…</div>
       <div class="note" style="margin:12px 0 6px"><b>真实记忆场景审阅</b> · 时序画面、语音与仅文本对照 · 定性复核，不计入准确率</div>
       <div id="semanticScenarioReview" class="reason-result" aria-live="polite">正在读取场景审阅结果…</div>
       <div class="reason-controls"><textarea id="reasonSituation" aria-label="当前事件" placeholder="描述当下事件、人物和地点"></textarea><button class="btn primary" id="reasonRunBtn" onclick="runMemoryReason(false)">关联检索并推理</button></div>
@@ -2919,6 +2921,18 @@ async function runMemoryReason(proactive=false){
     if(cancelButton){cancelButton.style.display='none';cancelButton.disabled=false;cancelButton.textContent='⏹ 停止建议';}
   }
 }
+
+fetch(API+'/api/decision-benchmark',{cache:'no-store'})
+  .then(response=>{if(!response.ok)throw new Error('评测案例尚未就绪');return response.json();})
+  .then(data=>{
+    const host=document.getElementById('decisionBenchmark');
+    const coverage=data.coverage||{}, cases=data.cases||[];
+    const participants=(coverage.participants||[]).join('、')||'未标注';
+    const gaps=(coverage.known_gaps||[]).join('、')||'无';
+    const rows=cases.map(item=>'<details><summary><b>'+esc(item.title||item.case_id)+'</b> · '+esc(item.dimension||'')+' · '+esc(item.participant||'')+' / '+esc(item.day||'')+'</summary><div class="note">来源片段：<code>'+esc(item.source_id||'')+'</code> · 画面 '+Number((item.media_available||{}).visual_frames||0)+' 帧 · 音频 '+Number((item.media_available||{}).audio_clips||0)+' 段</div><p><b>预期边界：</b>'+esc(item.curator_expectation||'')+'</p><p><b>来源摘录：</b>'+esc(item.evidence_excerpt||'')+'</p><p class="note"><b>判读规则：</b>'+esc(item.review_rule||'')+'</p></details>').join('');
+    host.innerHTML='<div class="note"><b>'+cases.length+' 个固定案例</b> · 覆盖 '+esc(participants)+' · '+esc((coverage.days||[]).join('、'))+'。每条配对完整多模态与纯文本条件。</div><div class="note">评分检查来源依据、说话人归属、时间状态、建议是否合适、模态证据和安全边界。行动边界由项目审阅者整理，不是 EgoLife 官方行动答案；当前不能据此声称建议准确率。尚缺：'+esc(gaps)+'。</div>'+rows;
+  })
+  .catch(error=>{const host=document.getElementById('decisionBenchmark');if(host)host.textContent='固定评测案例暂不可用：'+error.message;});
 
 fetch(API+'/api/semantic-scenario-review',{cache:'no-store'})
   .then(response=>{if(!response.ok)throw new Error('审阅尚未完成');return response.json();})
