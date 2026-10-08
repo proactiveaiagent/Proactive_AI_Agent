@@ -79,7 +79,15 @@ def main():
     parser.add_argument("--source", default="data/egolife/runs/multimodal_aligned_v8_20261007/memory.json")
     parser.add_argument("--output-dir", default="data/egolife/runs/multimodal_decision_review_v40_20261007")
     parser.add_argument("--version", default="v40")
+    parser.add_argument("--benchmark-manifest", default=None)
     args = parser.parse_args()
+    cases = CASES
+    benchmark_manifest = None
+    if args.benchmark_manifest:
+        benchmark_manifest = json.loads((ROOT / args.benchmark_manifest).read_text(encoding="utf-8"))
+        cases = [(item["case_id"], item["title"], item["source_id"],
+                  item["curator_expectation"] + " 判读规则：" + item["review_rule"])
+                 for item in benchmark_manifest["cases"]]
     source = ROOT / args.source
     output = ROOT / args.output_dir
     output.mkdir(parents=True, exist_ok=True)
@@ -99,9 +107,13 @@ def main():
         "source_memory_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
         "scenarios": {},
     }
+    if benchmark_manifest:
+        report["benchmark_manifest"] = args.benchmark_manifest
+        report["benchmark_label_status"] = benchmark_manifest.get("label_status")
+        report["benchmark_scoring_protocol"] = benchmark_manifest.get("scoring_protocol")
     if report.get("implementation_sha256") != implementation:
         raise ValueError("Evaluation code changed; use a fresh output directory instead of mixing results")
-    for case_id, title, source_id, target in CASES:
+    for case_id, title, source_id, target in cases:
         active = source_by_id[source_id]
         camera = "_".join(source_id.split("_")[1:3])
         # Same camera/user and past events only; no future text, indices or summaries.
@@ -145,7 +157,7 @@ def main():
                     "retrieval_rounds", "candidates", "search_plan", "elapsed_ms", "evidence_review")})
                 item["perception_before_retrieval"] = answer.get("perception_before_retrieval") or {}
             report["completed_conditions"] = sum(len(row["ablations"]) for row in report["scenarios"].values())
-            report["planned_conditions"] = len(CASES) * 2
+            report["planned_conditions"] = len(cases) * 2
             save(path, report)
             print(json.dumps({"case": case_id, "mode": mode,
                               "integrity": answer["integrity_review"],
