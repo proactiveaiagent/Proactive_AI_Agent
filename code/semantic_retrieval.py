@@ -214,7 +214,7 @@ class PersistentSemanticIndex:
 _ENCODER = None
 _ENCODER_LOADING = False
 _WORKER_STARTED = False
-_PENDING: dict[str, tuple[dict, int | None]] = {}
+_PENDING: dict[str, tuple[dict | None, int | None]] = {}
 _WORKER_LOCK = threading.Lock()
 
 
@@ -235,6 +235,18 @@ def _background_sync_loop():
             if _ENCODER is None:
                 _ENCODER_LOADING = True
         try:
+            if moments is None:
+                # PersonMemory has already atomically persisted this generation.
+                # Read the latest complete snapshot off-thread, avoiding a full
+                # deepcopy of hundreds or thousands of moments on the CRUD path.
+                memory_path = Path(memory_dir) / "memory.json"
+                if memory_path.exists():
+                    with memory_path.open("r", encoding="utf-8") as handle:
+                        persisted = json.load(handle)
+                    moments = persisted.get("layer7", {}).get("moments", {})
+                    revision = persisted.get("metadata", {}).get("semantic_index_revision", revision)
+                else:
+                    moments = {}
             if _ENCODER is None:
                 _ENCODER = GTEEncoder()
             PersistentSemanticIndex(memory_dir).sync(moments, _ENCODER, revision=revision)
@@ -245,14 +257,17 @@ def _background_sync_loop():
             _ENCODER_LOADING = False
 
 
-def schedule_sync(memory_dir: str | Path, moments: dict,
+def schedule_sync(memory_dir: str | Path, moments: dict | None = None,
                   revision: int | None = None) -> None:
-    """Queue an immutable memory snapshot; model loading runs off request thread."""
+    """Queue a snapshot, or read PersonMemory's atomic file in the background."""
     global _WORKER_STARTED
     if os.environ.get("MEMORY_SEMANTIC_RRF", "0").lower() not in {"1", "true", "yes", "on"}:
         return
     key = str(Path(memory_dir).resolve())
-    snapshot = copy.deepcopy(moments)
+    # Explicit maintenance callers can still hand in a mutable dictionary, so
+    # freeze those snapshots. PersonMemory passes None after os.replace and lets
+    # the worker read the durable snapshot without request-thread deepcopy cost.
+    snapshot = copy.deepcopy(moments) if moments is not None else None
     with _WORKER_LOCK:
         _PENDING[key] = (snapshot, revision)
         if _WORKER_STARTED:

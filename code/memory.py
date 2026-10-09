@@ -1045,8 +1045,7 @@ class PersonMemory:
         if self._semantic_index_enabled:
             from semantic_retrieval import schedule_sync
             revision = self.memory.get("metadata", {}).get("semantic_index_revision", 0)
-            schedule_sync(self.memory_dir, self.memory.get("layer7", {}).get("moments", {}),
-                          revision=revision)
+            schedule_sync(self.memory_dir, revision=revision)
 
     # ------------------------------------------------------------------
     # Persistence
@@ -1091,8 +1090,7 @@ class PersonMemory:
         os.replace(tmp, self.memory_file)
         if getattr(self, "_semantic_index_enabled", False):
             from semantic_retrieval import schedule_sync
-            schedule_sync(self.memory_dir, self.memory.get("layer7", {}).get("moments", {}),
-                          revision=metadata["semantic_index_revision"])
+            schedule_sync(self.memory_dir, revision=metadata["semantic_index_revision"])
 
     def _migrate_from_v2(self, old: Dict) -> Dict:
         """Best-effort migration from memory2 format."""
