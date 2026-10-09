@@ -1,9 +1,8 @@
 """Persistent, incrementally synchronized text-semantic vector index.
 
-This module is a storage/retrieval prototype, not wired into PersonMemory.query.
-It indexes compact structured memory text derived from multimodal perception;
-raw pixels and audio are not embedded. Keep online use opt-in until the query
-encoder is warm and latency has been measured in the serving process.
+The index is optionally wired to PersonMemory CRUD and query via
+MEMORY_SEMANTIC_RRF=1. Raw pixels and audio are not embedded; online fusion
+remains opt-in until consistency, latency, and held-out retrieval are validated.
 """
 from __future__ import annotations
 
@@ -85,8 +84,8 @@ class GTEEncoder:
 class PersistentSemanticIndex:
     """SQLite sidecar keyed by source moment ID with hash-based incremental sync.
 
-    sync() is an explicit maintenance operation. Call it after mutations or as a
-    background job; do not place model loading/vectorization on a request path.
+    sync() serves explicit maintenance and the opt-in background worker. Do not
+    place model loading/vectorization on a request path.
     Each PersonMemory should receive its own memory_dir (and therefore index).
     """
     def __init__(self, memory_dir: str | Path):
