@@ -129,7 +129,8 @@ class PersistentSemanticIndex:
                 documents[str(mid)] = text
         return documents
 
-    def sync(self, moments: dict, encoder: GTEEncoder, batch_size: int = 32) -> dict:
+    def sync(self, moments: dict, encoder: GTEEncoder, batch_size: int = 32,
+             revision: int | None = None) -> dict:
         """Upsert changed/new active moments and remove deleted/stale/merged rows."""
         import numpy as np
         documents = self._active_documents(moments)
@@ -155,6 +156,9 @@ class PersistentSemanticIndex:
                        (encoder.model_id,))
             db.execute("INSERT OR REPLACE INTO index_meta(key,value) VALUES('corpus_digest',?)",
                        (corpus_digest,))
+            if revision is not None:
+                db.execute("INSERT OR REPLACE INTO index_meta(key,value) VALUES('memory_revision',?)",
+                           (str(revision),))
         return {"active": len(documents), "added_or_updated": len(changed),
                 "removed": len(obsolete), "unchanged": len(documents) - len(changed),
                 "model_id": encoder.model_id, "bytes": self.path.stat().st_size}
@@ -180,16 +184,21 @@ class PersistentSemanticIndex:
         scored.sort(key=lambda row: (-row["score"], row["moment_id"]))
         return scored[:top_k]
 
-    def ready(self, moments: dict, encoder: GTEEncoder) -> bool:
-        """True only when this model's index exactly matches the active memory text."""
+    def ready(self, moments: dict, encoder: GTEEncoder,
+              revision: int | None = None) -> bool:
+        """Check freshness by revision in queries; retain digest validation for maintenance callers."""
+        with self._connect() as db:
+            meta = dict(db.execute("SELECT key,value FROM index_meta"))
+        if meta.get("model_id") != encoder.model_id:
+            return False
+        if revision is not None:
+            return meta.get("memory_revision") == str(revision)
         documents = self._active_documents(moments)
         digest = hashlib.sha256(json.dumps(
             sorted((mid, text_digest(text)) for mid, text in documents.items()),
             ensure_ascii=False, separators=(",", ":")
         ).encode("utf-8")).hexdigest()
-        with self._connect() as db:
-            meta = dict(db.execute("SELECT key,value FROM index_meta"))
-        return meta.get("model_id") == encoder.model_id and meta.get("corpus_digest") == digest
+        return meta.get("corpus_digest") == digest
 
     def stats(self) -> dict:
         with self._connect() as db:
@@ -205,7 +214,7 @@ class PersistentSemanticIndex:
 _ENCODER = None
 _ENCODER_LOADING = False
 _WORKER_STARTED = False
-_PENDING: dict[str, dict] = {}
+_PENDING: dict[str, tuple[dict, int | None]] = {}
 _WORKER_LOCK = threading.Lock()
 
 
@@ -222,13 +231,13 @@ def _background_sync_loop():
                 _WORKER_STARTED = False
                 return
             memory_dir = sorted(_PENDING)[0]
-            moments = _PENDING.pop(memory_dir)
+            moments, revision = _PENDING.pop(memory_dir)
             if _ENCODER is None:
                 _ENCODER_LOADING = True
         try:
             if _ENCODER is None:
                 _ENCODER = GTEEncoder()
-            PersistentSemanticIndex(memory_dir).sync(moments, _ENCODER)
+            PersistentSemanticIndex(memory_dir).sync(moments, _ENCODER, revision=revision)
         except Exception as exc:
             # Keep the failure visible to service logs; query remains on BM25.
             print(f"[semantic-index] sync failed for {memory_dir}: {exc}", flush=True)
@@ -236,7 +245,8 @@ def _background_sync_loop():
             _ENCODER_LOADING = False
 
 
-def schedule_sync(memory_dir: str | Path, moments: dict) -> None:
+def schedule_sync(memory_dir: str | Path, moments: dict,
+                  revision: int | None = None) -> None:
     """Queue an immutable memory snapshot; model loading runs off request thread."""
     global _WORKER_STARTED
     if os.environ.get("MEMORY_SEMANTIC_RRF", "0").lower() not in {"1", "true", "yes", "on"}:
@@ -244,7 +254,7 @@ def schedule_sync(memory_dir: str | Path, moments: dict) -> None:
     key = str(Path(memory_dir).resolve())
     snapshot = copy.deepcopy(moments)
     with _WORKER_LOCK:
-        _PENDING[key] = snapshot
+        _PENDING[key] = (snapshot, revision)
         if _WORKER_STARTED:
             return
         _WORKER_STARTED = True

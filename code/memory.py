@@ -1035,13 +1035,18 @@ class PersonMemory:
         self.memory_dir.mkdir(exist_ok=True)
         self.memory_file = self.memory_dir / "memory.json"
         self.memory: Dict = self._load()
+        # A monotonic generation lets query check index freshness without
+        # re-hashing the full archive on every retrieval.
+        self.memory.setdefault("metadata", {}).setdefault("semantic_index_revision", 0)
         # 非英文 → 英文翻译函数（统一英文分词策略，见设计说明书 §6.2）。
         # 可注入；None 时跳过翻译（非英文文本无法分词，检索走原文兜底降级）。
         self.translate_fn = translate_fn
         self._semantic_index_enabled = os.environ.get("MEMORY_SEMANTIC_RRF", "0").lower() in {"1", "true", "yes", "on"}
         if self._semantic_index_enabled:
             from semantic_retrieval import schedule_sync
-            schedule_sync(self.memory_dir, self.memory.get("layer7", {}).get("moments", {}))
+            revision = self.memory.get("metadata", {}).get("semantic_index_revision", 0)
+            schedule_sync(self.memory_dir, self.memory.get("layer7", {}).get("moments", {}),
+                          revision=revision)
 
     # ------------------------------------------------------------------
     # Persistence
@@ -1070,6 +1075,12 @@ class PersonMemory:
         return removed
 
     def _save(self):
+        metadata = self.memory.setdefault("metadata", {})
+        try:
+            current_revision = int(metadata.get("semantic_index_revision", 0))
+        except (TypeError, ValueError):
+            current_revision = 0
+        metadata["semantic_index_revision"] = current_revision + 1
         # 原子落盘：先写临时文件再 rename，防止并发写坏 / 写一半崩溃（04 文档 2.5 步骤⑥）。
         tmp = self.memory_file.with_suffix(".json.tmp")
         with open(tmp, "w", encoding="utf-8") as f:
@@ -1080,7 +1091,8 @@ class PersonMemory:
         os.replace(tmp, self.memory_file)
         if getattr(self, "_semantic_index_enabled", False):
             from semantic_retrieval import schedule_sync
-            schedule_sync(self.memory_dir, self.memory.get("layer7", {}).get("moments", {}))
+            schedule_sync(self.memory_dir, self.memory.get("layer7", {}).get("moments", {}),
+                          revision=metadata["semantic_index_revision"])
 
     def _migrate_from_v2(self, old: Dict) -> Dict:
         """Best-effort migration from memory2 format."""
@@ -1441,7 +1453,8 @@ class PersonMemory:
                 if encoder is not None:
                     archive = self.memory.get("layer7", {}).get("moments", {})
                     index = PersistentSemanticIndex(self.memory_dir)
-                    if index.ready(archive, encoder):
+                    revision = self.memory.get("metadata", {}).get("semantic_index_revision", 0)
+                    if index.ready(archive, encoder, revision=revision):
                         depth = min(len(documents), max(50, top_k * 10))
                         semantic = index.search(query_text, encoder, top_k=depth)
                         lexical_ids = [str(moment.get("id") or "") for _, moment in lexical[:depth]]
