@@ -1038,6 +1038,10 @@ class PersonMemory:
         # 非英文 → 英文翻译函数（统一英文分词策略，见设计说明书 §6.2）。
         # 可注入；None 时跳过翻译（非英文文本无法分词，检索走原文兜底降级）。
         self.translate_fn = translate_fn
+        self._semantic_index_enabled = os.environ.get("MEMORY_SEMANTIC_RRF", "0").lower() in {"1", "true", "yes", "on"}
+        if self._semantic_index_enabled:
+            from semantic_retrieval import schedule_sync
+            schedule_sync(self.memory_dir, self.memory.get("layer7", {}).get("moments", {}))
 
     # ------------------------------------------------------------------
     # Persistence
@@ -1074,6 +1078,9 @@ class PersonMemory:
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp, self.memory_file)
+        if getattr(self, "_semantic_index_enabled", False):
+            from semantic_retrieval import schedule_sync
+            schedule_sync(self.memory_dir, self.memory.get("layer7", {}).get("moments", {}))
 
     def _migrate_from_v2(self, old: Dict) -> Dict:
         """Best-effort migration from memory2 format."""
@@ -1426,9 +1433,37 @@ class PersonMemory:
             for moment in self.memory["layer7"]["moments"].values()
             if not moment.get("merged_into")
         ]
+        lexical = _rank_memory_docs(query_text, documents)
+        if self._semantic_index_enabled:
+            try:
+                from semantic_retrieval import PersistentSemanticIndex, loaded_encoder
+                encoder = loaded_encoder()
+                if encoder is not None:
+                    archive = self.memory.get("layer7", {}).get("moments", {})
+                    index = PersistentSemanticIndex(self.memory_dir)
+                    if index.ready(archive, encoder):
+                        depth = min(len(documents), max(50, top_k * 10))
+                        semantic = index.search(query_text, encoder, top_k=depth)
+                        lexical_ids = [str(moment.get("id") or "") for _, moment in lexical[:depth]]
+                        fused = {}
+                        for ranked_ids in (lexical_ids, [row["moment_id"] for row in semantic]):
+                            for rank, moment_id in enumerate(ranked_ids, 1):
+                                if moment_id:
+                                    fused[moment_id] = fused.get(moment_id, 0.0) + 1.0 / (60 + rank)
+                        by_id = {str(moment.get("id") or ""): moment for moment in documents}
+                        ordered = sorted(fused, key=lambda mid: (-fused[mid], mid))
+                        return [
+                            {"score": round(fused[mid], 6), "moment": by_id[mid],
+                             "retrieval_method": "bm25_gte_rrf"}
+                            for mid in ordered[:top_k] if mid in by_id
+                        ]
+            except Exception as exc:
+                # A stale/missing/corrupt sidecar must not block ordinary retrieval.
+                print(f"[semantic-index] query fallback to BM25: {exc}", flush=True)
         return [
-            {"score": round(score, 6), "moment": moment}
-            for score, moment in _rank_memory_docs(query_text, documents)[:top_k]
+            {"score": round(score, 6), "moment": moment,
+             "retrieval_method": "bm25"}
+            for score, moment in lexical[:top_k]
         ]
 
     def _retrieval_group_moment(self, moment: Dict) -> Dict:

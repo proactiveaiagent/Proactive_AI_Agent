@@ -7,13 +7,14 @@ encoder is warm and latency has been measured in the serving process.
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
 import sqlite3
+import threading
 import time
 from pathlib import Path
-from typing import Iterable
 
 MODEL_ID = "thenlper/gte-base"
 SCHEMA_VERSION = "1"
@@ -109,12 +110,25 @@ class PersistentSemanticIndex:
 
     @staticmethod
     def _active_documents(moments: dict) -> dict[str, str]:
-        return {
-            str(mid): memory_text(moment)
-            for mid, moment in moments.items()
-            if isinstance(moment, dict) and not moment.get("stale")
-            and not moment.get("merged_into") and memory_text(moment)
-        }
+        documents = {}
+        for mid, moment in moments.items():
+            if not isinstance(moment, dict) or moment.get("stale") or moment.get("merged_into"):
+                continue
+            text = memory_text(moment)
+            source_texts = []
+            for source_id in moment.get("merged_sources", []):
+                source = moments.get(source_id)
+                if (not isinstance(source, dict) or source.get("merged_into") != moment.get("id")
+                        or source.get("stale")):
+                    continue
+                source_text = memory_text(source)
+                if source_text:
+                    source_texts.append(source_text)
+            if source_texts:
+                text += "\nMerged source records:\n" + "\n\n".join(source_texts)
+            if text:
+                documents[str(mid)] = text
+        return documents
 
     def sync(self, moments: dict, encoder: GTEEncoder, batch_size: int = 32) -> dict:
         """Upsert changed/new active moments and remove deleted/stale/merged rows."""
@@ -135,6 +149,13 @@ class PersistentSemanticIndex:
                            (mid, digests[mid], encoder.model_id, len(vector), packed, time.time()))
             # A model change invalidates rows from all earlier encoders.
             db.execute("DELETE FROM vectors WHERE model_id<>?", (encoder.model_id,))
+            corpus_digest = hashlib.sha256(json.dumps(
+                sorted(digests.items()), ensure_ascii=False, separators=(",", ":")
+            ).encode("utf-8")).hexdigest()
+            db.execute("INSERT OR REPLACE INTO index_meta(key,value) VALUES('model_id',?)",
+                       (encoder.model_id,))
+            db.execute("INSERT OR REPLACE INTO index_meta(key,value) VALUES('corpus_digest',?)",
+                       (corpus_digest,))
         return {"active": len(documents), "added_or_updated": len(changed),
                 "removed": len(obsolete), "unchanged": len(documents) - len(changed),
                 "model_id": encoder.model_id, "bytes": self.path.stat().st_size}
@@ -146,9 +167,10 @@ class PersistentSemanticIndex:
         if top_k <= 0 or not query.strip():
             return []
         query_vector = np.asarray(encoder.encode([query])[0], dtype=np.float32)
-        rows = self._connect().execute(
-            "SELECT moment_id,dimension,vector FROM vectors WHERE model_id=?",
-            (encoder.model_id,)).fetchall()
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT moment_id,dimension,vector FROM vectors WHERE model_id=?",
+                (encoder.model_id,)).fetchall()
         scored = []
         for mid, dimension, blob in rows:
             if allowed_ids is not None and mid not in allowed_ids:
@@ -159,9 +181,74 @@ class PersistentSemanticIndex:
         scored.sort(key=lambda row: (-row["score"], row["moment_id"]))
         return scored[:top_k]
 
+    def ready(self, moments: dict, encoder: GTEEncoder) -> bool:
+        """True only when this model's index exactly matches the active memory text."""
+        documents = self._active_documents(moments)
+        digest = hashlib.sha256(json.dumps(
+            sorted((mid, text_digest(text)) for mid, text in documents.items()),
+            ensure_ascii=False, separators=(",", ":")
+        ).encode("utf-8")).hexdigest()
+        with self._connect() as db:
+            meta = dict(db.execute("SELECT key,value FROM index_meta"))
+        return meta.get("model_id") == encoder.model_id and meta.get("corpus_digest") == digest
+
     def stats(self) -> dict:
         with self._connect() as db:
             count = db.execute("SELECT count(*) FROM vectors").fetchone()[0]
             models = [row[0] for row in db.execute("SELECT DISTINCT model_id FROM vectors")]
         return {"path": str(self.path), "vectors": count, "models": models,
                 "bytes": self.path.stat().st_size if self.path.exists() else 0}
+
+
+# One lazy, process-wide encoder and one coalescing background worker. The worker
+# keeps only the newest pending snapshot per memory directory so rapid CRUD writes
+# do not create a queue of obsolete full-corpus rebuilds.
+_ENCODER = None
+_ENCODER_LOADING = False
+_WORKER_STARTED = False
+_PENDING: dict[str, dict] = {}
+_WORKER_LOCK = threading.Lock()
+
+
+def loaded_encoder():
+    """Return the warm encoder without waiting for model initialization."""
+    return _ENCODER
+
+
+def _background_sync_loop():
+    global _ENCODER, _ENCODER_LOADING, _WORKER_STARTED
+    while True:
+        with _WORKER_LOCK:
+            if not _PENDING:
+                _WORKER_STARTED = False
+                return
+            memory_dir = sorted(_PENDING)[0]
+            moments = _PENDING.pop(memory_dir)
+            if _ENCODER is None:
+                _ENCODER_LOADING = True
+        try:
+            if _ENCODER is None:
+                _ENCODER = GTEEncoder()
+            PersistentSemanticIndex(memory_dir).sync(moments, _ENCODER)
+        except Exception as exc:
+            # Keep the failure visible to service logs; query remains on BM25.
+            print(f"[semantic-index] sync failed for {memory_dir}: {exc}", flush=True)
+        finally:
+            _ENCODER_LOADING = False
+
+
+def schedule_sync(memory_dir: str | Path, moments: dict) -> None:
+    """Queue an immutable memory snapshot; model loading runs off request thread."""
+    global _WORKER_STARTED
+    if os.environ.get("MEMORY_SEMANTIC_RRF", "0").lower() not in {"1", "true", "yes", "on"}:
+        return
+    key = str(Path(memory_dir).resolve())
+    snapshot = copy.deepcopy(moments)
+    with _WORKER_LOCK:
+        _PENDING[key] = snapshot
+        if _WORKER_STARTED:
+            return
+        _WORKER_STARTED = True
+    worker = threading.Thread(target=_background_sync_loop,
+                              name="memory-semantic-index", daemon=True)
+    worker.start()
