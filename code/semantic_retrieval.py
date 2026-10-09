@@ -98,7 +98,7 @@ class PersistentSemanticIndex:
                        "model_id TEXT NOT NULL, dimension INTEGER NOT NULL, "
                        "vector BLOB NOT NULL, updated_at REAL NOT NULL)")
             db.execute("CREATE TABLE IF NOT EXISTS index_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
-            db.execute("INSERT OR REPLACE INTO index_meta(key,value) VALUES( schema_version,?)",
+            db.execute("INSERT OR REPLACE INTO index_meta(key,value) VALUES('schema_version',?)",
                        (SCHEMA_VERSION,))
 
     def _connect(self):
