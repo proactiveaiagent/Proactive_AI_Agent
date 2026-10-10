@@ -552,6 +552,17 @@ cd code && python agent.py
 证据路径：data/egolife/runs/multimodal_full_day_v8_20261007/capacity_report.json、data/egolife/runs/multimodal_decision_review_v40_20261007/retrieval_latency_report.json、data/egolife/runs/gte_semantic_retrieval_v2_20261008.json、data/egolife/runs/multimodal_decision_benchmark_v3_20261008/scenario_review.json、data/egolife/runs/ai_blind_review/ai_judge_review_report_20260927.json。
 
 
+
+
+### 2026-10-10 L7 物品与画面关联
+
+- [x] 补上“对象名 → 抽样画面 → 外观描述”的记忆字段：复用每条事件已保存的最多三张关键帧，只保存帧资产引用、时间点、视觉描述、模型与核验状态，不重复存图片。
+- [x] 交互写入时用 Qwen3-VL 只看关键帧，对最多五个已归类物品逐件核对；仅将看得清的具体帧挂到物品上。停止推理时，该片段不会写入半成品关联。
+- [x] L7 物品 Top 索引可点击查看对应归档样本、外观描述和小图；历史未标注记录明确显示“未做逐物品标注”，不把事件背景帧冒充成物品证据。
+- [x] L7 记忆快照补回物品、环境和多模态字段，物品索引展示所需样本按 Top 键有限携带，避免把整库图片复制到前端。
+- [x] 已用真实 11:00 时段写入样本核对模型结果：12 条记录返回 44 项对象标签，其中 18 项绑定了可见画面并生成外观描述，26 项因抽样帧不清晰标为未核实；旧记忆尚未批量回填。
+- [ ] 将本节的字段、采样边界、核验方式与未核实状态同步到飞书报告。
+
 ### 2026-10-10 当前步骤进度流修复
 
 - [x] 修复执行中进度看不到的问题：前端此前用本机 epoch 时间戳筛选 SSE，实测笔记本时钟比服务器快 67 秒，服务器发出的过程事件全被过滤。现改为每次运行生成唯一 progress ID，步骤请求与 SSE 订阅按 ID 关联，不再依赖两端时钟。

@@ -675,6 +675,52 @@ class InteractiveSession:
                                   list(self.mem.memory["layer7"]["moments"].values())[-100:]],
                     source_provenance=source_provenance,
                 )
+                object_labels = f.get("objects") or []
+                visual_refs = multimodal.get("visual_frames") or ([multimodal.get("visual")] if multimodal.get("visual") else [])
+                if object_labels and visual_refs:
+                    update("object_visual_grounding", "正在将物品与关键帧逐一核对")
+                    frame_inputs = []
+                    for ref in visual_refs[:3]:
+                        asset_path = Path(self.mem.memory_dir) / str(ref.get("asset") or "")
+                        if ref.get("asset") and asset_path.is_file():
+                            frame_inputs.append({
+                                **ref,
+                                "mime": ref.get("mime") or "image/webp",
+                                "bytes": asset_path.read_bytes(),
+                            })
+                    try:
+                        grounding = self.perceiver.ground_objects(
+                            object_labels, frame_inputs, cancel_event=cancel_event,
+                            progress_callback=lambda event: update(
+                                event.get("stage", "object_visual_grounding"),
+                                event.get("message", "正在核对物品画面"),
+                                self._progress_text(m, {"qwen": f}),
+                            ),
+                        )
+                    except Exception as exc:
+                        grounding = {
+                            "schema": 1, "status": "unavailable", "model": "Qwen3-VL",
+                            "message": str(exc)[:240],
+                            "items": [{"object": str(label), "status": "not_verified",
+                                       "appearance": "", "frame_refs": []}
+                                      for label in object_labels[:5]],
+                        }
+                    for item in grounding.get("items") or []:
+                        frame_refs = []
+                        for frame_index in item.pop("frame_indices", []):
+                            if 1 <= frame_index <= len(frame_inputs):
+                                ref = frame_inputs[frame_index - 1]
+                                frame_refs.append({
+                                    "asset": ref.get("asset"), "at_s": ref.get("at_s"),
+                                    "source_id": ref.get("source_id") or dataset_id,
+                                })
+                        item["frame_refs"] = frame_refs
+                    multimodal["object_visuals"] = grounding
+                    if cancel_event is not None and cancel_event.is_set():
+                        return None, {
+                            "error": "物品画面核对已停止，当前片段未写入记忆",
+                            "source": "cancelled", "cancelled": True,
+                        }
             except Exception as exc:
                 # A media extraction failure must not prevent text memory CRUD.
                 media_error = str(exc)
@@ -1218,6 +1264,9 @@ class InteractiveSession:
                  "location": x.get("location", ""),
                  "activity": x.get("activity", ""),
                  "people": x.get("people", []),
+                 "objects": x.get("objects", []),
+                 "environments": x.get("environments", []),
+                 "notes": x.get("notes", ""),
                  "highlight": x.get("highlighted", False),
                  "timestamp": x.get("timestamp", "")}
             if with_stale:
@@ -1234,6 +1283,11 @@ class InteractiveSession:
                     ref = d["multimodal"].get(kind)
                     if isinstance(ref, dict) and ref.get("asset"):
                         ref["url"] = "/api/memory_asset?p=" + quote(ref["asset"])
+                object_visuals = d["multimodal"].get("object_visuals") or {}
+                for item in object_visuals.get("items") or []:
+                    for frame_ref in item.get("frame_refs") or []:
+                        if frame_ref.get("asset"):
+                            frame_ref["url"] = "/api/memory_asset?p=" + quote(frame_ref["asset"])
             source = x.get("source_provenance")
             if isinstance(source, dict):
                 d["source_provenance"] = copy.deepcopy(source)
@@ -1252,6 +1306,15 @@ class InteractiveSession:
 
         layer7_moments = list(l7.get("moments", {}).values())
         merged_count = sum(bool(item.get("merged_into")) for item in layer7_moments)
+        object_index_samples = {}
+        object_ranked = sorted(l7.get("objects", {}).items(),
+                               key=lambda item: (-len(item[1]), str(item[0])))[:8]
+        for tag, mids in object_ranked:
+            # One representative record per visible top key keeps snapshots compact.
+            mid = next((candidate for candidate in reversed(mids)
+                        if candidate in l7.get("moments", {})), None)
+            if mid:
+                object_index_samples[tag] = [fmt(l7["moments"][mid], True)]
         return {
             "layer1": [fmt(x) for x in m.get("layer1", [])[:30]],
             "layer2": [fmt(x) for x in m.get("layer2", [])[:30]],
@@ -1260,6 +1323,7 @@ class InteractiveSession:
             "layer5": m.get("layer5", {}),
             "layer6": m.get("layer6", {}),
             "layer7_moments": [fmt(x, True) for x in list(l7.get("moments", {}).values())[:80]],
+            "object_index_samples": object_index_samples,
             "layer7_total": len(l7.get("moments", {})),
             "layer7_active_total": len(layer7_moments) - merged_count,
             "layer7_merged_total": merged_count,

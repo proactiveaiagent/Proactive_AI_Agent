@@ -432,6 +432,124 @@ class QwenPerceiver:
         out["source"] = "qwen"
         return out
 
+    def ground_objects(self, objects, frames, cancel_event=None, progress_callback=None):
+        """Ground stored object labels in the retained keyframes without guessing."""
+        candidates = []
+        for value in objects or []:
+            label = str(value or "").strip()
+            if label and label.casefold() not in {x.casefold() for x in candidates}:
+                candidates.append(label[:100])
+            if len(candidates) >= 5:
+                break
+        if not candidates:
+            return {"schema": 1, "status": "not_needed", "model": "Qwen3-VL", "items": []}
+        if not frames:
+            return {
+                "schema": 1, "status": "no_frames", "model": "Qwen3-VL",
+                "items": [{"object": label, "status": "not_verified",
+                           "appearance": "", "frame_refs": []} for label in candidates],
+            }
+
+        def emit(stage, message):
+            if progress_callback:
+                try:
+                    progress_callback({"stage": stage, "message": message})
+                except Exception:
+                    pass
+
+        if cancel_event is not None and cancel_event.is_set():
+            return {"schema": 1, "status": "cancelled", "model": "Qwen3-VL", "items": []}
+        source_map = [
+            {"image": i + 1, "time_s": round(float(frame.get("at_s") or 0), 2)}
+            for i, frame in enumerate(frames)
+        ]
+        prompt = (
+            "Inspect only the attached image pixels. Do not use event context, filenames, transcripts, "
+            "or assumptions. For every candidate object below, return exactly one row in ONLY JSON: "
+            '{"objects":[{"object":"exact candidate label","visible":true,'
+            '"appearance":"brief visible color, shape, material, or position","frames":[1]}]}. '
+            "Use the exact candidate label. Set visible=false, appearance empty, frames=[] if no sampled "
+            "frame clearly shows that object. Include only frames where that specific object is actually "
+            "visible; never attach every frame to every object. Describe only properties supported by pixels; "
+            "do not guess brand, identity, purpose, or hidden details. At most two frame numbers per object. "
+            "Frame-to-time map: " + json.dumps(source_map, ensure_ascii=False) +
+            ". Candidate labels: " + json.dumps(candidates, ensure_ascii=False)
+        )
+        request_id = uuid.uuid4().hex
+        emit("object_visual_grounding", "正在逐件核对物品与关键帧")
+        with self._active_request_lock:
+            self._active_request_id = request_id
+        try:
+            response = requests.post(
+                self.api_url + "/analyze_video",
+                files=[("images", (f"object_frame_{i + 1}.webp",
+                                   frame["bytes"], frame.get("mime") or "image/webp"))
+                       for i, frame in enumerate(frames[:3])],
+                data={"prompt": prompt, "request_id": request_id},
+                timeout=240,
+            )
+            if cancel_event is not None and cancel_event.is_set():
+                return {"schema": 1, "status": "cancelled", "model": "Qwen3-VL", "items": []}
+            if response.status_code == 409:
+                return {"schema": 1, "status": "cancelled", "model": "Qwen3-VL", "items": []}
+            response.raise_for_status()
+            raw = str((response.json() or {}).get("analysis") or "").strip()
+            if _contains_cjk(raw):
+                raise ValueError("visual grounding response was not English")
+            payload = None
+            try:
+                payload = json.loads(raw)
+            except (TypeError, ValueError):
+                left, right = raw.find("{"), raw.rfind("}")
+                if left >= 0 and right > left:
+                    payload = json.loads(raw[left:right + 1])
+            if not isinstance(payload, dict):
+                raise ValueError("visual grounding response was not JSON")
+            rows = payload.get("objects")
+            rows = rows if isinstance(rows, list) else []
+            by_label = {label.casefold(): label for label in candidates}
+            parsed = {}
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                label = by_label.get(str(row.get("object") or "").strip().casefold())
+                if not label:
+                    continue
+                indices = []
+                for index in row.get("frames") or []:
+                    if isinstance(index, int) and not isinstance(index, bool) and 1 <= index <= min(3, len(frames)):
+                        if index not in indices:
+                            indices.append(index)
+                visible = row.get("visible") is True and bool(indices)
+                appearance = str(row.get("appearance") or "").strip()
+                if _contains_cjk(appearance):
+                    appearance = ""
+                if not visible:
+                    appearance = ""
+                    indices = []
+                parsed[label.casefold()] = {
+                    "object": label,
+                    "status": "grounded" if appearance else ("visible_unlabeled" if visible else "not_verified"),
+                    "appearance": appearance[:240],
+                    "frame_indices": indices[:2],
+                }
+            items = [parsed.get(label.casefold(), {
+                "object": label, "status": "not_verified", "appearance": "", "frame_indices": []
+            }) for label in candidates]
+            return {"schema": 1, "status": "completed", "model": "Qwen3-VL",
+                    "prompt_version": "object-visual-grounding-v1", "items": items}
+        except Exception as exc:
+            return {
+                "schema": 1, "status": "unavailable", "model": "Qwen3-VL",
+                "message": str(exc)[:240],
+                "items": [{"object": label, "status": "not_verified",
+                           "appearance": "", "frame_refs": []} for label in candidates],
+            }
+        finally:
+            with self._active_request_lock:
+                if self._active_request_id == request_id:
+                    self._active_request_id = None
+
     def prewarm(self, moments, force: bool = False):
         """批量预热缓存，返回 (成功数, 失败数)。"""
         ok = fail = 0
