@@ -2567,7 +2567,10 @@ function renderStepCard(){
   if(nightlyOption) nightlyOption.style.display=curStep&&curStep.kind==='nightly'?'inline-flex':'none';
   const sd=document.getElementById('stepDetail');
   const actions=document.getElementById('stepActions');
+  const suggestion=document.getElementById('autoSuggestion');
   if(actions&&actions.parentElement===sd) actions.remove();
+  // Keep the live suggestion node while replacing step markup, then place it below the player.
+  if(suggestion&&sd.contains(suggestion)) suggestion.remove();
   if(!curStep){
     sd.innerHTML='<div class="note">🎉 所有步骤执行完毕。点击「重开当前会话」重新开始。</div>';
     if(actions) sd.appendChild(actions);
@@ -2595,8 +2598,13 @@ function renderStepCard(){
   if(title&&videoActions) title.appendChild(videoActions);
   const player=sd.querySelector('.video-shell');
   if(actions){
-    if(player) player.after(actions);
-    else sd.appendChild(actions);
+    if(player){
+      player.after(actions);
+      if(suggestion) actions.after(suggestion);
+    }else{
+      sd.appendChild(actions);
+      if(suggestion) actions.after(suggestion);
+    }
   }
   bindClips();
 }
