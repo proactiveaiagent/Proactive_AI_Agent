@@ -550,3 +550,10 @@ cd code && python agent.py
 3. [ ] 完成复核后关闭本轮；原始图像/音频学习型 embedding、更多场景和大规模并发压测转入后续阶段，不作为本轮无限扩张项。
 
 证据路径：data/egolife/runs/multimodal_full_day_v8_20261007/capacity_report.json、data/egolife/runs/multimodal_decision_review_v40_20261007/retrieval_latency_report.json、data/egolife/runs/gte_semantic_retrieval_v2_20261008.json、data/egolife/runs/multimodal_decision_benchmark_v3_20261008/scenario_review.json、data/egolife/runs/ai_blind_review/ai_judge_review_report_20260927.json。
+
+
+### 2026-10-10 当前步骤进度流修复
+
+- [x] 修复执行中进度看不到的问题：前端此前用本机 epoch 时间戳筛选 SSE，实测笔记本时钟比服务器快 67 秒，服务器发出的过程事件全被过滤。现改为每次运行生成唯一 progress ID，步骤请求与 SSE 订阅按 ID 关联，不再依赖两端时钟。
+- [x] 保留逐项状态：当前步骤/片段编号、阶段消息、最新生成结果和最近完成记录继续通过 SSE 增量展示；夜间整理进度沿用同一运行 ID。Qwen 接口本身仍是请求完成后返回，不会逐 token 流式输出。
+- [ ] 页面端最终确认：打开当前步骤页面，使用一条缓存命中和一条实时推理分别确认状态事件、逐项结果可见；不改写现有评测数据。

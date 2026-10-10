@@ -300,6 +300,7 @@ class Handler(BaseHTTPRequestHandler):
                 after = 0
             if SESSION is None:
                 return self._send(404, {"error": "no session"})
+            requested_run_id = (qs.get("run_id") or [""])[0]
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream; charset=utf-8")
             self.send_header("Cache-Control", "no-cache, no-store")
@@ -313,7 +314,11 @@ class Handler(BaseHTTPRequestHandler):
                 progress = (dict(nightly) if nightly and nightly.get("running")
                             else dict(step_progress) if step_progress else
                             dict(nightly) if nightly else None)
-                fresh = progress and progress.get("updated_at", 0) >= after
+                if progress and nightly and nightly.get("running") and step_progress:
+                    progress.setdefault("run_id", step_progress.get("run_id"))
+                fresh = (progress and progress.get("run_id") == requested_run_id
+                         if requested_run_id else
+                         progress and progress.get("updated_at", 0) >= after)
                 payload = json.dumps(progress, ensure_ascii=False)
                 if fresh and payload != last:
                     try:
@@ -625,6 +630,7 @@ class Handler(BaseHTTPRequestHandler):
             automatic = (qs.get("automatic") or ["0"])[0] in ("1", "true", "True")
             continuous_kind = (qs.get("continuous_kind") or [None])[0]
             use_cache = (qs.get("use_cache") or ["1"])[0] not in ("0", "false", "False")
+            progress_id = (qs.get("progress_id") or [None])[0]
             if not STEP_LOCK.acquire(blocking=False):
                 return self._send(409, {"error": "busy",
                                         "message": "上一步仍在执行（实时推理可能需要数分钟），请稍候"})
@@ -633,7 +639,8 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     msg = SESSION.run_step(force=force, automatic=automatic,
                                             continuous_kind=continuous_kind,
-                                            use_cache=use_cache)
+                                            use_cache=use_cache,
+                                            progress_id=progress_id)
                 except Exception as e:
                     return self._send(500, {"error": f"执行失败: {e}"})
                 st = SESSION.state()

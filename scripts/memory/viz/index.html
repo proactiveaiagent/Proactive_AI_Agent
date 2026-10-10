@@ -2101,9 +2101,10 @@ async function runStep(force, automatic=false, continuousKind=null){
   const cacheOption=document.getElementById('nightlyCacheOption');
   const isNightly=intState.current&&intState.current.kind==='nightly';
   let progressStream=null;
+  const progressId=(window.crypto&&crypto.randomUUID)?crypto.randomUUID():Date.now().toString(36)+Math.random().toString(36).slice(2);
   if(cacheOption) cacheOption.style.display=isNightly?'inline-flex':'none';
   if(progressBox){progressBox.style.display='block';progressBox.innerHTML='<b>正在连接进度…</b><div style="margin-top:5px;color:#667085">步骤开始后会显示处理阶段和已完成内容。</div>';}
-  progressStream=new EventSource(API+'/api/interactive/progress?after='+(Date.now()/1000));
+  progressStream=new EventSource(API+'/api/interactive/progress?run_id='+encodeURIComponent(progressId));
   progressStream.addEventListener('progress',event=>{
     let p; try{p=JSON.parse(event.data||'null');}catch(_){return;}
     if(!p||!progressBox) return;
@@ -2128,6 +2129,7 @@ async function runStep(force, automatic=false, continuousKind=null){
     const params=new URLSearchParams();
     if(isNightly && !document.getElementById('useNightlyCache')?.checked) params.set('use_cache','0');
     if(force) params.set('force','1');
+    params.set('progress_id',progressId);
     if(automatic) params.set('automatic','1');
     if(automatic && continuousKind) params.set('continuous_kind',continuousKind);
     const suffix=params.toString()?'?'+params.toString():'';

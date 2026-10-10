@@ -375,3 +375,8 @@ RRF 离线对照比 BM25 多命中 230 题（+28.4 个百分点）。这表示�
 本轮仅做一次冻结版本复核，并确认可视化页面、项目 TODO 与飞书报告数字一致；完成后关闭本轮验收。原始画面/声音学习型 embedding、更多行动场景和规模化并发压测属于后续增强，不继续作为本轮滚动追加项。
 
 机器证据：data/egolife/runs/multimodal_full_day_v8_20261007/capacity_report.json；data/egolife/runs/multimodal_decision_review_v40_20261007/retrieval_latency_report.json；data/egolife/runs/gte_semantic_retrieval_v2_20261008.json；data/egolife/runs/multimodal_decision_benchmark_v3_20261008/scenario_review.json；data/egolife/runs/ai_blind_review/ai_judge_review_report_20260927.json。
+
+
+### 当前步骤进度流（2026-10-10）
+
+执行进度通过 Server-Sent Events（SSE）推送当前步骤、片段序号、感知阶段消息、已完成条目和当前条目结果。此前客户端按本机时间过滤服务端时间戳；核对发现本机比服务器快约 67 秒，导致有效进度事件被误认为过期。现以前端生成的单次运行 ID 关联步骤请求与进度流，避免依赖机器时钟。Qwen 感知接口仍在模型请求完成后一次返回结构化输出；页面展示的是阶段级/条目级进度和完成后的文本，不是逐 token 字符流。

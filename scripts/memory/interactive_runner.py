@@ -1278,7 +1278,8 @@ class InteractiveSession:
         self.log.append({"kind": kind, "title": title, "msg": msg,
                          "snapshot": snap, "perception": perception})
 
-    def run_step(self, force=False, automatic=False, continuous_kind=None, use_cache=True):
+    def run_step(self, force=False, automatic=False, continuous_kind=None, use_cache=True,
+                 progress_id=None):
         """执行当前步；连续模式仅跨越相邻的同类步骤。"""
         self.auto_paused = False
         self.step_cancelled = False
@@ -1305,7 +1306,7 @@ class InteractiveSession:
             running=True, stage="starting", label=step["title"],
             step_index=self.pos + 1, step_total=len(self.steps),
             item_index=0, item_total=step_item_total, message="正在启动当前步骤",
-            output=None, completed=[],
+            output=None, completed=[], run_id=progress_id or uuid.uuid4().hex,
         )
         try:
             if step["kind"] == "nightly":
