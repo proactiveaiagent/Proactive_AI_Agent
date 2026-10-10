@@ -740,8 +740,10 @@ class InteractiveSession:
                                 selected.append(anchor)
                         for index in selected[:3]:
                             frame = candidate_frames[index - 1]
+                            retained_image = self.media_store.fit_visual_candidate(
+                                frame.get("bytes"), 6_000)
                             saved = self.media_store._put(
-                                "visual", frame.get("bytes"), "webp", 6_000)
+                                "visual", retained_image, "webp", 6_000)
                             if saved:
                                 saved.update({
                                     "mime": "image/webp",

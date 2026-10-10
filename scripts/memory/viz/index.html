@@ -585,8 +585,14 @@ body{height:100vh;height:100dvh;min-height:0;display:flex;flex-direction:column}
 .object-visual-frames{grid-column:1/-1;display:flex;gap:5px;flex-wrap:wrap}
 .object-visual-frames figure{margin:0}
 .object-visual-frames img{width:88px!important;height:58px!important;object-fit:contain!important;background:#e9eef6;border-radius:5px}
-.object-index-tag{font:inherit;cursor:pointer;color:inherit}
+.object-index-tag{font:inherit;cursor:pointer;color:inherit;display:inline-flex;align-items:center;gap:6px;text-align:left;padding:4px 8px 4px 4px;line-height:1.2}
 .object-index-tag:hover,.object-index-tag.active{border-color:#5b70ea;background:#eef1ff}
+.object-index-thumb{display:block;flex:0 0 40px;width:40px;height:30px;overflow:hidden;border:1px solid #d7e0ed;border-radius:5px;background:#e9eef6}
+.object-index-thumb img{display:block;width:100%;height:100%;object-fit:cover}
+.object-index-chip-copy{display:flex;flex-direction:column;gap:2px;min-width:0}
+.object-index-chip-copy small{font-size:9px;color:#148360;white-space:nowrap}
+.object-index-chip-copy small.unverified{color:#a46913}
+.object-index-legend{font-size:9px;color:#72809a;line-height:1.35;margin-top:3px}
 .object-index-evidence{margin-top:9px;padding:9px;border:1px solid #d9e2f1;border-radius:8px;background:#f8faff}
 .object-index-evidence-head{display:flex;justify-content:space-between;align-items:center;font-weight:750;color:#34445f;margin-bottom:7px}
 .object-index-evidence-close{border:0;background:transparent;color:#66758e;cursor:pointer;font:inherit}
@@ -1688,7 +1694,7 @@ function renderObjectIndexMoment(moment, tag){
 }
 function toggleObjectIndexEvidence(button){
   let tag='';
-  try{tag=JSON.parse(button.dataset.objectTag||'""');}catch(_){return;}
+  try{tag=decodeURIComponent(button.dataset.objectTag||'');}catch(_){return;}
   const panel=document.getElementById('objectIndexEvidence');
   if(!panel)return;
   if(!panel.hidden&&panel.dataset.objectTag===tag){
@@ -1716,6 +1722,35 @@ function toggleObjectIndexEvidence(button){
     (examples.length?'<div class="object-index-evidence-grid">'+examples.map(item=>renderObjectIndexMoment(item,tag)).join('')+'</div>':'<div class="object-index-note">当前快照没有这项索引对应的记忆正文，请先运行写入步骤刷新记忆。</div>');
   panel.hidden=false;
   button.classList.add('active');
+}
+function objectIndexPreview(tag, full){
+  full=full||{};
+  const objectIds=new Set((((full.indices||{}).objects)||{})[tag]||[]);
+  const samples=(full.object_index_samples||{})[tag]||[];
+  const candidates=new Map();
+  [...(full.layer7_moments||[]),...samples].forEach(moment=>{
+    if(!moment||!moment.id)return;
+    const names=(moment.objects||[]).map(value=>String(value||'').trim().toLowerCase());
+    if(objectIds.has(moment.id)||names.includes(String(tag||'').trim().toLowerCase()))candidates.set(moment.id,moment);
+  });
+  const ordered=[...candidates.values()].sort((a,b)=>String(b.timestamp||'').localeCompare(String(a.timestamp||'')));
+  for(const moment of ordered){
+    const rows=moment.multimodal?.object_visuals?.items||[];
+    const matches=rows.filter(item=>String(item.object||'').trim().toLowerCase()===String(tag||'').trim().toLowerCase());
+    const match=matches.find(item=>item.status==='grounded'&&item.appearance&&(item.frame_refs||[]).some(ref=>ref&&ref.url))
+      ||matches.find(item=>['grounded','visible_unlabeled'].includes(item.status)&&(item.frame_refs||[]).some(ref=>ref&&ref.url));
+    if(!match)continue;
+    const ref=(match.frame_refs||[]).find(item=>item&&item.url);
+    if(ref)return {url:ref.url,appearance:match.appearance||'',time:Number(ref.at_s||0),status:match.appearance?'画面已核验':'画面可见'};
+  }
+  return null;
+}
+function renderObjectIndexChip(tag,count,full){
+  const preview=objectIndexPreview(tag,full);
+  const label=preview?preview.status+' · '+(preview.appearance||'已关联画面'):'待核验 · 暂无对应画面';
+  const thumb=preview?'<span class="object-index-thumb"><img loading="lazy" alt="" aria-hidden="true" src="'+esc(preview.url)+'"></span>':'';
+  const dataTag=encodeURIComponent(String(tag||''));
+  return '<button type="button" class="tag object-index-tag" data-object-tag="'+dataTag+'" title="'+esc(tag).replace(/"/g,'&quot;')+'：'+esc(label).replace(/"/g,'&quot;')+'" aria-label="物品 '+esc(tag)+'，'+esc(label)+'；点击查看关联记忆画面" onclick="toggleObjectIndexEvidence(this)">'+thumb+'<span class="object-index-chip-copy"><span>'+esc(tag)+' <b>'+Number(count||0)+'</b></span><small'+(preview?'':' class="unverified"')+'>'+(preview?'有对应画面':'待核验')+'</small></span></button>';
 }
 function closeObjectIndexEvidence(){
   const panel=document.getElementById('objectIndexEvidence');
@@ -1785,9 +1820,10 @@ function render(){
   // 索引表
   const rows = Object.entries(s.index_top||{}).map(([dim,items])=>{
     const tags = items.map(([t,c])=>dim==='objects'
-      ?'<button type="button" class="tag object-index-tag" data-object-tag=\''+esc(JSON.stringify(t)).replace(/'/g,"&#39;")+'\' onclick="toggleObjectIndexEvidence(this)">'+esc(t)+' <b>'+c+'</b></button>'
+      ?renderObjectIndexChip(t,c,full)
       :'<span class="tag">'+esc(t)+' <b>'+c+'</b></span>').join('') || '<span class="empty">—</span>';
-    return '<tr><td><b>'+esc(dim)+'</b><br><span style="color:#6b7189">共 '+Number((s.indices||{})[dim]||0)+' 个键</span></td><td>'+tags+'</td></tr>';
+    const hint=dim==='objects'?'<div class="object-index-legend">小图表示该物品已关联到具体画面；“待核验”表示当前还没有确认对应帧。点击物品可查看记忆、外观描述和来源时间。</div>':'';
+    return '<tr><td><b>'+esc(dim)+'</b><br><span style="color:#6b7189">共 '+Number((s.indices||{})[dim]||0)+' 个键</span>'+hint+'</td><td>'+tags+'</td></tr>';
   }).join('');
   document.getElementById('idxTable').innerHTML =
     `<tr><th>维度</th><th>Top 键（出现次数）</th></tr>` + (rows||'<tr><td colspan="2">暂无索引</td></tr>');

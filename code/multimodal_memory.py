@@ -169,25 +169,42 @@ class MultimodalAssetStore:
                            for i in range(n)))
         frames = []
         for sample_time in times:
-            for width, quality in ((288, 42), (224, 32), (176, 25)):
-                image = _run_ffmpeg([
-                    "-ss", f"{sample_time:.3f}", "-i", str(path), "-frames:v", "1",
-                    "-vf", f"scale={width}:-2", "-c:v", "libwebp",
-                    "-quality", str(quality), "-f", "webp", "pipe:1",
-                ])
-                if not image or len(image) > TEMPORAL_IMAGE_LIMIT:
-                    continue
-                try:
-                    image_hash = _visual_hash(image)
-                except Exception:
-                    continue
-                if not image_hash:
-                    continue
-                frames.append({"bytes": image, "mime": "image/webp",
-                               "dhash": image_hash, "at_s": sample_time,
-                               "source_id": str(source_id)})
-                break
+            image = _run_ffmpeg([
+                "-ss", f"{sample_time:.3f}", "-i", str(path), "-frames:v", "1",
+                "-vf", "scale=512:-2", "-c:v", "libwebp",
+                "-quality", "55", "-f", "webp", "pipe:1",
+            ])
+            if not image or len(image) > 32_000:
+                continue
+            try:
+                image_hash = _visual_hash(image)
+            except Exception:
+                continue
+            if not image_hash:
+                continue
+            frames.append({"bytes": image, "mime": "image/webp",
+                           "dhash": image_hash, "at_s": sample_time,
+                           "source_id": str(source_id)})
         return frames
+
+    @staticmethod
+    def fit_visual_candidate(data: bytes, limit: int = TEMPORAL_IMAGE_LIMIT) -> bytes | None:
+        """Keep high-resolution candidates transient; persist the clearest <=6KB version."""
+        try:
+            from PIL import Image
+            source = Image.open(io.BytesIO(data)).convert("RGB")
+        except Exception:
+            return None
+        for width in (512, 448, 384, 320, 288):
+            height = max(2, round(source.height * width / source.width))
+            image = source.resize((width, height), Image.Resampling.LANCZOS)
+            for quality in (48, 42, 36, 30, 24, 18):
+                output = io.BytesIO()
+                image.save(output, format="WEBP", quality=quality, method=6)
+                encoded = output.getvalue()
+                if len(encoded) <= limit:
+                    return encoded
+        return None
 
     def capture(self, video: str | Path, start_s: float, end_s: float | None,
                 transcript: str = "", source_id: str = "",
