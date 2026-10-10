@@ -1668,11 +1668,14 @@ function renderObjectIndexMoment(moment, tag){
   const mm=moment.multimodal||{};
   const grounding=mm.object_visuals||{};
   const match=(grounding.items||[]).find(item=>String(item.object||'').trim().toLowerCase()===String(tag).trim().toLowerCase());
+  const sampling=mm.visual_sampling||{};
+  const samplingNote=Number(sampling.candidate_frames)>0
+    ?'<div class="object-index-note">从 '+Number(sampling.candidate_frames)+' 个候选时点择优；该事件实际保留 '+Number(sampling.retained_frames||0)+' 帧，图片预算不增加。</div>':'';
   let media='';
   if(match){
     const refs=(match.frame_refs||[]).filter(ref=>ref.url);
     const state=match.status==='grounded'?'画面核实':match.status==='visible_unlabeled'?'画面可见':'抽样帧未核实';
-    media='<b>'+esc(state)+(match.appearance?' · '+esc(match.appearance):'')+'</b>'+
+    media='<b>'+esc(state)+(match.appearance?' · '+esc(match.appearance):'')+'</b>'+samplingNote+
       refs.map(ref=>'<img loading="lazy" alt="'+esc(tag)+' 对应画面" src="'+esc(ref.url)+'" title="'+Number(ref.at_s||0).toFixed(2)+' s">').join('')+
       (refs.length?'':'<div class="object-index-note">没有可确认的对应帧；不把同一事件的其他画面标成该物品证据。</div>');
   }else{

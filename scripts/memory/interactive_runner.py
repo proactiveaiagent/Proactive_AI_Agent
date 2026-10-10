@@ -663,7 +663,7 @@ class InteractiveSession:
         }
         if video_path and os.environ.get("MEMORY_CAPTURE_MULTIMODAL", "1") != "0":
             try:
-                if self.media_store.size_bytes() + 30_000 > self.media_store.asset_budget:
+                if self.media_store.size_bytes() + 48_000 > self.media_store.asset_budget:
                     self.mem.compact_multimodal_assets(
                         max(0, self.media_store.asset_budget - 30_000))
                     self.media_store._bytes_cached = None
@@ -676,18 +676,22 @@ class InteractiveSession:
                     source_provenance=source_provenance,
                 )
                 object_labels = f.get("objects") or []
-                visual_refs = multimodal.get("visual_frames") or ([multimodal.get("visual")] if multimodal.get("visual") else [])
+                visual_refs = multimodal.get("visual_frames") or (
+                    [multimodal.get("visual")] if multimodal.get("visual") else [])
                 if object_labels and visual_refs:
-                    update("object_visual_grounding", "正在将物品与关键帧逐一核对")
-                    frame_inputs = []
-                    for ref in visual_refs[:3]:
-                        asset_path = Path(self.mem.memory_dir) / str(ref.get("asset") or "")
-                        if ref.get("asset") and asset_path.is_file():
-                            frame_inputs.append({
-                                **ref,
-                                "mime": ref.get("mime") or "image/webp",
-                                "bytes": asset_path.read_bytes(),
-                            })
+                    update("object_visual_grounding", "正在从更多时点逐件核对物品画面")
+                    candidate_frames = self.media_store.sample_visual_candidates(
+                        video_path, clip_start, clip_end, source_id=dataset_id, count=7)
+                    frame_inputs = candidate_frames
+                    if not frame_inputs:
+                        for ref in visual_refs[:3]:
+                            asset_path = Path(self.mem.memory_dir) / str(ref.get("asset") or "")
+                            if ref.get("asset") and asset_path.is_file():
+                                frame_inputs.append({
+                                    **ref,
+                                    "mime": ref.get("mime") or "image/webp",
+                                    "bytes": asset_path.read_bytes(),
+                                })
                     try:
                         grounding = self.perceiver.ground_objects(
                             object_labels, frame_inputs, cancel_event=cancel_event,
@@ -702,19 +706,76 @@ class InteractiveSession:
                             "schema": 1, "status": "unavailable", "model": "Qwen3-VL",
                             "message": str(exc)[:240],
                             "items": [{"object": str(label), "status": "not_verified",
-                                       "appearance": "", "frame_refs": []}
-                                      for label in object_labels[:5]],
+                                       "appearance": "", "frame_indices": []}
+                                      for label in object_labels[:12]],
+                        }
+
+                    saved_by_index = {}
+                    if candidate_frames and grounding.get("status") == "completed":
+                        coverage = {}
+                        for item in grounding.get("items") or []:
+                            if item.get("status") in {"grounded", "visible_unlabeled"}:
+                                for index in item.get("frame_indices") or []:
+                                    if 1 <= index <= len(candidate_frames):
+                                        coverage.setdefault(index, set()).add(item.get("object"))
+                        selected = []
+                        uncovered = {
+                            item.get("object") for item in (grounding.get("items") or [])
+                            if item.get("status") in {"grounded", "visible_unlabeled"}
+                        }
+                        while uncovered and len(selected) < 3:
+                            best = max(
+                                (index for index in coverage if index not in selected),
+                                key=lambda index: len(coverage[index] & uncovered),
+                                default=None,
+                            )
+                            if best is None or not (coverage[best] & uncovered):
+                                break
+                            selected.append(best)
+                            uncovered -= coverage[best]
+                        for anchor in (1, (len(candidate_frames) + 1) // 2, len(candidate_frames)):
+                            if len(selected) >= 3:
+                                break
+                            if anchor not in selected and 1 <= anchor <= len(candidate_frames):
+                                selected.append(anchor)
+                        for index in selected[:3]:
+                            frame = candidate_frames[index - 1]
+                            saved = self.media_store._put(
+                                "visual", frame.get("bytes"), "webp", 6_000)
+                            if saved:
+                                saved.update({
+                                    "mime": "image/webp",
+                                    "dhash": frame.get("dhash") or "",
+                                    "at_s": frame.get("at_s"),
+                                    "source_id": frame.get("source_id") or dataset_id,
+                                })
+                                saved_by_index[index] = saved
+                        if saved_by_index:
+                            selected_refs = list(saved_by_index.values())
+                            multimodal["visual_frames"] = selected_refs
+                            multimodal["visual"] = dict(selected_refs[len(selected_refs) // 2])
+                            multimodal["visual_sampling"] = {
+                                "candidate_frames": len(candidate_frames),
+                                "retained_frames": len(selected_refs),
+                                "strategy": "object_coverage_with_temporal_anchors",
+                            }
+                    else:
+                        saved_by_index = {
+                            index: ref for index, ref in enumerate(visual_refs[:3], start=1)
                         }
                     for item in grounding.get("items") or []:
-                        frame_refs = []
-                        for frame_index in item.pop("frame_indices", []):
-                            if 1 <= frame_index <= len(frame_inputs):
-                                ref = frame_inputs[frame_index - 1]
-                                frame_refs.append({
-                                    "asset": ref.get("asset"), "at_s": ref.get("at_s"),
-                                    "source_id": ref.get("source_id") or dataset_id,
-                                })
-                        item["frame_refs"] = frame_refs
+                        frame_refs = [
+                            saved_by_index[index]
+                            for index in item.pop("frame_indices", [])
+                            if index in saved_by_index
+                        ]
+                        item["frame_refs"] = [{
+                            "asset": ref.get("asset"), "at_s": ref.get("at_s"),
+                            "source_id": ref.get("source_id") or dataset_id,
+                        } for ref in frame_refs if ref.get("asset")]
+                        if item.get("status") in {"grounded", "visible_unlabeled"} and not item["frame_refs"]:
+                            item["status"] = "not_verified"
+                            item["appearance"] = ""
                     multimodal["object_visuals"] = grounding
                     if cancel_event is not None and cancel_event.is_set():
                         return None, {
@@ -740,6 +801,9 @@ class InteractiveSession:
             multimodal=multimodal,
             source_provenance=source_provenance,
         )
+        if multimodal and multimodal.get("visual_sampling"):
+            self.media_store.release_unreferenced(
+                self.mem.memory["layer7"]["moments"])
         self.id_map[m["id"]] = mid
         self._qwen_fields[m["id"]] = f
         info = {

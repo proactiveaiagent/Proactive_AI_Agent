@@ -144,6 +144,51 @@ class MultimodalAssetStore:
             self._bytes_cached = (self._bytes_cached or 0) + len(data)
         return {"asset": relative.as_posix(), "bytes": len(data)}
 
+    def sample_visual_candidates(self, video: str | Path, start_s: float,
+                                 end_s: float | None, source_id: str = "",
+                                 count: int = 7) -> list[dict[str, Any]]:
+        """Sample transient candidates; callers persist only the selected frames."""
+        path = Path(video)
+        if not path.is_file():
+            return []
+        start = max(0.0, float(start_s or 0))
+        end = float(end_s) if end_s is not None else start + 30
+        try:
+            probe = subprocess.run([
+                "ffprobe", "-v", "error", "-show_entries", "format=duration",
+                "-of", "json", str(path)], capture_output=True, timeout=10, check=True)
+            duration = float(json.loads(probe.stdout)["format"]["duration"])
+            end = min(end, duration)
+        except (OSError, ValueError, KeyError, subprocess.SubprocessError):
+            return []
+        if end <= start:
+            return []
+        last_time = max(start, end - 0.1)
+        n = max(3, min(7, int(count or 7)))
+        times = sorted(set(round(start + (last_time - start) * i / (n - 1), 3)
+                           for i in range(n)))
+        frames = []
+        for sample_time in times:
+            for width, quality in ((288, 42), (224, 32), (176, 25)):
+                image = _run_ffmpeg([
+                    "-ss", f"{sample_time:.3f}", "-i", str(path), "-frames:v", "1",
+                    "-vf", f"scale={width}:-2", "-c:v", "libwebp",
+                    "-quality", str(quality), "-f", "webp", "pipe:1",
+                ])
+                if not image or len(image) > TEMPORAL_IMAGE_LIMIT:
+                    continue
+                try:
+                    image_hash = _visual_hash(image)
+                except Exception:
+                    continue
+                if not image_hash:
+                    continue
+                frames.append({"bytes": image, "mime": "image/webp",
+                               "dhash": image_hash, "at_s": sample_time,
+                               "source_id": str(source_id)})
+                break
+        return frames
+
     def capture(self, video: str | Path, start_s: float, end_s: float | None,
                 transcript: str = "", source_id: str = "",
                 fields: dict | None = None,

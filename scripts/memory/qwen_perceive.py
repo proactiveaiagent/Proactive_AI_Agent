@@ -439,7 +439,7 @@ class QwenPerceiver:
             label = str(value or "").strip()
             if label and label.casefold() not in {x.casefold() for x in candidates}:
                 candidates.append(label[:100])
-            if len(candidates) >= 5:
+            if len(candidates) >= 12:
                 break
         if not candidates:
             return {"schema": 1, "status": "not_needed", "model": "Qwen3-VL", "items": []}
@@ -459,9 +459,10 @@ class QwenPerceiver:
 
         if cancel_event is not None and cancel_event.is_set():
             return {"schema": 1, "status": "cancelled", "model": "Qwen3-VL", "items": []}
+        max_frames = min(7, len(frames))
         source_map = [
             {"image": i + 1, "time_s": round(float(frame.get("at_s") or 0), 2)}
-            for i, frame in enumerate(frames)
+            for i, frame in enumerate(frames[:max_frames])
         ]
         prompt = (
             "Inspect only the attached image pixels. Do not use event context, filenames, transcripts, "
@@ -484,7 +485,7 @@ class QwenPerceiver:
                 self.api_url + "/analyze_video",
                 files=[("images", (f"object_frame_{i + 1}.webp",
                                    frame["bytes"], frame.get("mime") or "image/webp"))
-                       for i, frame in enumerate(frames[:3])],
+                       for i, frame in enumerate(frames[:max_frames])],
                 data={"prompt": prompt, "request_id": request_id},
                 timeout=240,
             )
@@ -500,9 +501,17 @@ class QwenPerceiver:
             try:
                 payload = json.loads(raw)
             except (TypeError, ValueError):
-                left, right = raw.find("{"), raw.rfind("}")
-                if left >= 0 and right > left:
-                    payload = json.loads(raw[left:right + 1])
+                decoder = json.JSONDecoder()
+                for position, char in enumerate(raw):
+                    if char != "{":
+                        continue
+                    try:
+                        candidate, _ = decoder.raw_decode(raw[position:])
+                    except (TypeError, ValueError):
+                        continue
+                    if isinstance(candidate, dict) and isinstance(candidate.get("objects"), list):
+                        payload = candidate
+                        break
             if not isinstance(payload, dict):
                 raise ValueError("visual grounding response was not JSON")
             rows = payload.get("objects")
@@ -517,7 +526,7 @@ class QwenPerceiver:
                     continue
                 indices = []
                 for index in row.get("frames") or []:
-                    if isinstance(index, int) and not isinstance(index, bool) and 1 <= index <= min(3, len(frames)):
+                    if isinstance(index, int) and not isinstance(index, bool) and 1 <= index <= max_frames:
                         if index not in indices:
                             indices.append(index)
                 visible = row.get("visible") is True and bool(indices)
@@ -537,7 +546,7 @@ class QwenPerceiver:
                 "object": label, "status": "not_verified", "appearance": "", "frame_indices": []
             }) for label in candidates]
             return {"schema": 1, "status": "completed", "model": "Qwen3-VL",
-                    "prompt_version": "object-visual-grounding-v1", "items": items}
+                    "prompt_version": "object-visual-grounding-v2", "items": items}
         except Exception as exc:
             return {
                 "schema": 1, "status": "unavailable", "model": "Qwen3-VL",
