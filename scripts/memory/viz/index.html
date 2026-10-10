@@ -1707,7 +1707,7 @@ function renderProfile(){
 function esc(s){ return String(s==null?'':s).replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c])); }
 
 // ===== 交互执行模式：人看视频/时间点 → 手工点击运行 → 走下一步 =====
-let mode='replay', intState=null, autoTimer=null, autoBusy=false, autoKind=null;
+let mode='replay', intState=null, autoTimer=null, autoBusy=false, autoKind=null, sessionLost=false;
 let curStep=null, inputsExpanded=false, curInputs=null;
 
 const KIND_CN={add:'写入片段',add_batch:'批量写入',query:'检索',update:'更新字段',
@@ -2063,6 +2063,7 @@ async function newSession(key, participant=null, dataset='base'){
       return;
     }
     intState=next;
+    sessionLost=false;
     const autoBox=document.getElementById('autoSuggestion');
     if(autoBox){autoBox.style.display='none';autoBox.innerHTML='';}
     curKey=key;
@@ -2087,7 +2088,7 @@ async function changeInteractiveDataset(value){
 }
 
 async function runStep(force, automatic=false, continuousKind=null){
-  if(!intState||intState.finished) return;
+  if(!intState||intState.finished||sessionLost) return;
   const completedKind=intState.current&&intState.current.kind;
   const btn=document.getElementById('runStepBtn');
   const live=document.getElementById('liveBtn');
@@ -2136,11 +2137,25 @@ async function runStep(force, automatic=false, continuousKind=null){
     const r=await fetch(API+'/api/interactive/step'+suffix);
     const st=await r.json();
     if(st.error==='busy'){
+      stopAuto();
       const d=document.getElementById('stepDetail');
-      if(d) d.innerHTML='<div class="note" style="color:#f59e0b">'+esc(st.message||'上一步仍在执行')+'</div>';
+      if(d) d.innerHTML='<div class="note" style="color:#f59e0b">'+esc(st.message||'上一步仍在执行')+'。连续运行已停止，请确认另一个运行结束后再继续。</div>';
       return;
     }
-    if(st.error){ alert(st.error); return; }
+    if(st.error){
+      const detail=document.getElementById('stepDetail');
+      const noSession=r.status===404 && /no session/i.test(String(st.error));
+      if(automatic || st.error==='busy' || noSession) stopAuto();
+      if(noSession){
+        sessionLost=true;
+        if(progressBox){progressBox.style.display='none';progressBox.textContent='';}
+        if(detail) detail.innerHTML='<div class="note" style="color:#b45309"><b>当前会话已失效</b>：批量写入已停止，避免重复请求。点击上方“重开当前会话”即可恢复；已完成的写入会保留。</div>';
+        updateRunBtn();
+      }else if(detail){
+        detail.insertAdjacentHTML('afterbegin','<div class="note" style="color:#b45309">步骤未继续：'+esc(st.message||st.error)+'。连续运行已停止。</div>');
+      }
+      return;
+    }
     intState=st;
     if(st.auto_paused) stopAuto();
     renderInt();
@@ -2152,6 +2167,10 @@ async function runStep(force, automatic=false, continuousKind=null){
     if(shouldSuggest){
       await runAutoSuggestionAfterStep();
     }
+  }catch(error){
+    if(automatic) stopAuto();
+    const detail=document.getElementById('stepDetail');
+    if(detail) detail.insertAdjacentHTML('afterbegin','<div class="note" style="color:#e5484d">步骤请求失败：'+esc(error.message||error)+'。连续运行已停止，请检查连接后重试。</div>');
   }finally{
     if(progressStream) progressStream.close();
     autoBusy=false;
@@ -2466,13 +2485,13 @@ function percRow(p,showLegend=false){
 
 function toggleAuto(){
   if(autoTimer){ stopAuto(); updateRunBtn(); return; }
-  if(!intState||intState.finished||!intState.current) return;
+  if(!intState||intState.finished||!intState.current||sessionLost) return;
   autoKind=intState.current.kind;
   const label=KIND_CN[autoKind]||autoKind;
   document.getElementById('autoBtn').textContent='⏹ 停止「'+label+'」';
   autoTimer=setInterval(async ()=>{
     if(autoBusy) return;
-    if(!intState||intState.finished){ stopAuto(); updateRunBtn(); return; }
+    if(!intState||intState.finished||sessionLost){ stopAuto(); updateRunBtn(); return; }
     await runStep(false,true,autoKind);
   },350);
 }
@@ -2486,16 +2505,16 @@ function stopAuto(){
 function updateRunBtn(){
   const btn=document.getElementById('runStepBtn');
   const live=document.getElementById('liveBtn');
-  const ok = intState && !intState.finished;
+  const ok = intState && !intState.finished && !sessionLost;
   const isAdd = !!(intState && intState.current && ['add','add_batch'].includes(intState.current.kind));
   btn.disabled=!ok;
-  btn.textContent = ok?'▶ 运行此步':'✅ 全部完成';
+  btn.textContent = sessionLost?'▶ 运行此步':ok?'▶ 运行此步':'✅ 全部完成';
   if(live){ live.disabled=!ok||!isAdd; live.style.display=ok&&isAdd?'':'none'; }
   const ab=document.getElementById('autoBtn');
   if(ab){
     ab.disabled=!ok;
-    if(!autoTimer) ab.textContent=ok?'⏩ 连续运行当前类型':'⏸ 已无待执行步骤';
-    ab.title=ok?'连续执行相邻的同类步骤，遇到另一种操作时自动停止':'当前场景已执行完毕';
+    if(!autoTimer) ab.textContent=sessionLost?'⏸ 会话已失效':ok?'⏩ 连续运行当前类型':'⏸ 已无待执行步骤';
+    ab.title=sessionLost?'当前会话已失效，请点击“重开当前会话”恢复':ok?'连续执行相邻的同类步骤，遇到另一种操作时自动停止':'当前场景已执行完毕';
   }
 }
 
