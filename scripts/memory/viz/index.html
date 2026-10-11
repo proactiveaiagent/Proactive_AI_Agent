@@ -828,7 +828,7 @@ body{height:100vh;height:100dvh;min-height:0;display:flex;flex-direction:column}
           </table>
         </div>
         <p class='storage-projection-note' id='multimodalStorageBasis'>估算基于单人完整日多模态样本；加载后显示实测样本规模、每条平均占用和外推边界。</p>
-        <div class='eval-mm-latency eval-mm-warning' id='multimodalObjectCoverage'><b>物品与画面关联仍未覆盖完整日：</b>完整日 v8 有 2,875 个物品标签，但逐物品画面关联为 0；11:00 的 12 段交互样本中，Qwen 报告 32 / 44 个物品找到对应画面。两项统计范围不同，模型报告不等同人工核验。</div>
+        <div class='eval-mm-latency eval-mm-warning' id='multimodalObjectCoverage'>全日物品—画面关联回填进度加载中…</div>
         <div class='eval-mm-latency' id='multimodalLatencyMetric'>正在读取多模态记忆检索耗时…</div>
       </section>
       <header class='eval-heading eval-person-heading'><div><h2>评测人物与说明</h2><p>选择人物切换短期与长期同题问答、短期 AI 抽查；选择总体查看 6 人汇总。飞书验收标准保持全体汇总。</p></div><div class='eval-heading-tools'><label class='eval-person-filter'><span>评测人物</span><select id='evalPersonSelect' aria-label='切换评测人物' title='切换短期与长期同题评测、短期内容抽查的人物；总体汇总选择全部' onchange='selectEvalParticipant(this.value)'><option value='all'>总体 · 全部人物</option><option value='A1_JAKE'>Jake · A1</option><option value='A2_ALICE'>Alice · A2</option><option value='A3_TASHA'>Tasha · A3</option><option value='A4_LUCIA'>Lucia · A4</option><option value='A5_KATRINA'>Katrina · A5</option><option value='A6_SHURE'>Shure · A6</option></select></label><button type='button' class='eval-help-btn' aria-haspopup='dialog' aria-controls='evalHelpModal' onclick='openEvalHelp()'>评估说明</button></div></header>
@@ -1235,14 +1235,14 @@ function renderObjectVisualEvidence(media){
   if(!items.length) return '';
   const cards=items.map(item=>{
     const refs=(item.frame_refs||[]).filter(ref=>ref&&ref.url);
-    const status=item.status==='grounded'?'画面已核实':item.status==='visible_unlabeled'?'画面可见，外观未描述':'抽样画面未核实';
+    const status=item.status==='grounded'?'模型找到对应画面':item.status==='visible_unlabeled'?'模型判断画面可见':'抽样画面待核验';
     const frames=refs.map(ref=>'<figure><img loading="lazy" alt="'+esc(item.object)+' 对应画面" src="'+esc(ref.url)+'"><figcaption>'+Number(ref.at_s||0).toFixed(2)+' s</figcaption></figure>').join('');
     return '<div class="object-visual-card"><span class="object-visual-name">物品 · '+esc(item.object||'未命名')+'</span><span class="object-visual-status">'+status+'</span>'+
       (item.appearance?'<div class="object-visual-description">'+esc(item.appearance)+'</div>':'')+
       (frames?'<div class="object-visual-frames">'+frames+'</div>':'')+'</div>';
   }).join('');
   const note=grounding.status==='unavailable'?'物品画面核对暂不可用；以下不把事件画面当作物品外观证据。':
-    grounding.status==='completed'?'逐件核对保留物品外观描述及其对应关键帧；“未核实”表示抽样帧中看不清，不代表整段视频中不存在。':'';
+    grounding.status==='completed'?'以上为 Qwen3-VL 对抽样关键帧的判断，不是人工金标准；“待核验”表示抽样画面不足以确认，不代表整段视频中不存在。':'';
   return '<div class="object-visual-list"><b>物品对应画面</b>'+cards+(note?'<small class="object-index-note">'+esc(note)+'</small>':'')+'</div>';
 }
 function renderMultimodalEvidence(x){
@@ -1674,8 +1674,8 @@ function renderObjectIndexMoment(moment, tag){
   let media='';
   if(match){
     const refs=(match.frame_refs||[]).filter(ref=>ref.url);
-    const state=match.status==='grounded'?'画面核实':match.status==='visible_unlabeled'?'画面可见':'抽样帧未核实';
-    media='<b>'+esc(state)+(match.appearance?' · '+esc(match.appearance):'')+'</b>'+samplingNote+
+    const state=match.status==='grounded'?'模型找到对应帧':match.status==='visible_unlabeled'?'模型判断画面可见':'抽样帧待核验';
+    media='<b>'+esc(state)+(match.appearance?' · '+esc(match.appearance):'')+'</b><div class="object-index-note">Qwen3-VL 自报结果，不是人工金标准。</div>'+samplingNote+
       refs.map(ref=>'<img loading="lazy" alt="'+esc(tag)+' 对应画面" src="'+esc(ref.url)+'" title="'+Number(ref.at_s||0).toFixed(2)+' s">').join('')+
       (refs.length?'':'<div class="object-index-note">没有可确认的对应帧；不把同一事件的其他画面标成该物品证据。</div>');
   }else{
@@ -3301,6 +3301,45 @@ fetch(API+'/api/multimodal-capacity',{cache:'no-store'})
     document.getElementById('multimodalStorageProjectionRows').innerHTML='<tr><td colspan="5">暂不可计算</td></tr>';
     document.getElementById('multimodalLatencyMetric').textContent='多模态检索耗时暂不可用：'+error.message;
   });
+
+function loadObjectGroundingStatus(){
+  const el=document.getElementById('multimodalObjectCoverage');
+  if(!el)return;
+  const poll=()=>{
+    fetch(API+'/api/object-grounding',{cache:'no-store'})
+      .then(response=>{if(!response.ok)throw new Error('HTTP '+response.status);return response.json();})
+      .then(data=>{
+        if(data.complete&&data.report){
+          const r=data.report, counts=r.object_status_counts||{};
+          const linked=Number(r.objects_with_grounded_frame_refs||0);
+          const notVerified=Number(counts.not_verified||0);
+          el.innerHTML='<b>完整日逐物品画面关联已回填（Qwen 自报）</b>：'+
+            Number(r.moments_with_object_annotations||0)+' / '+Number(r.moments_total||0)+' 段已处理 · '+
+            linked.toLocaleString()+' / '+Number(r.unique_object_labels||0).toLocaleString()+
+            ' 个物品标签带对应画面引用 · '+notVerified.toLocaleString()+' 个待核验。此结果不是人工准确率；原视频未复制进记忆库。';
+          el.classList.remove('eval-mm-warning');
+          return;
+        }
+        const done=Number(data.processed_moments||0), total=Number(data.total_moments||725);
+        const checked=Number(data.checked_objects||0), all=Number(data.total_objects||2875);
+        el.innerHTML='<b>全日逐物品画面关联回填进行中</b>：'+done.toLocaleString()+' / '+total.toLocaleString()+
+          ' 段已处理 · '+checked.toLocaleString()+' / '+all.toLocaleString()+' 个物品标签已检查 · '+
+          Number(data.reported_linked||0).toLocaleString()+' 个标签已由 Qwen 报告找到对应画面 · '+
+          Number(data.not_verified||0).toLocaleString()+' 个待核验。进度数据是模型自报，不代表准确率。';
+        setTimeout(poll,5000);
+      })
+      .catch(error=>{
+        if(error.message==='HTTP 404'){
+          el.innerHTML='<b>逐物品画面关联待接入：</b>完整日 v8 原始记录有 2,875 个物品标签，尚无逐物品画面标注；11:00 的 12 段交互样本中，Qwen 曾报告 32 / 44 个物品找到对应画面。样本范围不同，模型自报不等于人工核验。';
+          return;
+        }
+        el.textContent='全日物品—画面关联状态暂不可用：'+error.message;
+        setTimeout(poll,15000);
+      });
+  };
+  poll();
+}
+loadObjectGroundingStatus();
 
 fetch(API+'/api/evaluation-data',{cache:'no-store'})
   .then(response=>{if(!response.ok)throw new Error('HTTP '+response.status);return response.json();})

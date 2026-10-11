@@ -343,6 +343,49 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(503, {"error": "evaluation data is not ready"})
             return self._send(200, evaluation)
 
+        if url.path == "/api/object-grounding":
+            run_dir = RUNS / "multimodal_full_day_v9_object_grounded_20261011"
+            report = load_json(run_dir / "object_grounding_report.json")
+            progress_path = run_dir / "object_grounding_progress.jsonl"
+            processed = checked = linked = not_verified = 0
+            if progress_path.is_file():
+                with progress_path.open(encoding="utf-8") as handle:
+                    for line in handle:
+                        try:
+                            row = json.loads(line)
+                        except ValueError:
+                            continue
+                        grounding = row.get("object_visuals") or {}
+                        processed += 1
+                        items = grounding.get("items") or []
+                        checked += len(items)
+                        for item in items:
+                            if item.get("status") in {"grounded", "visible_unlabeled"} and item.get("frame_refs"):
+                                linked += 1
+                            elif item.get("status") == "not_verified":
+                                not_verified += 1
+            expected = int((report or {}).get("moments_total") or 725)
+            if report is not None and processed >= expected:
+                return self._send(200, {"complete": True, "report": report})
+            return self._send(200, {
+                "complete": False, "processed_moments": processed,
+                "total_moments": 725, "checked_objects": checked,
+                "total_objects": 2871, "reported_linked": linked,
+                "not_verified": not_verified,
+            })
+
+        if url.path == "/api/archive_asset":
+            run_root = (RUNS / "multimodal_full_day_v9_object_grounded_20261011").resolve()
+            rel = (qs.get("p") or [""])[0]
+            asset = (run_root / rel).resolve()
+            if (not rel.startswith("assets/") or
+                    not asset.is_relative_to(run_root / "assets") or not asset.is_file()):
+                return self._send(404, {"error": "archive asset not found"})
+            ctype = {".webp": "image/webp", ".ogg": "audio/ogg"}.get(asset.suffix.lower())
+            if not ctype:
+                return self._send(400, {"error": "invalid asset type"})
+            return self._send_file(asset, ctype)
+
         if url.path == "/api/multimodal-capacity":
             temporal_long = load_json(RUNS / "multimodal_full_day_v8_20261007" / "capacity_report.json")
             if temporal_long is not None:
@@ -469,12 +512,104 @@ class Handler(BaseHTTPRequestHandler):
             if mem is None:
                 return self._send(404, {"error": "memory state not found"})
             from memory import entity_graph_summary
-            # 按六维高频索引挑少量正文样例，避免把全部归档重复发给浏览器。
             l7 = mem.get("layer7", {})
             moments = l7.get("moments", {})
             dimensions = ("people", "locations", "time_nodes",
                           "activity_events", "environments", "objects")
             indices = {k: l7.get(k, {}) for k in dimensions}
+            # Long-term UI and the full-day multimodal run use the same A1_JAKE
+            # DAY1 time slots with different synthetic dates. Join by time-of-day,
+            # then require an exact normalized object label before attaching a frame.
+            object_index_samples = {}
+            if key == "long_term":
+                grounding_dir = RUNS / "multimodal_full_day_v9_object_grounded_20261011"
+                report = load_json(grounding_dir / "object_grounding_report.json")
+                progress_path = grounding_dir / "object_grounding_progress.jsonl"
+                progress_rows = []
+                if progress_path.is_file():
+                    with progress_path.open(encoding="utf-8") as handle:
+                        for line in handle:
+                            try:
+                                progress_rows.append(json.loads(line))
+                            except ValueError:
+                                continue
+                expected = int((report or {}).get("moments_total") or 725)
+                complete = report is not None and len(progress_rows) >= expected
+                grounded_db = load_json(grounding_dir / "memory.json") if complete else None
+                if grounded_db is None:
+                    grounded_db = load_json(
+                        RUNS / "multimodal_full_day_v8_20261007" / "memory.json")
+                    if grounded_db is not None:
+                        source_archive = ((grounded_db.get("layer7") or {}).get("moments") or {})
+                        for row in progress_rows:
+                            source_moment = source_archive.get(str(row.get("id") or ""))
+                            if source_moment is not None:
+                                source_moment.setdefault("multimodal", {})["object_visuals"] = row.get("object_visuals") or {}
+                grounded_archive = ((grounded_db or {}).get("layer7") or {}).get("moments") or {}
+                by_clock = {
+                    str(item.get("timestamp") or "")[11:19]: item
+                    for item in grounded_archive.values()
+                    if len(str(item.get("timestamp") or "")) >= 19
+                }
+                def object_key(value):
+                    return re.sub(r"[^a-z0-9]+", " ", str(value or "").casefold()).strip()
+                for moment in moments.values():
+                    clock = str(moment.get("timestamp") or "")[11:19]
+                    source = by_clock.get(clock)
+                    if not source:
+                        continue
+                    source_mm = source.get("multimodal") or {}
+                    grounding = source_mm.get("object_visuals") or {}
+                    labels = {
+                        object_key(label): str(label).strip()
+                        for label in moment.get("objects") or []
+                        if str(label or "").strip()
+                    }
+                    matched = []
+                    for item in grounding.get("items") or []:
+                        label = labels.get(object_key(item.get("object")))
+                        if not label:
+                            continue
+                        copied = dict(item)
+                        copied["object"] = label
+                        copied["frame_refs"] = [
+                            {**ref, "url": "/api/archive_asset?p=" + quote(str(ref["asset"]))}
+                            for ref in item.get("frame_refs") or []
+                            if ref.get("asset")
+                        ]
+                        matched.append(copied)
+                    if matched:
+                        moment.setdefault("multimodal", {})["object_visuals"] = {
+                            "schema": 1, "status": "completed",
+                            "model": grounding.get("model") or "Qwen3-VL",
+                            "prompt_version": grounding.get("prompt_version"),
+                            "source_run": "multimodal_full_day_v9_object_grounded_20261011",
+                            "items": matched,
+                        }
+                for tag, ids in (indices.get("objects") or {}).items():
+                    matches = []
+                    for mid in ids:
+                        moment = moments.get(mid)
+                        if not moment:
+                            continue
+                        grounding = ((moment.get("multimodal") or {}).get("object_visuals") or {})
+                        exact = [
+                            item for item in grounding.get("items") or []
+                            if object_key(item.get("object")) == object_key(tag)
+                            and item.get("frame_refs")
+                        ]
+                        if exact:
+                            matches.append(moment)
+                    matches.sort(key=lambda item: str(item.get("timestamp") or ""), reverse=True)
+                    object_index_samples[tag] = [
+                        {
+                            field: moment.get(field)
+                            for field in ("id", "timestamp", "scene", "user_action", "objects", "multimodal")
+                            if moment.get(field) is not None
+                        }
+                        for moment in matches[:3]
+                    ]
+            # 按六维高频索引挑少量正文样例，避免把全部归档重复发给浏览器。
             archive_samples = {}
             for dimension in dimensions:
                 ranked = sorted(indices[dimension].items(),
@@ -485,7 +620,7 @@ class Handler(BaseHTTPRequestHandler):
                     for mid in ids[:1]:
                         moment = moments.get(mid)
                         if moment:
-                            examples.append({
+                            sample = {
                                 key: moment.get(key)
                                 for key in ("id", "timestamp", "scene", "user_action",
                                             "people", "location", "activity",
@@ -495,7 +630,10 @@ class Handler(BaseHTTPRequestHandler):
                                             "highlighted_at", "merged_into",
                                             "merged_sources", "merge_history")
                                 if moment.get(key) is not None
-                            })
+                            }
+                            if moment.get("multimodal"):
+                                sample["multimodal"] = moment["multimodal"]
+                            examples.append(sample)
                     groups.append({"tag": tag, "count": len(ids), "moments": examples})
                 archive_samples[dimension] = groups
             return self._send(200, {
@@ -507,6 +645,7 @@ class Handler(BaseHTTPRequestHandler):
                 "layer6": mem.get("layer6", {}),
                 "indices": indices,
                 "archive_samples": archive_samples,
+                "object_index_samples": object_index_samples,
                 "entity_relationships": entity_graph_summary(l7, limit=12),
                 "moments_count": len(moments),
                 "active_moments_count": sum(not item.get("merged_into") for item in moments.values()),
