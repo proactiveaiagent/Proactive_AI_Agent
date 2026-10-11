@@ -74,6 +74,7 @@ def main() -> int:
                            cache_file=args.output_dir / "unused_grounding_cache.json").health()
     if not health.get("model_loaded"):
         raise RuntimeError(f"Qwen service is not ready: {health}")
+    model_label = health.get("model") or "Qwen3-VL"
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     source_assets = args.input_dir / "assets"
@@ -92,7 +93,7 @@ def main() -> int:
     print(json.dumps({
         "source": str(source_file), "output": str(args.output_dir),
         "moments_total": len(archive), "already_checkpointed": len(progress),
-        "moments_this_run": len(pending), "model": health.get("model"),
+        "moments_this_run": len(pending), "model": model_label,
     }, ensure_ascii=False), flush=True)
 
     started = time.perf_counter()
@@ -239,7 +240,7 @@ def main() -> int:
     report = {
         "source_run": str(args.input_dir),
         "output_run": str(args.output_dir),
-        "model": health.get("model"),
+        "model": model_label,
         "moments_total": len(archive),
         "moments_with_object_annotations": moments_with_items,
         "object_mentions": sum(len(moment.get("objects") or [])
