@@ -610,17 +610,34 @@ class Handler(BaseHTTPRequestHandler):
         if url.path == "/api/interactive/cancel":
             if SESSION is None:
                 return self._send(404, {"error": "no session"})
-            if not STEP_LOCK.locked() or not ACTIVE_STEP_FORCE:
+            progress = SESSION.step_progress or {}
+            advice_running = progress.get("stage") == "advising"
+            if not STEP_LOCK.locked() or not (ACTIVE_STEP_FORCE or advice_running):
                 return self._send(409, {
-                    "error": "没有正在运行的实时推理可停止",
-                    "message": "只有实时推理运行时才能使用停止按钮",
+                    "error": "当前没有可停止的推理或建议",
+                    "message": "请在实时推理或片段建议生成期间点击停止",
                 })
             result = SESSION.cancel_current()
             if not result.get("requested"):
                 return self._send(409, {
-                    "error": "当前实时推理已结束或尚未开始",
-                    "message": "请在实时推理进行中点击停止",
+                    "error": "当前处理已结束或尚未开始",
+                    "message": "请在片段处理或建议生成期间点击停止",
                 })
+            request_id = getattr(SESSION, "_active_reasoning_request_id", None)
+            if request_id:
+                try:
+                    payload = json.dumps({"request_id": request_id}).encode("utf-8")
+                    req = URLRequest(
+                        "http://127.0.0.1:8000/cancel_inference",
+                        data=payload, headers={"Content-Type": "application/json"},
+                        method="POST",
+                    )
+                    with urlopen(req, timeout=3):
+                        pass
+                    result["model_cancel_sent"] = True
+                except Exception:
+                    # The step event still prevents any later suggestion from starting.
+                    result["model_cancel_sent"] = False
             return self._send(200, result)
 
         if url.path == "/api/interactive/step":

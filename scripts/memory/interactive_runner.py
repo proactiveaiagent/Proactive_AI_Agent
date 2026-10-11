@@ -241,6 +241,7 @@ class InteractiveSession:
         self._cancel_lock = threading.Lock()
         self._active_step_cancel = None
         self._active_step_force = False
+        self._active_reasoning_request_id = None
         self._pending_cancel = False
         self.extraction_batch_id = f"{key}:{dataset}:{uuid.uuid4().hex[:12]}"
         self.perceiver = perceiver or site_perceiver()
@@ -606,7 +607,95 @@ class InteractiveSession:
         text = " · ".join(x for x in (scene, action) if x)
         if people:
             text += f" · People: {people}"
-        return {"id": m.get("id", ""), "text": text or info.get("error") or "处理完成"}
+        advice = info.get("recommendation") or {}
+        decision = advice.get("recommendation") or {}
+        if decision.get("action"):
+            text += " · 建议：" + str(decision["action"])[:180]
+        elif advice.get("error"):
+            text += " · 建议暂不可用"
+        return {"id": m.get("id", ""), "text": text or info.get("error") or "处理完成",
+                "recommendation": advice or None}
+
+    @staticmethod
+    def _recommendation_for_display(result):
+        """Keep per-clip UI/log payload bounded while preserving cited evidence."""
+        rec = result.get("recommendation") or {}
+        cited = set(rec.get("evidence_ids") or [])
+        candidates = []
+        for row in result.get("candidates") or []:
+            if row.get("id") in cited:
+                candidates.append({key: row.get(key) for key in ("id", "scene", "speech")
+                                   if row.get(key) is not None})
+            if len(candidates) >= 12:
+                break
+        inference = result.get("multimodal_inference") or {}
+        inference_display = {
+            key: inference.get(key)
+            for key in ("model", "visual_frames_used", "audio_transcripts_used",
+                        "media_relevance")
+            if inference.get(key) is not None
+        }
+        if isinstance(inference_display.get("media_relevance"), list):
+            inference_display["media_relevance"] = inference_display["media_relevance"][:12]
+        review = result.get("evidence_review") or {}
+        review_display = {
+            key: review.get(key)
+            for key in ("status", "applied", "error")
+            if review.get(key) is not None
+        }
+        for key in ("constraints", "issues"):
+            if isinstance(review.get(key), list):
+                review_display[key] = review[key][:8]
+        for key in ("initial_action_verification", "revision_verification"):
+            value = review.get(key)
+            if isinstance(value, dict):
+                review_display[key] = {
+                    "remaining_issues": value.get("remaining_issues", [])[:8]
+                }
+        return {
+            "recommendation": rec,
+            "model_recommendation": result.get("model_recommendation") or {},
+            "policy_adjustments": (result.get("policy_adjustments") or [])[:8],
+            "evidence_review": review_display,
+            "multimodal_inference": inference_display,
+            "candidates": candidates,
+            "source_moment_id": result.get("source_moment_id"),
+            "elapsed_ms": result.get("elapsed_ms"),
+        }
+
+    def _recommend_after_write(self, moment_id, dataset_id, progress=None):
+        """Generate one grounded, proactive recommendation immediately after each clip write."""
+        request_id = f"step-{uuid.uuid4().hex}"
+        cancel_event = self._active_step_cancel
+        with self._cancel_lock:
+            self._active_reasoning_request_id = request_id
+        context = dict(progress or {})
+        self._set_step_progress(
+            **context, stage="advising",
+            message=f"片段 {dataset_id} 已写入；正在结合当前画面、语音和相关记忆给出建议",
+            output={"id": dataset_id, "text": "正在结合多模态证据与相关记忆生成建议"},
+        )
+        try:
+            result = self.daytime.advise("", context={
+                "source_moment_id": moment_id,
+                "proactive": True,
+                "reasoning_request_id": request_id,
+                "cancellation_event": cancel_event,
+            })
+            with (self.mem.memory_dir / "reasoning_log.jsonl").open("a", encoding="utf-8") as f:
+                f.write(json.dumps(result, ensure_ascii=False) + "\n")
+            return self._recommendation_for_display(result)
+        except Exception as exc:
+            return {
+                "error": "主动建议已停止" if cancel_event is not None and cancel_event.is_set()
+                         else str(exc)[:500],
+                "cancelled": bool(cancel_event is not None and cancel_event.is_set()),
+                "source_moment_id": moment_id,
+            }
+        finally:
+            with self._cancel_lock:
+                if self._active_reasoning_request_id == request_id:
+                    self._active_reasoning_request_id = None
 
     def _add_one(self, m, force=False, progress=None):
         """用 Qwen 的感知产出写入一条记忆，返回 (moment_id, info)。"""
@@ -630,6 +719,10 @@ class InteractiveSession:
                 "eval": golden_eval(fields, m.get("ground_truth", {})),
             }
             update("cached_memory", "这条记忆已在当前会话中，复用现有记录",
+                   self._progress_text(m, info))
+            info["recommendation"] = self._recommend_after_write(
+                existing_mid, dataset_id, progress)
+            update("done", "片段处理完成；已生成对应建议",
                    self._progress_text(m, info))
             self._set_step_progress(completed_item=self._progress_text(m, info))
             return existing_mid, info
@@ -820,7 +913,10 @@ class InteractiveSession:
             "multimodal": multimodal,
             "media_error": media_error,
         }
-        update("done", "当前片段已写入记忆", self._progress_text(m, info))
+        info["recommendation"] = self._recommend_after_write(mid, dataset_id, progress)
+        advice_message = ("片段已写入并生成建议" if not info["recommendation"].get("error")
+                          else "记忆已写入；建议生成失败，可查看错误")
+        update("done", advice_message, self._progress_text(m, info))
         self._set_step_progress(completed_item=self._progress_text(m, info))
         return mid, info
 
