@@ -365,8 +365,11 @@ class Handler(BaseHTTPRequestHandler):
                             elif item.get("status") == "not_verified":
                                 not_verified += 1
             expected = int((report or {}).get("moments_total") or 725)
-            if report is not None and processed >= expected:
-                return self._send(200, {"complete": True, "report": report})
+            capacity = load_json(run_dir / "capacity_report.json")
+            if report is not None and capacity is not None and processed >= expected:
+                return self._send(200, {
+                    "complete": True, "report": report, "capacity": capacity,
+                })
             return self._send(200, {
                 "complete": False, "processed_moments": processed,
                 "total_moments": 725, "checked_objects": checked,
@@ -388,6 +391,13 @@ class Handler(BaseHTTPRequestHandler):
 
         if url.path == "/api/multimodal-capacity":
             temporal_long = load_json(RUNS / "multimodal_full_day_v8_20261007" / "capacity_report.json")
+            grounding_dir = RUNS / "multimodal_full_day_v9_object_grounded_20261011"
+            grounding_report = load_json(grounding_dir / "object_grounding_report.json")
+            progress_path = grounding_dir / "object_grounding_progress.jsonl"
+            progress_count = sum(1 for line in progress_path.open(encoding="utf-8")) if progress_path.is_file() else 0
+            if (grounding_report is not None and
+                    progress_count >= int(grounding_report.get("moments_total") or 725)):
+                temporal_long = load_json(grounding_dir / "capacity_report.json") or temporal_long
             if temporal_long is not None:
                 temporal_long["retrieval_latency"] = load_json(
                     RUNS / "multimodal_decision_review_v40_20261007" / "retrieval_latency_report.json")

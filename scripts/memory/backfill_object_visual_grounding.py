@@ -194,6 +194,38 @@ def main() -> int:
 
     output_memory = args.output_dir / "memory.json"
     atomic_write_json(output_memory, db)
+    source_asset_bytes = sum(
+        file.stat().st_size for file in (args.input_dir / "assets").rglob("*")
+        if file.is_file()
+    )
+    asset_bytes = sum(
+        file.stat().st_size for file in (args.output_dir / "assets").rglob("*")
+        if file.is_file()
+    )
+    source_capacity = {}
+    capacity_path = args.input_dir / "capacity_report.json"
+    if capacity_path.is_file():
+        source_capacity = json.loads(capacity_path.read_text(encoding="utf-8"))
+    memory_bytes = output_memory.stat().st_size
+    daily_count = max(len(archive), 1)
+    total_bytes = memory_bytes + asset_bytes
+    ten_year_bytes = total_bytes / daily_count * 725 * 3650
+    capacity_report = {
+        **source_capacity,
+        "dataset": str(source_file),
+        "stored_moments": len(archive),
+        "memory_json_bytes": memory_bytes,
+        "asset_bytes": asset_bytes,
+        "total_bytes": total_bytes,
+        "mean_bytes_per_moment": round(total_bytes / daily_count, 1),
+        "projected_10yr_gb_at_725_moments_per_day": round(ten_year_bytes / 1e9, 2),
+        "projected_10yr_gib_at_725_moments_per_day": round(ten_year_bytes / (1024 ** 3), 2),
+        "previous_v8_total_bytes": source_capacity.get("total_bytes"),
+        "incremental_annotation_bytes": memory_bytes - source_file.stat().st_size,
+        "raw_video_included": False,
+        "projection_note": "Measured v9 memory plus retained evidence assets, linearly projected at 725 moments/day; excludes original video, software, and unmeasured external index overhead.",
+    }
+    atomic_write_json(args.output_dir / "capacity_report.json", capacity_report)
     item_counts = Counter()
     moments_with_items = 0
     grounded_with_frame = 0

@@ -3310,13 +3310,15 @@ function loadObjectGroundingStatus(){
       .then(response=>{if(!response.ok)throw new Error('HTTP '+response.status);return response.json();})
       .then(data=>{
         if(data.complete&&data.report){
-          const r=data.report, counts=r.object_status_counts||{};
+          const r=data.report, counts=r.object_status_counts||{}, capacity=data.capacity||{};
           const linked=Number(r.objects_with_grounded_frame_refs||0);
           const notVerified=Number(counts.not_verified||0);
+          const tenYear=Number(capacity.projected_10yr_gb_at_725_moments_per_day||0);
+          const storage=tenYear>0?' · 含物品关联信息的 10 年样本外推 '+tenYear.toFixed(2)+' GB':'';
           el.innerHTML='<b>完整日逐物品画面关联已回填（Qwen 自报）</b>：'+
             Number(r.moments_with_object_annotations||0)+' / '+Number(r.moments_total||0)+' 段已处理 · '+
             linked.toLocaleString()+' / '+Number(r.unique_object_labels||0).toLocaleString()+
-            ' 个物品标签带对应画面引用 · '+notVerified.toLocaleString()+' 个待核验。此结果不是人工准确率；原视频未复制进记忆库。';
+            ' 个物品标签带对应画面引用 · '+notVerified.toLocaleString()+' 个待核验'+storage+'。此结果不是人工准确率；原视频未复制进记忆库。';
           el.classList.remove('eval-mm-warning');
           return;
         }
