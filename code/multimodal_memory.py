@@ -407,36 +407,88 @@ class MultimodalAssetStore:
 
 
 def compare_multimodal(left: dict, right: dict) -> dict[str, Any]:
-    """Transparent pairwise similarity; missing modalities are not scored."""
+    """Compare every retained temporal sample, with inspectable best-pair times."""
     a, b = (left.get("multimodal") or left), (right.get("multimodal") or right)
-    scores = {}
-    try:
-        h1, h2 = a["visual"]["dhash"], b["visual"]["dhash"]
-        scores["visual"] = round(1 - (int(h1, 16) ^ int(h2, 16)).bit_count() / 64, 4)
-    except (KeyError, TypeError, ValueError):
-        pass
-    try:
-        x, y = a["audio"]["signature"], b["audio"]["signature"]
-        if len(x) == len(y) == 16:
-            dot = sum(i * j for i, j in zip(x, y))
-            norm = math.sqrt(sum(i * i for i in x) * sum(j * j for j in y))
-            if norm:
-                scores["audio"] = round(max(0.0, dot / norm), 4)
-    except (KeyError, TypeError, ValueError):
-        pass
+    scores: dict[str, float] = {}
+    evidence: dict[str, Any] = {}
+
+    def best_pair(left_refs, right_refs, value_of, similarity_of):
+        left_samples = [(ref, value_of(ref)) for ref in left_refs]
+        right_samples = [(ref, value_of(ref)) for ref in right_refs]
+        left_samples = [(ref, value) for ref, value in left_samples if value is not None]
+        right_samples = [(ref, value) for ref, value in right_samples if value is not None]
+        pairs = []
+        for left_ref, left_value in left_samples:
+            for right_ref, right_value in right_samples:
+                score = similarity_of(left_value, right_value)
+                if score is not None:
+                    pairs.append((score, left_ref, right_ref))
+        if not pairs:
+            return None, None
+        score, left_ref, right_ref = max(
+            pairs, key=lambda row: (row[0], str(row[1].get("asset") or ""),
+                                    str(row[2].get("asset") or "")))
+        return score, {
+            "left_at_s": round(float(left_ref.get("at_s") or 0), 2),
+            "right_at_s": round(float(right_ref.get("at_s") or 0), 2),
+            "pairs_compared": len(pairs),
+        }
+
+    def visual_value(ref):
+        try:
+            value = str(ref.get("dhash") or "")
+            return int(value, 16) if len(value) == 16 else None
+        except (TypeError, ValueError):
+            return None
+
+    def visual_similarity(x, y):
+        return 1 - (x ^ y).bit_count() / 64
+
+    visual, visual_evidence = best_pair(
+        media_refs(a, "visual"), media_refs(b, "visual"),
+        visual_value, visual_similarity)
+    if visual is not None:
+        scores["visual"] = round(visual, 4)
+        evidence["visual"] = visual_evidence
+
+    def audio_value(ref):
+        signature = ref.get("signature")
+        if not isinstance(signature, list) or len(signature) != 16:
+            return None
+        try:
+            return [float(value) for value in signature]
+        except (TypeError, ValueError):
+            return None
+
+    def audio_similarity(x, y):
+        dot = sum(i * j for i, j in zip(x, y))
+        norm = math.sqrt(sum(i * i for i in x) * sum(j * j for j in y))
+        return max(0.0, dot / norm) if norm else None
+
+    audio, audio_evidence = best_pair(
+        media_refs(a, "audio"), media_refs(b, "audio"),
+        audio_value, audio_similarity)
+    if audio is not None:
+        scores["audio"] = round(audio, 4)
+        evidence["audio"] = audio_evidence
+
     e1, e2 = a.get("entities") or {}, b.get("entities") or {}
-    tags1 = {str(v).lower() for key in ("people", "objects", "environments")
+    tags1 = {str(v).casefold() for key in ("people", "objects", "environments", "speakers")
              for v in (e1.get(key) or [])}
-    tags2 = {str(v).lower() for key in ("people", "objects", "environments")
+    tags2 = {str(v).casefold() for key in ("people", "objects", "environments", "speakers")
              for v in (e2.get(key) or [])}
-    for e in (e1, e2):
+    for e, tags in ((e1, tags1), (e2, tags2)):
         if e.get("activity"):
-            (tags1 if e is e1 else tags2).add(str(e["activity"]).lower())
+            tags.add(str(e["activity"]).casefold())
         if e.get("location"):
-            (tags1 if e is e1 else tags2).add(str(e["location"]).lower())
+            tags.add(str(e["location"]).casefold())
     if tags1 and tags2:
         scores["entities"] = round(len(tags1 & tags2) / len(tags1 | tags2), 4)
     weights = {"visual": 0.5, "audio": 0.25, "entities": 0.25}
     total = sum(weights[key] for key in scores)
-    return {"score": round(sum(scores[key] * weights[key] for key in scores) / total, 4)
-            if total else None, "modalities": scores}
+    return {
+        "score": round(sum(scores[key] * weights[key] for key in scores) / total, 4)
+        if total else None,
+        "modalities": scores,
+        "evidence": evidence,
+    }

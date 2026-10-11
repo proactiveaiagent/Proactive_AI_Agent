@@ -302,6 +302,7 @@ class MemoryReasoner:
                     "from_id": link.get("from_id"),
                     "similarity": (link.get("similarity") or {}).get("score"),
                     "modalities": (link.get("similarity") or {}).get("modalities") or {},
+                    "sample_evidence": (link.get("similarity") or {}).get("evidence") or {},
                 }
                 row["reasons"] = list(row.get("reasons") or []) + ["多模态相似关联"]
             rows.append(row)

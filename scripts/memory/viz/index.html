@@ -580,7 +580,7 @@ body{height:100vh;height:100dvh;min-height:0;display:flex;flex-direction:column}
 .storage-projection-table tr:last-child td{border-bottom:0}
 .storage-projection-ok{color:#14845b}
 .storage-projection-note{margin:6px 0 0;color:#68758d;font-size:10px;line-height:1.55}
-.eval-mm-storage-summary{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 8px}.eval-mm-storage-summary span{padding:7px 10px;border:1px solid #dce5f3;border-radius:8px;background:#f7f9fd;color:#53627d;font-size:11px}.eval-mm-storage-summary b{color:#344b80;margin-right:4px}.eval-mm-latency{margin-top:8px;padding:8px 10px;border-radius:8px;background:#f2f7ff;color:#53627d;font-size:11px;line-height:1.5}.eval-mm-latency b{color:#344b80}@media(max-width:620px){.eval-mm-storage-summary{display:grid;grid-template-columns:1fr}}
+.eval-mm-storage-summary{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 8px}.eval-mm-storage-summary span{padding:7px 10px;border:1px solid #dce5f3;border-radius:8px;background:#f7f9fd;color:#53627d;font-size:11px}.eval-mm-storage-summary b{color:#344b80;margin-right:4px}.eval-mm-latency{margin-top:8px;padding:8px 10px;border-radius:8px;background:#f2f7ff;color:#53627d;font-size:11px;line-height:1.5}.eval-mm-latency b{color:#344b80}.eval-mm-warning{background:#fff8e8;border:1px solid #f3dca0;color:#76551d}.eval-mm-warning b{color:#76551d}@media(max-width:620px){.eval-mm-storage-summary{display:grid;grid-template-columns:1fr}}
 .media-evidence{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:7px 0 2px;padding:6px 8px;border:1px solid #dbe5f2;border-radius:8px;background:#f7faff;color:#52647e;font-size:12px}
 .media-evidence img{width:96px;height:54px;object-fit:cover;border-radius:5px;background:#dce4ef}
 .media-evidence audio{width:190px;height:30px}
@@ -828,6 +828,7 @@ body{height:100vh;height:100dvh;min-height:0;display:flex;flex-direction:column}
           </table>
         </div>
         <p class='storage-projection-note' id='multimodalStorageBasis'>估算基于单人完整日多模态样本；加载后显示实测样本规模、每条平均占用和外推边界。</p>
+        <div class='eval-mm-latency eval-mm-warning' id='multimodalObjectCoverage'><b>物品与画面关联仍未覆盖完整日：</b>完整日 v8 有 2,875 个物品标签，但逐物品画面关联为 0；11:00 的 12 段交互样本中，Qwen 报告 32 / 44 个物品找到对应画面。两项统计范围不同，模型报告不等同人工核验。</div>
         <div class='eval-mm-latency' id='multimodalLatencyMetric'>正在读取多模态记忆检索耗时…</div>
       </section>
       <header class='eval-heading eval-person-heading'><div><h2>评测人物与说明</h2><p>选择人物切换短期与长期同题问答、短期 AI 抽查；选择总体查看 6 人汇总。飞书验收标准保持全体汇总。</p></div><div class='eval-heading-tools'><label class='eval-person-filter'><span>评测人物</span><select id='evalPersonSelect' aria-label='切换评测人物' title='切换短期与长期同题评测、短期内容抽查的人物；总体汇总选择全部' onchange='selectEvalParticipant(this.value)'><option value='all'>总体 · 全部人物</option><option value='A1_JAKE'>Jake · A1</option><option value='A2_ALICE'>Alice · A2</option><option value='A3_TASHA'>Tasha · A3</option><option value='A4_LUCIA'>Lucia · A4</option><option value='A5_KATRINA'>Katrina · A5</option><option value='A6_SHURE'>Shure · A6</option></select></label><button type='button' class='eval-help-btn' aria-haspopup='dialog' aria-controls='evalHelpModal' onclick='openEvalHelp()'>评估说明</button></div></header>
@@ -2999,6 +3000,11 @@ function renderPriorityDetails(rounds){
         const modalities=Object.entries(mm.modalities||{}).map(([key,value])=>
           (key==='visual'?'画面':key==='audio'?'音频':'实体')+' '+Math.round(Number(value)*100)+'%');
         why.push('关联 '+(modalities.join(' / ')||'多模态')+'（总相似度 '+Math.round(Number(mm.similarity||0)*100)+'%）');
+        const ev=mm.sample_evidence||{};
+        if(ev.visual&&ev.visual.left_at_s!==undefined)
+          why.push('画面 '+Number(ev.visual.left_at_s).toFixed(1)+'s ↔ '+Number(ev.visual.right_at_s).toFixed(1)+'s');
+        if(ev.audio&&ev.audio.left_at_s!==undefined)
+          why.push('音频 '+Number(ev.audio.left_at_s).toFixed(1)+'s ↔ '+Number(ev.audio.right_at_s).toFixed(1)+'s');
       }
       if(!why.length)why.push('索引实体召回');
       return '<li><code>'+esc(item.id||'')+'</code> · '+esc(why.join('；'))+'</li>';
