@@ -17,26 +17,125 @@ from pathlib import Path
 
 MODEL_ID = "thenlper/gte-base"
 SCHEMA_VERSION = "1"
+DOCUMENT_VERSION = "2"
 FIELD_LABELS = {
-    "scene": "Scene", "user_action": "Action", "people": "People",
-    "location": "Location", "activity": "Activity", "environments": "Environment",
-    "objects": "Objects", "needs": "Needs", "solutions": "Solutions",
-    "time_occasion": "Time", "source_evidence": "Dialogue evidence",
+    "scene": "Scene",
+    "user_action": "Action",
+    "interaction_details": "People and event sequence",
+    "people": "People",
+    "location": "Location",
+    "activity": "Activity",
+    "environments": "Environment",
+    "objects": "Objects",
+    "notes": "Additional observed context",
+    "time_occasion": "Time",
 }
 
 
+def _text(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, (list, tuple)):
+        return ", ".join(part for item in value if (part := _text(item)))
+    if isinstance(value, dict):
+        return "; ".join(
+            f"{key}: {part}" for key, item in sorted(value.items())
+            if (part := _text(item))
+        )
+    return str(value).strip()
+
+
+def _observation_rows(value):
+    if isinstance(value, list):
+        return [row for row in value if isinstance(row, dict)]
+    if isinstance(value, dict):
+        return [value]
+    return []
+
+
+def _row_text(label: str, row: dict, fields: tuple[tuple[str, str], ...]) -> str:
+    parts = [f"{name}: {_text(row.get(key))}" for key, name in fields
+             if _text(row.get(key))]
+    return f"{label}: " + "; ".join(parts) if parts else ""
+
+
 def memory_text(moment: dict) -> str:
-    """Create a stable, field-aware embedding input without media file contents."""
+    """Build retrieval text from observed memory fields, never inferred advice.
+
+    The content version is bumped whenever this representation changes so a
+    stale persistent vector index cannot be treated as current.
+    """
     parts = []
     for key, label in FIELD_LABELS.items():
         value = moment.get(key)
-        if value in (None, "", [], {}):
-            continue
-        if isinstance(value, list):
-            value = ", ".join(str(item) for item in value if item not in (None, ""))
-        elif isinstance(value, dict):
-            value = json.dumps(value, ensure_ascii=False, sort_keys=True)
-        parts.append(f"{label}: {value}")
+        text = _text(value)
+        if text:
+            parts.append(f"{label}: {text}")
+
+    source_time = moment.get("source_time")
+    if isinstance(source_time, dict):
+        time_fields = (
+            ("day_label", "day"), ("time_of_day", "time of day"),
+            ("time_occasion", "occasion"), ("occurred_at", "occurred at"),
+            ("time_scope", "observed time range"),
+            ("clip_start_s", "clip start seconds"),
+            ("clip_end_s", "clip end seconds"),
+        )
+        time_text = _row_text("Source time", source_time, time_fields)
+        if time_text:
+            parts.append(time_text)
+
+    for row in _observation_rows(moment.get("person_observations")):
+        fields = [
+            ("entity", "person"),
+            ("appearance", "visible appearance"),
+            ("visual_label", "visible description"),
+            ("evidence", "visual evidence"),
+            ("frame_time_s", "observed at seconds"),
+        ]
+        apparent_age = _text(row.get("apparent_age_range"))
+        if apparent_age and row.get("apparent_age_basis") == "visual_estimate":
+            fields.append(("apparent_age_range", "broad visual age estimate"))
+        if row.get("age_basis") == "visible_text":
+            fields.append(("age", "age stated in visible text"))
+        line = _row_text("Person observation", row, tuple(fields))
+        if line:
+            parts.append(line)
+
+    fact_fields = (
+        ("subject_type", "type"), ("subject", "subject"),
+        ("predicate", "action or state"), ("value", "detail"),
+        ("actor", "actor"), ("affected_people", "affected people"),
+        ("from_location", "from location"), ("to_location", "to location"),
+        ("from_state", "previous state"), ("to_state", "current state"),
+        ("time_scope", "time range"), ("time_order", "event order"),
+        ("frame_time_s", "observed at seconds"), ("status", "status"),
+        ("evidence", "visual or spoken evidence"),
+    )
+    for row in _observation_rows(moment.get("temporal_facts")):
+        line = _row_text("Timed fact", row, fact_fields)
+        if line:
+            parts.append(line)
+
+    object_fields = (
+        ("entity", "object"), ("object", "object"), ("name", "object"),
+        ("label", "label"), ("description", "description"),
+        ("appearance", "appearance"), ("state", "state"),
+        ("location", "location"), ("from_location", "from location"),
+        ("to_location", "to location"), ("condition", "condition"),
+        ("time_scope", "time range"), ("frame_time_s", "observed at seconds"),
+        ("evidence", "evidence"),
+    )
+    for row in _observation_rows(moment.get("object_observations")):
+        line = _row_text("Object observation", row, object_fields)
+        if line:
+            parts.append(line)
+
+    # Keep raw dialogue available for text search without letting a long
+    # transcript crowd out the structured visual and temporal facts above.
+    dialogue = _text(moment.get("source_evidence"))
+    if dialogue:
+        parts.append("Dialogue evidence: " + dialogue[:1200])
     return "\n".join(parts)
 
 
@@ -98,7 +197,7 @@ class PersistentSemanticIndex:
                        "model_id TEXT NOT NULL, dimension INTEGER NOT NULL, "
                        "vector BLOB NOT NULL, updated_at REAL NOT NULL)")
             db.execute("CREATE TABLE IF NOT EXISTS index_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
-            db.execute("INSERT OR REPLACE INTO index_meta(key,value) VALUES('schema_version',?)",
+            db.execute("INSERT OR IGNORE INTO index_meta(key,value) VALUES('schema_version',?)",
                        (SCHEMA_VERSION,))
 
     def _connect(self):
@@ -154,8 +253,12 @@ class PersistentSemanticIndex:
             ).encode("utf-8")).hexdigest()
             db.execute("INSERT OR REPLACE INTO index_meta(key,value) VALUES('model_id',?)",
                        (encoder.model_id,))
+            db.execute("INSERT OR REPLACE INTO index_meta(key,value) VALUES('document_version',?)",
+                       (DOCUMENT_VERSION,))
             db.execute("INSERT OR REPLACE INTO index_meta(key,value) VALUES('corpus_digest',?)",
                        (corpus_digest,))
+            db.execute("INSERT OR REPLACE INTO index_meta(key,value) VALUES('active_count',?)",
+                       (str(len(documents)),))
             if revision is not None:
                 db.execute("INSERT OR REPLACE INTO index_meta(key,value) VALUES('memory_revision',?)",
                            (str(revision),))
@@ -190,6 +293,18 @@ class PersistentSemanticIndex:
         with self._connect() as db:
             meta = dict(db.execute("SELECT key,value FROM index_meta"))
         if meta.get("model_id") != encoder.model_id:
+            return False
+        if meta.get("document_version") != DOCUMENT_VERSION:
+            return False
+        try:
+            expected_count = int(meta.get("active_count", "-1"))
+        except (TypeError, ValueError):
+            return False
+        with self._connect() as db:
+            actual_count = db.execute(
+                "SELECT count(*) FROM vectors WHERE model_id=?", (encoder.model_id,)
+            ).fetchone()[0]
+        if actual_count != expected_count:
             return False
         if revision is not None:
             return meta.get("memory_revision") == str(revision)

@@ -14,7 +14,9 @@ interactive_runner.py — 交互式步进执行器
 """
 
 import copy
+import hashlib
 import json
+import re
 import os
 import sys
 import threading
@@ -23,20 +25,50 @@ import uuid
 from pathlib import Path
 from urllib.parse import quote
 
+import requests
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "code"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from memory import PersonMemory, _portable_video_id, entity_graph_summary  # noqa: E402
+from memory import (PersonMemory, _build_entity_visuals, _portable_video_id,
+                    entity_graph_summary, normalize_object_transition_facts)  # noqa: E402
+from entity_records import memory_facts
 from daytime_processor import DaytimeProcessor  # noqa: E402
 from nighttime_processor import NightlyProcessor  # noqa: E402
-from multimodal_memory import MultimodalAssetStore, media_refs  # noqa: E402
+from multimodal_memory import (CAPTURE_VERSION, MultimodalAssetStore, _run_ffmpeg,
+                                media_refs, strip_audio_assets)  # noqa: E402
 import run_scenarios as rs               # noqa: E402  复用 snapshot / 夜间整理辅助函数
-from qwen_perceive import QwenPerceiver, golden_eval, clip_range, video_path_of   # noqa: E402
+from qwen_perceive import (QwenPerceiver, golden_eval, clip_range, video_path_of,
+                           PROMPT_VERSION, LIST_PARSER_VERSION)   # noqa: E402
+from advice_cache import PersistentAdviceCache  # noqa: E402
+from grounding_cache import PersistentObjectGroundingCache  # noqa: E402
+from audio_transcript_cache import PersistentTranscriptCache  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 TESTSET = ROOT / "data" / "egolife" / "testset"
 RUNS = ROOT / "data" / "egolife" / "runs"
 VIDEO_ROOT = (ROOT / "data" / "egolife").resolve()
+
+_AGE_AS_PERSON_RE = re.compile(
+    r"\b(a|an|the)\s+(baby|infant|toddler|newborn|child|children|boy|girl)\b"
+    r"(?=\s+(?:is|was|who|with|wearing|holding|holds|sits|stands|playing|smiling|"
+    r"appears|in|on|at)\b|[.,;]|$)",
+    re.I,
+)
+_AGE_ADJECTIVE_PERSON_RE = re.compile(
+    r"\b(?:elderly|older|younger|young|old)\s+(?:woman|man|person|adult|individual)\b",
+    re.I,
+)
+
+
+def _remove_visual_age_guess(value):
+    """Do not encode an age category inferred from a person’s appearance."""
+    text = str(value or "")
+    text = _AGE_AS_PERSON_RE.sub(
+        lambda match: ("the person" if match.group(1).casefold() == "the" else "a person"),
+        text,
+    )
+    return _AGE_ADJECTIVE_PERSON_RE.sub("person", text)
 
 
 def _source_video_id(moment, video_path=None):
@@ -46,7 +78,13 @@ def _source_video_id(moment, video_path=None):
         try:
             raw = Path(video_path).resolve().relative_to(VIDEO_ROOT).as_posix()
         except (OSError, ValueError):
-            raw = ""
+            try:
+                raw = Path(video_path).resolve().relative_to(FEISHU_TEST_ROOT).as_posix()
+            except (OSError, ValueError):
+                try:
+                    raw = Path(video_path).resolve().relative_to(ROOT).as_posix()
+                except (OSError, ValueError):
+                    raw = ""
     raw = raw or str(moment.get("video_id") or moment.get("video") or "")
     return _portable_video_id(raw)
 
@@ -57,6 +95,16 @@ SHORT_EXPANDED_PLAN = TESTSET / "short_term" / "crud_plan_v2.json"
 LONG_FILE = TESTSET / "long_term" / "full_day.jsonl"
 LONG_META = TESTSET / "long_term" / "timeline_meta.json"
 LONG_PERSON_DIR = TESTSET / "long_term" / "person_sets"
+FEISHU_TEST_ROOT = (ROOT / "test_data" / "feishu_ar_agent_memory_retrieval_20261013").resolve()
+FEISHU_TEST_MANIFEST = FEISHU_TEST_ROOT / "manifest.json"
+FEISHU_TESTSET_LABELS = {
+    "1.social_hint": "社交提示", "2.travel_abroad": "出国旅行",
+    "3.forgetting_item": "遗忘物品", "4.first_aid": "急救场景",
+    "5.health_safeguard": "健康保障", "6.hotel_reception": "酒店接待",
+    "7.photo_taking": "拍照协助", "8.fraud_detection": "诈骗识别",
+    "9.security_alert": "安全警报", "10.conversation_assistance": "对话辅助",
+    "11.emotional support": "情绪支持", "12.shopping_selection": "购物选择",
+}
 
 
 def site_perceiver():
@@ -76,15 +124,17 @@ def site_perceiver():
 SCENARIO_META = {
     "short_term": {"name": "短期记忆场景", "desc": "不连续视频片段 · 验证 Layer1~7 完整 CRUD"},
     "long_term": {"name": "长期记忆场景", "desc": "完整一天 · 验证记忆流转与夜间整理"},
+    "custom_test": {"name": "自定义测试集", "desc": "单次场景记忆测评 · 逐段写入并检索，不执行日级夜间整理"},
 }
 
 
 def _clock_from_id(mid):
     """DAY1_A2_ALICE_11093000_en → 11:09:30"""
     parts = str(mid).split("_")
-    if len(parts) >= 4:
+    if len(parts) >= 4 and re.fullmatch(r'DAY\d+', parts[0], re.I):
         t = parts[3]
-        if len(t) >= 6 and t[:6].isdigit():
+        if (len(t) >= 6 and t[:6].isdigit() and int(t[:2]) < 24
+                and int(t[2:4]) < 60 and int(t[4:6]) < 60):
             return f"{t[0:2]}:{t[2:4]}:{t[4:6]}"
     return ""
 
@@ -92,17 +142,472 @@ def _clock_from_id(mid):
 def _intra_hour_offset(mid):
     """文件名时间戳相对整点小时的秒数：DAY1_A2_ALICE_11093000 → 9*60+30 = 570s"""
     parts = str(mid).split("_")
-    if len(parts) >= 4 and len(parts[3]) >= 6 and parts[3][:6].isdigit():
+    if _clock_from_id(mid):
         t = parts[3]
         return int(t[2:4]) * 60 + int(t[4:6])
     return 0
 
 
+_AUDIO_EVIDENCE_LINE_RE = re.compile(
+    r"^\[audio\s+(?P<start>\d+(?:\.\d+)?)\s*[–-]\s*"
+    r"(?P<end>\d+(?:\.\d+)?)\s*s;\s*(?P<language>[^\]]+)\]\s*(?P<text>.+)$",
+    re.I,
+)
+_EXPLICIT_ENGLISH_AGE_RE = re.compile(
+    r"\b(?:i am|i'm)\s+(\d{1,3})\s+(?:years? old|yo)\b", re.I)
+_EXPLICIT_CHINESE_AGE_RE = re.compile(r"(?:我|本人)(?:今年)?\s*(\d{1,3})\s*岁")
+
+_ENGLISH_PERSON_SUBJECT = (
+    r"(?:[A-Z][A-Za-z'’.-]*(?:\s+[A-Z][A-Za-z'’.-]*){0,2}"
+    r"|(?i:(?:my|his|her|their)\s+(?:mother|mom|mum|father|dad|daughter|son|"
+    r"wife|husband|sister|brother|friend|colleague|doctor))"
+    r"|(?i:he|she|they))"
+)
+_CHINESE_PERSON_SUBJECT = (
+    r"(?:我(?:们)?(?:的)?(?:妈妈|母亲|妈|爸爸|父亲|爸|奶奶|爷爷|女儿|儿子|"
+    r"妻子|丈夫|姐妹|兄弟|朋友|同事)?|他(?:们)?|她(?:们)?|[\u4e00-\u9fff]{2,4})"
+)
+_EXPLICIT_ENGLISH_OTHER_AGE_RE = re.compile(
+    rf"\b(?P<subject>{_ENGLISH_PERSON_SUBJECT})\s+(?:(?:is|are)\s+)?"
+    r"(?P<age>\d{1,3})\s+(?:years? old|yo)\b"
+)
+_EXPLICIT_CHINESE_OTHER_AGE_RE = re.compile(
+    rf"(?P<subject>{_CHINESE_PERSON_SUBJECT})\s*"
+    r"(?:(?:今年|现在|目前)\s*)?(?P<age>\d{1,3})\s*岁"
+)
+_EXPLICIT_ENGLISH_OTHER_PLAN_RE = re.compile(
+    rf"\b(?P<subject>{_ENGLISH_PERSON_SUBJECT})\s+"
+    r"(?:(?:is|are)\s+)?(?:planning to|plans to|going to|will|shall|gonna)\b(?!\s+(?:not|never)\b)"
+)
+_EXPLICIT_CHINESE_OTHER_PLAN_RE = re.compile(
+    rf"(?P<subject>{_CHINESE_PERSON_SUBJECT})\s*"
+    r"(?P<time_scope>未来几天|这几天|今天|今晚|明天|后天|本周|这周|下周(?:[一二三四五六日天])?|"
+    r"周[一二三四五六日天]|月底|最近)?\s*"
+    r"(?<!没有)(?<!不)(?<!没)(?<!未)(?:打算|计划|准备|将要|将|会|要)"
+)
+_ENGLISH_HEALTH_CONDITION = (
+    r"(?:type\s+\d+\s+diabetes|high blood pressure|heart disease|heart condition|heart attack|"
+    r"kidney disease|blood clot|diabetes|asthma|hypertension|epilepsy|cancer|stroke|"
+    r"arthritis|dementia|allerg(?:y|ies))"
+)
+_EXPLICIT_ENGLISH_OTHER_HEALTH_RE = re.compile(
+    rf"\b(?P<subject>{_ENGLISH_PERSON_SUBJECT})\s+(?:"
+    rf"(?:(?:has|had|suffers? from|was diagnosed with|has been diagnosed with|"
+    rf"is diagnosed with)\s+(?:a\s+|an\s+)?(?P<condition>{_ENGLISH_HEALTH_CONDITION})\b)"
+    rf"|(?:(?:takes?|is taking)\s+(?:medication|medicine|insulin|pills?)\s+for\s+"
+    rf"(?P<med_condition>{_ENGLISH_HEALTH_CONDITION})\b)"
+    rf"|(?:(?:is|are)\s+allergic to\s+(?P<allergen>[^.!?,;]{{1,40}}))"
+    rf"|(?:(?:had|has had|underwent)\s+(?P<surgery>surgery|a surgery)\b)"
+    rf")",
+    re.I,
+)
+_CHINESE_HEALTH_CONDITION = (
+    r"(?:糖尿病|高血压|哮喘|心脏病|心肌梗死|心梗|心脏病发作|癫痫|癌症|中风|关节炎|痴呆|老年痴呆|"
+    r"血栓|肾病|过敏|手术|降压药|胰岛素|药物)"
+)
+_EXPLICIT_CHINESE_OTHER_HEALTH_RE = re.compile(
+    rf"(?P<subject>{_CHINESE_PERSON_SUBJECT})\s*(?:曾经|以前|目前|现在|一直)?"
+    rf"(?<!没)(?<!不)(?<!未)(?:患有|患过|得过|有|被诊断为|被诊断出|"
+    rf"确诊(?:患有)?|正在服用|服用|做过)"
+    rf"[^。！？.!?]{{0,16}}?(?P<condition>{_CHINESE_HEALTH_CONDITION})"
+)
+_EXPLICIT_CHINESE_OTHER_ALLERGY_RE = re.compile(
+    rf"(?P<subject>{_CHINESE_PERSON_SUBJECT})\s*对"
+    rf"(?P<allergen>[^。！？.!?]{{1,20}}?)(?<!不)过敏"
+)
+_EXPLICIT_PLAN_TIME_RE = re.compile(
+    r"\b(?:the day after tomorrow|tomorrow|today|tonight|this week|this weekend|"
+    r"next week|next month|in a few days|in \d{1,2} days|on "
+    r"(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b"
+    r"|(?:未来几天|这几天|今天|今晚|明天|后天|本周|这周|下周(?:[一二三四五六日天])?|"
+    r"周[一二三四五六日天]|月底|最近)",
+    re.I,
+)
+
+_EXPLICIT_ENGLISH_PLAN_RE = re.compile(
+    r"\b(?:i(?:'m| am) planning to|i plan to|i(?:'m| am) going to|"
+    r"i(?:'m| am) gonna|i(?:'ll| will)|we(?:'re| are) planning to|"
+    r"we plan to|we(?:'re| are) going to|we(?:'re| are) gonna|we(?:'ll| will))\b(?!\s+(?:not|never)\b)",
+    re.I,
+)
+_EXPLICIT_CHINESE_PLAN_RE = re.compile(
+    r"(?:我|我们)(?:打算|计划|准备)(?:要)?[^。！？.!?]{1,180}")
+_EXPLICIT_ENGLISH_HEALTH_RE = re.compile(
+    r"\b(?:i have(?!\s+(?:no|not|never)\b)|i've had(?!\s+(?:no|not|never)\b)|i had(?!\s+(?:no|not|never)\b)|i was diagnosed with(?!\s+(?:no|not|never)\b)|i have been diagnosed with(?!\s+(?:no|not|never)\b)|"
+    r"i suffer from|i take (?:medication|medicine|insulin|pills?) for|"
+    r"i am taking (?:medication|medicine|insulin|pills?) for)\b.{0,100}"
+    r"\b(?:diabetes|asthma|hypertension|high blood pressure|heart disease|"
+    r"heart condition|heart attack|epilepsy|cancer|stroke|arthritis|dementia|allerg(?:y|ies)|"
+    r"blood clot|kidney disease|medication|insulin|surgery)\b"
+    r"|\b(?:i'm|i am) allergic to [\w-]+(?:\s+[\w-]+){0,4}\b", re.I)
+_EXPLICIT_CHINESE_HEALTH_RE = re.compile(
+    r"(?:我|本人)(?:(?:曾经|以前|目前|现在|一直)?(?:患有|患过|得过|有|被诊断为|"
+    r"被诊断出|确诊(?:患有)?|正在服用|服用|做过))[^。！？.!?]{0,80}"
+    r"(?:糖尿病|高血压|哮喘|心脏病|心肌梗死|心梗|心脏病发作|癫痫|癌症|中风|关节炎|痴呆|老年痴呆|"
+    r"血栓|肾病|过敏|手术|降压药|胰岛素|药物)|"
+    r"(?:我|本人)对[^。！？.!?]{1,20}(?<!没有)(?<!不)(?<!没)过敏")
+
+
+_EXPLICIT_ENGLISH_SELF_NAME_RE = re.compile(
+    r"(?i:\b(?:my name is|you can call me|please call me)\s+)"
+    r"(?P<name>[A-Za-z][A-Za-z'’.-]{1,40}(?:\s+[A-Z][A-Za-z'’.-]{1,40}){0,2})\b")
+_EXPLICIT_CHINESE_SELF_NAME_RE = re.compile(
+    r"(?:我的名字是|我叫)(?P<name>[\u4e00-\u9fff]{2,4})(?=\s|[,，。！？.!?]|$)")
+_EXPLICIT_ENGLISH_OTHER_NAME_RE = re.compile(
+    r"\b(?P<subject>(?i:he|she|they)|"
+    r"(?i:my|our|his|her|their)\s+(?:mother|mom|mum|father|dad|daughter|son|wife|husband|"
+    r"sister|brother|friend|colleague|partner|boyfriend|girlfriend|roommate))"
+    r"(?i:'s name is|\s+is called|\s+goes by)\s+"
+    r"(?P<name>[A-Za-z][A-Za-z'’.-]{1,40}(?:\s+[A-Z][A-Za-z'’.-]{1,40}){0,2})\b")
+_EXPLICIT_CHINESE_OTHER_NAME_RE = re.compile(
+    r"(?P<subject>他|她|他们|她们|我(?:的)?(?:妈妈|母亲|爸爸|父亲|奶奶|爷爷|女儿|儿子|妻子|丈夫|"
+    r"姐妹|兄弟|朋友|同事|伴侣|男朋友|女朋友|室友))"
+    r"(?:的名字是|的名字叫|叫)(?P<name>[\u4e00-\u9fff]{2,4})(?=\s|[,，。！？.!?]|$)")
+_EXPLICIT_ENGLISH_PREFERENCE_RE = re.compile(
+    r"\b(?:I|we)(?:\s+really)?\s+(?:(?:do not|don't|never)\s+)?"
+    r"(?:like|love|enjoy|prefer|hate|dislike)\s+[^.!?;]{2,140}", re.I)
+_EXPLICIT_CHINESE_PREFERENCE_RE = re.compile(
+    r"(?:我|我们)(?:最|更|比较|非常)?(?:喜欢|爱|享受|偏好|讨厌|不喜欢|不爱)"
+    r"[^。！？.!?;]{2,100}")
+_EXPLICIT_ENGLISH_OTHER_PREFERENCE_RE = re.compile(
+    r"\b(?P<subject>(?i:he|she|they)|"
+    r"[A-Z][A-Za-z'’.-]*(?:\s+[A-Z][A-Za-z'’.-]*){0,2}|"
+    r"(?i:(?:my|our|his|her|their)\s+(?:mother|mom|mum|father|dad|daughter|son|"
+    r"wife|husband|sister|brother|friend|colleague|partner|boyfriend|girlfriend|roommate)))"
+    r"\s+(?:(?i:really)\s+)?(?i:likes|loves|enjoys|prefers|hates|dislikes)\s+"
+    r"[^.!?;]{2,140}")
+_EXPLICIT_CHINESE_OTHER_PREFERENCE_RE = re.compile(
+    r"(?P<subject>他|她|他们|她们|我(?:们)?(?:的)?(?:妈妈|母亲|爸爸|父亲|奶奶|爷爷|"
+    r"女儿|儿子|妻子|丈夫|朋友|同事|伴侣|男朋友|女朋友|室友)|[\u4e00-\u9fff]{2,4})"
+    r"(?:最|更|比较)?(?:喜欢|爱|偏好|讨厌|不喜欢)[^。！？.!?;]{2,100}")
+_EXPLICIT_ENGLISH_RELATION_RE = re.compile(
+    r"\b(?:my|our)\s+(?:mother|mom|mum|father|dad|daughter|son|wife|husband|"
+    r"sister|brother|friend|colleague|partner|boyfriend|girlfriend|roommate|doctor)\b|"
+    r"\b(?:I(?:'m| am)|we(?:'re| are))\s+your\s+neighbou?r\b", re.I)
+_EXPLICIT_CHINESE_RELATION_RE = re.compile(
+    r"(?:我|我们)(?:的)?(?:妈妈|母亲|妈|爸爸|父亲|爸|奶奶|爷爷|女儿|儿子|妻子|丈夫|"
+    r"姐妹|兄弟|朋友|同事|伴侣|男朋友|女朋友|室友|医生)")
+_SPOKEN_VOCATIVE_NAME_RE = re.compile(
+    r"^\s*(?i:hi|hello|hey|welcome|good\s+(?:morning|afternoon|evening))"
+    r"\b[,!\s]+(?P<name>[A-Z][a-zA-Z'’-]*(?:\s+[A-Z][a-zA-Z'’-]*){0,2})\b")
+_DIRECT_ADDRESSED_HEALTH_RE = re.compile(
+    rf"^\s*(?P<name>[A-Z][A-Za-z'’.-]*(?:\s+[A-Z][A-Za-z'’.-]*){{0,2}})"
+    rf"[,，]\s*(?:your|你|您的)\s+(?:heart disease|heart condition|heart attack|"
+    rf"high blood pressure|diabetes|asthma|癌症|心脏病|心肌梗死|心梗|高血压)", re.I)
+_EXPLICIT_ENGLISH_FAMILY_ADDRESS_RE = re.compile(
+    r"^\s*(?:dad|daddy|father|mom|mum|mommy|mother|grandma|grandmother|"
+    r"grandpa|grandfather|son|daughter|brother|sister)\b", re.I)
+_EXPLICIT_HEALTH_PRODUCT_CLAIM_RE = re.compile(
+    r"\b(?:health|healthcare)\s+product\b.{0,120}\b(?:works?|address(?:es)?|"
+    r"treats?|cures?|prevents?|improves?|keeps?)\b", re.I)
+_EXPLICIT_FIRST_VISIT_RE = re.compile(
+    r"\b(?:I|we)(?:'ve| have)?\s+never\s+(?:been here before|been to|visited)\b", re.I)
+_EXPLICIT_FIRED_RE = re.compile(
+    r"\b(?:you(?:'re| are)\s+fired|leave our company from today)\b", re.I)
+_EXPLICIT_BIRTHDAY_RE = re.compile(r"\bhappy birthday\b", re.I)
+_EXPLICIT_AIRPORT_INSTRUCTION_RE = re.compile(
+    r"\b(?:please\s+(?:proceed|follow|continue|go|head)|passengers?\s+(?:arriving|should|please))\b", re.I)
+_EXPLICIT_TRANSACTION_RE = re.compile(
+    r"\b(?:bill|dollars?|tips?|pay|paid|payment|receipt)\b|\$\s?\d+", re.I)
+_CHINESE_FAMILY_ADDRESS_RE = re.compile(
+    r"(?:姥姥|外婆|奶奶|爷爷|外公|妈妈|母亲|爸爸|父亲|孙子|孙女|儿子|女儿)(?:好|呀|啊|呢|,|，|。|！|$)|"
+    r"(?:跟|给|对)(?:姥姥|外婆|奶奶|爷爷|外公|妈妈|母亲|爸爸|父亲|孙子|孙女|儿子|女儿)")
+
+_EXPLICIT_ENGLISH_BACKGROUND_RE = re.compile(
+    r"\b(?:I(?:'m| am) from|I live in|I lived in|I grew up in|I moved to|I moved from|"
+    r"I recently arrived in|I just arrived in|I came from|I traveled from|I travelled from)\b", re.I)
+_EXPLICIT_CHINESE_BACKGROUND_RE = re.compile(
+    r"(?:我来自|我住在|我住过|我刚从|我最近从|我搬到|我长大在|我出生于)")
+_EXPLICIT_ENGLISH_EXPERIENCE_RE = re.compile(
+    r"\b(?:I|we)(?:'ve| have)?\s+(?:been to|visited|went to|traveled to|travelled to|"
+    r"tried|used|watched|played|ate|worked at|lived in)\b|"
+    r"\b(?:I|we)\s+(?:visited|went to|traveled to|travelled to|tried|used|watched|"
+    r"played|ate|worked at|lived in)\b", re.I)
+_EXPLICIT_CHINESE_EXPERIENCE_RE = re.compile(
+    r"(?:我|我们)(?:以前|曾经)?(?:去过|到过|住过|吃过|看过|玩过|做过|用过)"
+    r"[^。！？.!?;]{0,100}")
+
+
+def _speech_fact_subject(raw_subject):
+    """Keep quoted referents literal; unresolved pronouns never bind to visual people."""
+    subject = " ".join(str(raw_subject or "").strip().split())
+    folded = subject.casefold()
+    if folded in {"i", "me", "we", "myself", "ourselves", "我", "我们", "本人"}:
+        return "unidentified speaker"
+    if folded in {"he", "she", "they", "他", "她", "他们", "她们"}:
+        return f"unidentified person referred to as {folded}"
+    return subject[:120]
+
+
+def _explicit_plan_time_scope(quote):
+    match = _EXPLICIT_PLAN_TIME_RE.search(str(quote or ""))
+    return match.group(0).strip() if match else ""
+
+
+def _extract_explicit_speech_facts(transcript, source_segment_id):
+    """Keep explicit identity, preference, relationship, background, experience, age,
+    plan, and health claims as text facts with audio provenance.
+
+    ASR has no speaker diarization. First-person claims stay attached to an
+    unidentified speaker; third-person referents are stored literally and are
+    never joined to a visually observed person by pronoun or guesswork.
+    """
+    facts = []
+    last_addressed_name = ""
+    last_addressed_end = None
+    for line in str(transcript or "").splitlines():
+        match = _AUDIO_EVIDENCE_LINE_RE.match(line.strip())
+        if not match:
+            continue
+        quote = match.group("text").strip()
+        try:
+            audio_start = round(float(match.group("start")), 3)
+            audio_end = round(float(match.group("end")), 3)
+        except (TypeError, ValueError):
+            continue
+        if not quote or audio_end < audio_start:
+            continue
+
+        evidence_ref = {
+            "source_segment_id": str(source_segment_id or "")[:128],
+            "modality": "speech",
+            "audio_start_s": audio_start,
+            "audio_end_s": audio_end,
+        }
+
+        def add_spoken_claim(predicate, value, subject="unidentified speaker",
+                             status="stated", actor="unidentified speaker",
+                             affected_people=None):
+            fact = {
+                "subject_type": "person", "subject": subject,
+                "predicate": predicate, "value": str(value or "")[:500],
+                "modality": "speech", "status": status,
+                "confidence": "medium", "evidence": quote[:500],
+                "evidence_ref": dict(evidence_ref),
+            }
+            # Whisper does not identify voices. Store the utterance source honestly
+            # and link only explicitly named or addressed people as text references.
+            if actor:
+                fact["actor"] = str(actor)[:120]
+            if affected_people:
+                fact["affected_people"] = list(dict.fromkeys(
+                    str(person).strip()[:120] for person in affected_people if str(person).strip()
+                ))
+            facts.append(fact)
+
+        vocative = _SPOKEN_VOCATIVE_NAME_RE.search(quote)
+        directed_health = _DIRECT_ADDRESSED_HEALTH_RE.search(quote)
+        addressed_name = (directed_health.group("name").strip()
+                          if directed_health else
+                          vocative.group("name").strip() if vocative else "")
+        if last_addressed_end is not None and audio_start - last_addressed_end > 3.0:
+            last_addressed_name = ""
+        if addressed_name:
+            last_addressed_name = addressed_name
+        elif last_addressed_name:
+            addressed_name = last_addressed_name
+        last_addressed_end = audio_end
+        if addressed_name and (directed_health or vocative):
+            add_spoken_claim(
+                "addressed_person", f"A speaker addresses the listener as {addressed_name}.",
+                subject=_speech_fact_subject(addressed_name),
+                affected_people=[_speech_fact_subject(addressed_name)])
+        if _CHINESE_FAMILY_ADDRESS_RE.search(quote):
+            family_terms = list(dict.fromkeys(re.findall(
+                r"姥姥|外婆|奶奶|爷爷|外公|妈妈|母亲|爸爸|父亲|孙子|孙女|儿子|女儿",
+                quote,
+            )))
+            add_spoken_claim(
+                "spoken_family_reference", quote,
+                subject="unidentified speaker", status="quoted_relationship_term",
+                affected_people=[f"person referred to as {term}" for term in family_terms])
+        english_family = _EXPLICIT_ENGLISH_FAMILY_ADDRESS_RE.search(quote)
+        if english_family:
+            add_spoken_claim(
+                "spoken_family_reference", quote,
+                subject="unidentified addressee", status="quoted_relationship_term",
+                affected_people=[f"person addressed as {english_family.group(0).strip()}"])
+        if _EXPLICIT_HEALTH_PRODUCT_CLAIM_RE.search(quote):
+            add_spoken_claim(
+                "quoted_product_claim", quote, status="quoted_unverified_claim")
+        if _EXPLICIT_FIRED_RE.search(quote):
+            add_spoken_claim(
+                "reported_employment_event", quote,
+                subject="unidentified addressee",
+                affected_people=["unidentified addressee"])
+        if _EXPLICIT_BIRTHDAY_RE.search(quote):
+            birthday_person = (_speech_fact_subject(addressed_name) if addressed_name
+                               else "unidentified addressee")
+            add_spoken_claim(
+                "stated_birthday_event", quote,
+                subject=birthday_person, affected_people=[birthday_person])
+        if _EXPLICIT_AIRPORT_INSTRUCTION_RE.search(quote):
+            add_spoken_claim("spoken_travel_instruction", quote,
+                             subject="public-address announcement",
+                             actor="public-address announcement",
+                             affected_people=["passengers"])
+        if _EXPLICIT_TRANSACTION_RE.search(quote):
+            add_spoken_claim(
+                "spoken_transaction_detail", quote,
+                affected_people=["unidentified addressee"])
+
+        name_match = (_EXPLICIT_ENGLISH_SELF_NAME_RE.search(quote)
+                      or _EXPLICIT_CHINESE_SELF_NAME_RE.search(quote))
+        if name_match:
+            add_spoken_claim("stated_name", name_match.group("name").strip())
+        other_name = (_EXPLICIT_ENGLISH_OTHER_NAME_RE.search(quote)
+                      or _EXPLICIT_CHINESE_OTHER_NAME_RE.search(quote))
+        if other_name:
+            add_spoken_claim(
+                "stated_name", other_name.group("name").strip(),
+                subject=_speech_fact_subject(other_name.group("subject")))
+        if (_EXPLICIT_ENGLISH_PREFERENCE_RE.search(quote)
+                or _EXPLICIT_CHINESE_PREFERENCE_RE.search(quote)):
+            add_spoken_claim("stated_preference", quote)
+        other_preference = (_EXPLICIT_ENGLISH_OTHER_PREFERENCE_RE.search(quote)
+                            or _EXPLICIT_CHINESE_OTHER_PREFERENCE_RE.search(quote))
+        if other_preference:
+            add_spoken_claim(
+                "stated_preference", quote,
+                subject=_speech_fact_subject(other_preference.group("subject")))
+        if (_EXPLICIT_ENGLISH_RELATION_RE.search(quote)
+                or _EXPLICIT_CHINESE_RELATION_RE.search(quote)):
+            add_spoken_claim(
+                "stated_relationship", quote,
+                affected_people=[_speech_fact_subject(addressed_name)]
+                if addressed_name else None)
+        if (_EXPLICIT_ENGLISH_BACKGROUND_RE.search(quote)
+                or _EXPLICIT_CHINESE_BACKGROUND_RE.search(quote)):
+            add_spoken_claim("stated_background", quote)
+        if (_EXPLICIT_ENGLISH_EXPERIENCE_RE.search(quote)
+                or _EXPLICIT_FIRST_VISIT_RE.search(quote)
+                or _EXPLICIT_CHINESE_EXPERIENCE_RE.search(quote)):
+            add_spoken_claim("stated_experience", quote)
+
+        age_match = _EXPLICIT_ENGLISH_AGE_RE.search(quote)
+        age_subject = "unidentified speaker" if age_match else ""
+        age_is_english = bool(age_match)
+        if not age_match:
+            age_match = _EXPLICIT_CHINESE_AGE_RE.search(quote)
+            age_subject = "unidentified speaker" if age_match else ""
+            age_is_english = False
+        if not age_match:
+            age_match = _EXPLICIT_ENGLISH_OTHER_AGE_RE.search(quote)
+            if age_match:
+                age_subject = _speech_fact_subject(age_match.group("subject"))
+                age_is_english = True
+        if not age_match:
+            age_match = _EXPLICIT_CHINESE_OTHER_AGE_RE.search(quote)
+            if age_match:
+                age_subject = _speech_fact_subject(age_match.group("subject"))
+                age_is_english = False
+
+        if age_match:
+            age = int(age_match.group("age") if age_match.groupdict().get("age")
+                      else age_match.group(1))
+            if 1 <= age <= 120:
+                age_value = f"{age} years old" if age_is_english else f"{age}岁"
+                facts.append({
+                    "subject_type": "person", "subject": age_subject,
+                    "predicate": "stated_age", "value": age_value,
+                    "modality": "speech", "status": "stated",
+                    "confidence": "medium", "evidence": quote[:500],
+                    "evidence_ref": dict(evidence_ref),
+                })
+
+        first_person_plan = (
+            _EXPLICIT_ENGLISH_PLAN_RE.search(quote)
+            or _EXPLICIT_CHINESE_PLAN_RE.search(quote)
+        )
+        non_plan_future = re.search(
+            r"\b(?:I|we)\s+(?:will|shall|'ll)\s+(?:die|be dead|not survive)\b",
+            quote, re.I)
+        if non_plan_future:
+            first_person_plan = None
+        other_plan = None if first_person_plan or non_plan_future else (
+            _EXPLICIT_ENGLISH_OTHER_PLAN_RE.search(quote)
+            or _EXPLICIT_CHINESE_OTHER_PLAN_RE.search(quote)
+        )
+        plan_subject = "unidentified speaker" if first_person_plan else ""
+        if other_plan:
+            plan_subject = _speech_fact_subject(other_plan.group("subject"))
+            if plan_subject in {"今天", "今晚", "明天", "后天", "这几天", "本周", "下周"}:
+                other_plan = None
+                plan_subject = ""
+        if first_person_plan or other_plan:
+            fact = {
+                "subject_type": "person", "subject": plan_subject,
+                "predicate": "stated_plan", "value": quote[:500],
+                "modality": "speech", "status": "stated_plan",
+                "confidence": "medium", "evidence": quote[:500],
+                "evidence_ref": dict(evidence_ref),
+            }
+            time_scope = _explicit_plan_time_scope(quote)
+            if time_scope:
+                fact["time_scope"] = time_scope[:80]
+            facts.append(fact)
+
+        health_match = _EXPLICIT_ENGLISH_HEALTH_RE.search(quote)
+        health_subject = "unidentified speaker" if health_match else ""
+        if not health_match:
+            health_match = _EXPLICIT_CHINESE_HEALTH_RE.search(quote)
+            health_subject = "unidentified speaker" if health_match else ""
+        if not health_match:
+            health_match = _EXPLICIT_ENGLISH_OTHER_HEALTH_RE.search(quote)
+            if health_match:
+                health_subject = _speech_fact_subject(health_match.group("subject"))
+        if not health_match:
+            health_match = (_EXPLICIT_CHINESE_OTHER_HEALTH_RE.search(quote)
+                            or _EXPLICIT_CHINESE_OTHER_ALLERGY_RE.search(quote))
+            if health_match:
+                health_subject = _speech_fact_subject(health_match.group("subject"))
+        if not health_match and directed_health:
+            health_match = directed_health
+            health_subject = _speech_fact_subject(directed_health.group("name"))
+
+        if health_match:
+            urgent_current_report = bool(
+                re.search(r"\b(?:i have|i(?:'m| am) having)\s+(?:a\s+)?(?:heart attack|stroke)\b",
+                          quote, re.I)
+                or re.search(r"\b(?:help me|i will die|i(?:'m| am) dying)\b", quote, re.I)
+                or re.search(r"(?:救命|我快不行了|我要死了)", quote)
+            )
+            explicit_history = bool(
+                re.search(r"\b(?:i had|i have had|i've had|i was diagnosed with|"
+                          r"i have been diagnosed with|i have a history of)\b", quote, re.I)
+                or re.search(r"(?:我以前|我曾经|患过|得过|被诊断为|确诊)", quote)
+            )
+            if directed_health:
+                health_predicate = "spoken_health_claim"
+                health_status = "unverified_claim"
+            elif urgent_current_report:
+                health_predicate = "self_reported_current_health_event"
+                health_status = "self_reported_unverified"
+            elif explicit_history:
+                health_predicate = "self_reported_health_history"
+                health_status = "self_reported"
+            else:
+                health_predicate = "spoken_health_claim"
+                health_status = "self_reported_unverified" if health_subject == "unidentified speaker" else "unverified_claim"
+            health_fact = {
+                "subject_type": "person", "subject": health_subject,
+                "predicate": health_predicate, "value": quote[:500],
+                "modality": "speech", "status": health_status,
+                "confidence": "medium", "evidence": quote[:500],
+                "evidence_ref": dict(evidence_ref),
+                "actor": "unidentified speaker",
+            }
+            if directed_health and health_subject:
+                health_fact["affected_people"] = [health_subject]
+            facts.append(health_fact)
+
+        if len(facts) >= 16:
+            break
+    return facts
+
 def moment_brief(m):
-    """单条 moment 的展示摘要（视频、时间点、人物、动作、可播放地址）。"""
+    """单条片段的非标注元数据；语义内容只允许来自模型的视频感知。"""
     video = m.get("video") or ""                 # data/EgoLife/A2_ALICE/DAY1/xxx.mp4
-    gt = m.get("ground_truth", {})
-    loc = gt.get("location_gt") or []
 
     # 本地视频路径（目录是小写 egolife），存在则给出可播放 URL
     local = ROOT / video.replace("EgoLife", "egolife") if video else None
@@ -110,7 +615,14 @@ def moment_brief(m):
     video_url = None
     clip_start = clip_end = None
     if has_video:
-        rel = local.resolve().relative_to(VIDEO_ROOT)
+        resolved = local.resolve()
+        try:
+            rel = resolved.relative_to(VIDEO_ROOT)
+        except ValueError:
+            try:
+                rel = resolved.relative_to(FEISHU_TEST_ROOT)
+            except ValueError:
+                rel = resolved.relative_to(ROOT)
         video_url = "/api/video?p=" + quote(str(rel))
         # start_time/end_time 是相对整点小时的偏移；换算成 30s 片段内秒数
         if m.get("start_time") is not None:
@@ -125,10 +637,10 @@ def moment_brief(m):
         "start_time": m.get("start_time"),
         "end_time": m.get("end_time"),
         "hour": m.get("_hour", ""),
-        "people": m.get("people") or gt.get("people_gt") or [],
-        "location": loc[0] if loc else (m.get("location") or ""),
-        "scene": m.get("scene") or "",
-        "action": (m.get("user_action") or m.get("scene") or ""),
+        "people": [],
+        "location": "",
+        "scene": "",
+        "action": "",
         "video_url": video_url,
         "clip_start": clip_start,
         "clip_end": clip_end,
@@ -138,6 +650,41 @@ def moment_brief(m):
 def _load_jsonl(path):
     with open(path, encoding="utf-8") as f:
         return [json.loads(l) for l in f if l.strip()]
+
+
+def feishu_test_moments(dataset):
+    """Build deterministic video-only moments from the copied Feishu inventory."""
+    if not FEISHU_TEST_MANIFEST.is_file():
+        raise ValueError("Feishu test video manifest is missing")
+    manifest = json.load(open(FEISHU_TEST_MANIFEST, encoding="utf-8"))
+    files = manifest.get("files") or []
+    selector = str(dataset or "")
+    category = selector.split(":", 1)[1] if selector.startswith("feishu:") else "all"
+    if category != "all":
+        files = [row for row in files if row.get("scenario") == category]
+    moments = []
+    for row in files:
+        relative = str(row.get("relative_path") or "")
+        video_path = (FEISHU_TEST_ROOT / relative).resolve()
+        if FEISHU_TEST_ROOT not in video_path.parents or not video_path.is_file():
+            continue
+        clip_id = str(row.get("clip_id") or Path(relative).stem)
+        token = clip_id.replace(".", "_").replace("-", "_")
+        digest = str(row.get("sha256") or "")[:10]
+        moments.append({
+            "id": f"FEISHU_{token}_{digest}",
+            "video": (Path("test_data") / FEISHU_TEST_ROOT.name / relative).as_posix(),
+            "start_time": 0.0,
+            "end_time": float(row.get("duration_seconds") or 0),
+            "duration_seconds": float(row.get("duration_seconds") or 0),
+            "_hour": "12",
+            "test_category": str(row.get("scenario") or ""),
+            "test_clip_id": clip_id,
+            "transcript": "",
+        })
+    if not moments:
+        raise ValueError(f"No usable Feishu videos in dataset: {dataset}")
+    return moments
 
 
 PARTICIPANT_NAMES = {
@@ -221,13 +768,50 @@ def interactive_dataset_options():
             "label": label,
             "note": note,
         })
+
+    if FEISHU_TEST_MANIFEST.is_file():
+        manifest = json.load(open(FEISHU_TEST_MANIFEST, encoding="utf-8"))
+        files = manifest.get("files") or []
+        categories = {}
+        for row in files:
+            category = str(row.get("scenario") or "")
+            if category:
+                categories[category] = categories.get(category, 0) + 1
+        source_note = (
+            "飞书文档中的视频测试集。每段视频按原片输入，依次执行场景感知、记忆写入和历史记忆检索；"
+            "本模块只提供相关记忆及来源，不生成行动建议。"
+        )
+        if files:
+            options.append({
+                "value": "custom_test|feishu:all|all",
+                "scenario": "custom_test",
+                "dataset": "feishu:all",
+                "participant": None,
+                "source": "feishu",
+                "label": f"飞书自定义测试集 · 全部类别（{len(files)} 段）",
+                "note": f"{len(categories)} 类、{len(files)} 段视频。{source_note}",
+            })
+        for category in sorted(categories, key=lambda value: int(value.split(".", 1)[0])
+                                if value.split(".", 1)[0].isdigit() else 999):
+            label = FEISHU_TESTSET_LABELS.get(category, category)
+            count = categories[category]
+            options.append({
+                "value": f"custom_test|feishu:{category}|all",
+                "scenario": "custom_test",
+                "dataset": f"feishu:{category}",
+                "participant": None,
+                "source": "feishu",
+                "label": f"飞书自定义测试集 · {label}（{count} 段）",
+                "note": f"{category} · {count} 段视频。{source_note}",
+            })
     return options
 
 
 class InteractiveSession:
     """一个场景的步进执行会话。"""
 
-    def __init__(self, key, participant=None, dataset="base", perceiver=None):
+    def __init__(self, key, participant=None, dataset="base", perceiver=None,
+                 resume_state=None):
         assert key in SCENARIO_META, f"unknown scenario: {key}"
         self.key = key
         self.participant = participant
@@ -243,9 +827,21 @@ class InteractiveSession:
         self._active_step_force = False
         self._active_reasoning_request_id = None
         self._pending_cancel = False
+        self._resume_state = resume_state if isinstance(resume_state, dict) else None
         self.extraction_batch_id = f"{key}:{dataset}:{uuid.uuid4().hex[:12]}"
         self.perceiver = perceiver or site_perceiver()
         self.qwen_health = self.perceiver.health()
+        self.speech_cache_path = RUNS / "interactive_audio_transcript_cache.json"
+        self._speech_cache = PersistentTranscriptCache(self.speech_cache_path)
+        self.retrieval_cache = PersistentAdviceCache(
+            RUNS / "interactive_scene_retrieval_cache.sqlite3", ROOT
+        )
+        self.scene_plan_cache = PersistentAdviceCache(
+            RUNS / "interactive_scene_plan_cache.sqlite3", ROOT
+        )
+        self.grounding_cache = PersistentObjectGroundingCache(
+            RUNS / "interactive_object_grounding_cache.sqlite3", ROOT
+        )
         self._build()
 
     def _install_operation_audit(self):
@@ -256,7 +852,7 @@ class InteractiveSession:
         tracked = (
             "add", "query", "query_hierarchical", "update", "update_feedback",
             "highlight", "delete", "sort", "combine", "compress", "update_profile",
-            "find_merge_candidates", "merge_moments",
+            "find_merge_candidates", "merge_moments", "refresh_source_moment",
         )
         for name in tracked:
             original = getattr(self.mem, name, None)
@@ -267,7 +863,8 @@ class InteractiveSession:
                 started = time.perf_counter()
                 before_moment = None
                 before_profile = None
-                if __name in ("update", "update_feedback", "highlight", "delete"):
+                if __name in ("update", "refresh_source_moment", "update_feedback",
+                              "highlight", "delete"):
                     mid = str(args[0] if args else kwargs.get("moment_id", ""))
                     item = self.mem.memory.get("layer7", {}).get("moments", {}).get(mid)
                     before_moment = copy.deepcopy(item) if isinstance(item, dict) else None
@@ -308,7 +905,7 @@ class InteractiveSession:
             (isinstance(result, dict) and result.get("ok") is False)
             else "success"
         )
-        if name == "update" and result is False:
+        if name in ("update", "refresh_source_moment") and result is False:
             mid = str(args[0] if args else kwargs.get("moment_id", ""))
             exists = mid in self.mem.memory.get("layer7", {}).get("moments", {})
             status = "no_change" if exists else "blocked"
@@ -343,7 +940,11 @@ class InteractiveSession:
             "timestamp": moment.get("timestamp") or "",
             "scene": moment.get("scene") or "",
             "action": moment.get("user_action") or "",
+            "interaction_details": moment.get("interaction_details") or "",
             "people": moment.get("people") or [],
+            "person_observations": copy.deepcopy(moment.get("person_observations") or []),
+            "temporal_facts": copy.deepcopy(moment.get("temporal_facts") or []),
+            "source_time": copy.deepcopy(moment.get("source_time") or {}),
             "location": moment.get("location") or "",
             "activity": moment.get("activity") or "",
             "objects": moment.get("objects") or [],
@@ -390,7 +991,7 @@ class InteractiveSession:
             ]
             suffix = " · " + "；".join(examples) if examples else ""
             return f"相似事件候选 {len(candidates)} 组（需人工确认）{suffix}"
-        if name == "update":
+        if name in ("update", "refresh_source_moment"):
             mid = str(arg0 or "")
             updates = args[1] if len(args) > 1 else kwargs.get("updates", {})
             exists = mid in self.mem.memory.get("layer7", {}).get("moments", {})
@@ -405,7 +1006,8 @@ class InteractiveSession:
                     changes.append(
                         f"{field}：{self._brief_value(old_value)} → {self._brief_value(actual_value)}"
                     )
-            return f"更新记忆 {mid}" + (" · " + "；".join(changes) if changes else "")
+            verb = "刷新源记忆" if name == "refresh_source_moment" else "更新记忆"
+            return f"{verb} {mid}" + (" · " + "；".join(changes) if changes else "")
         if name == "update_feedback":
             mid = str(arg0 or "")
             corrections = kwargs.get("corrections", {})
@@ -486,7 +1088,7 @@ class InteractiveSession:
             fields = "、".join(details.get("merged_fields") or []) or "没有新增列表字段"
             conflicts = len(details.get("scalar_conflicts") or [])
             media = details.get("media_preserved") or []
-            retained = sum(bool(item.get("visual") or item.get("audio")) for item in media)
+            retained = sum(bool(item.get("visual")) for item in media)
             return (f"合并事件 {source_id} → {target_id} · 列表字段：{fields}"
                     f" · 标量冲突留在来源并记录 {conflicts} 项"
                     f" · {retained}/{len(media)} 条来源保留多模态引用")
@@ -571,17 +1173,21 @@ class InteractiveSession:
     # ------------------------------------------------------------------
 
     def cancel_current(self):
-        """Interrupt the active real-time step; completed items remain available for retry."""
+        """Interrupt the active step; completed items remain available for retry."""
         with self._cancel_lock:
             event = self._active_step_cancel
             if event is None:
-                if not self._active_step_force:
-                    return {"requested": False, "model_cancel_sent": False}
+                # Queue the stop if it arrives between STEP_LOCK acquisition and
+                # run_step installing its cancellation event.
                 self._pending_cancel = True
             else:
                 event.set()
-        cancel_sent = bool(getattr(self.perceiver, "cancel_active", lambda: False)())
-        return {"requested": True, "model_cancel_sent": cancel_sent}
+        cancel_active = getattr(self.perceiver, "cancel_active", None)
+        if callable(cancel_active):
+            threading.Thread(target=cancel_active, daemon=True,
+                             name="cancel-active-perception").start()
+        return {"requested": True, "model_cancel_sent": False,
+                "model_cancel_pending": callable(cancel_active)}
 
     def _set_step_progress(self, **updates):
         current = dict(self.step_progress or {})
@@ -607,95 +1213,581 @@ class InteractiveSession:
         text = " · ".join(x for x in (scene, action) if x)
         if people:
             text += f" · People: {people}"
-        advice = info.get("recommendation") or {}
-        decision = advice.get("recommendation") or {}
-        if decision.get("action"):
-            text += " · 建议：" + str(decision["action"])[:180]
-        elif advice.get("error"):
-            text += " · 建议暂不可用"
+        related = info.get("retrieved_memories") or []
+        if related:
+            text += f" · 关联历史记忆 {len(related)} 条"
         return {"id": m.get("id", ""), "text": text or info.get("error") or "处理完成",
-                "recommendation": advice or None}
+                "retrieved_memories": related,
+                "retrieval_meta": info.get("retrieval_meta") or {}}
+
+    def _retrieve_after_write(self, current_moment_id, fields, dataset_id="", progress=None):
+        """Understand the just-observed scene and retrieve source-linked history only."""
+        fields = fields if isinstance(fields, dict) else {}
+        current_moment_id = str(current_moment_id or "")
+        archive = self.mem.memory.get("layer7", {}).get("moments", {})
+        current = archive.get(current_moment_id) or {}
+        if not current_moment_id or not current:
+            return [], {"status": "skipped", "message": "当前片段尚无可检索的已写入记忆"}
+
+        def values(value):
+            if isinstance(value, (list, tuple, set)):
+                return [str(item) for item in value if item]
+            return [str(value)] if value else []
+
+        multimodal = current.get("multimodal") or {}
+        object_visuals = multimodal.get("object_visuals") or {}
+        visual_observations = []
+        if isinstance(object_visuals, dict):
+            for item in object_visuals.get("items") or []:
+                if not isinstance(item, dict):
+                    continue
+                appearance = str(item.get("appearance") or "").strip()
+                label = str(item.get("object") or "").strip()
+                if appearance:
+                    visual_observations.append(
+                        f"{label}: {appearance}" if label else appearance)
+        observed = [
+            "Scene: " + str(fields.get("scene") or current.get("scene") or ""),
+            "Action: " + str(fields.get("user_action") or current.get("user_action") or ""),
+            "People: " + ", ".join(values(fields.get("people") or current.get("people"))),
+            "Location: " + str(fields.get("location") or current.get("location") or ""),
+            "Activity: " + str(fields.get("activity") or current.get("activity") or ""),
+            "Objects: " + ", ".join(values(fields.get("objects") or current.get("objects"))),
+            "Environment: " + ", ".join(values(fields.get("environments") or current.get("environments"))),
+        ]
+        spoken_evidence = str(current.get("source_evidence") or "").strip()
+        situation = "Current observed scene: " + " ".join(
+            part for part in observed if part.split(": ", 1)[-1].strip())
+        if visual_observations:
+            situation += " Visual object observations: " + "; ".join(visual_observations[:8])
+        if spoken_evidence:
+            situation += " Source-video speech transcript: " + spoken_evidence[:700]
+        situation = situation[:1000]
+        if not situation.strip(" :"):
+            return [], {"status": "skipped", "message": "当前片段没有可用的场景描述"}
+
+        cache_context = {
+            "source_facts": memory_facts(current),
+            "source_moment_id": current_moment_id,
+            "retrieval_only": True,
+            "memory_modalities": "text",
+            "retrieval_policy_version": "scene-memory-retrieval-v6-structured-fields",
+            "observed_scene": situation,
+            "visual_object_observations": visual_observations[:8],
+            "source_video_speech": spoken_evidence[:700],
+        }
+
+        def set_progress(stage, message, text):
+            if progress:
+                self._set_step_progress(
+                    **progress, stage=stage, message=message,
+                    output={"id": dataset_id, "text": text},
+                )
+
+        set_progress("retrieval_cache_lookup", "正在检查场景检索缓存",
+                     "校验当前片段、完整记忆上下文和检索版本")
+        try:
+            cache_key, stable_ids = self.retrieval_cache.key(
+                self.mem.memory, self.dataset_id, "scene_retrieval_after_write_v4",
+                situation, cache_context,
+            )
+            cached, lookup_ms = self.retrieval_cache.get(cache_key, stable_ids)
+        except Exception:
+            cache_key, stable_ids, cached, lookup_ms = None, {}, None, 0
+
+        if cached:
+            result, cache_record = cached
+            cache_status = {
+                "status": "hit", "lookup_ms": lookup_ms,
+                "inference_ms": cache_record.get("inference_ms", 0),
+                "duration_ms": cache_record.get("duration_ms", cache_record.get("inference_ms", 0)),
+                "duration_kind": cache_record.get("duration_kind", "legacy_unknown"),
+                "scene_plan": {"status": "not_needed"},
+                "created_at": cache_record.get("created_at"),
+            }
+            set_progress("retrieval_cache_hit", "场景检索命中持久缓存，跳过模型调用",
+                         "已复用相同场景、记忆上下文与模型版本的结果")
+        else:
+            set_progress("scene_plan_cache_lookup", "正在检查场景理解计划缓存",
+                         "该缓存只复用当前片段的理解与查询计划，历史候选会按当前记忆重新检索")
+            try:
+                plan_key, plan_stable_ids = self.scene_plan_cache.key_scene_plan(
+                    self.dataset_id, situation, cache_context,
+                )
+                plan_cached, plan_lookup_ms = self.scene_plan_cache.get(
+                    plan_key, plan_stable_ids)
+            except Exception:
+                plan_key, plan_stable_ids = None, {}
+                plan_cached, plan_lookup_ms = None, 0
+            cached_scene_plan = None
+            if plan_cached:
+                plan_payload, plan_record = plan_cached
+                cached_scene_plan = plan_payload.get("scene_plan")
+                plan_cache_status = {
+                    "status": "hit", "lookup_ms": plan_lookup_ms,
+                    "inference_ms": plan_record.get("inference_ms", 0),
+                    "duration_ms": plan_record.get("duration_ms", plan_record.get("inference_ms", 0)),
+                    "duration_kind": plan_record.get("duration_kind", "legacy_unknown"),
+                }
+            else:
+                plan_record = {}
+                plan_cache_status = {"status": "miss", "lookup_ms": plan_lookup_ms}
+            cancel_event = self._active_step_cancel
+            if cancel_event is not None and cancel_event.is_set():
+                return [], {"status": "cancelled", "message": "场景检索已停止"}
+            request_id = f"retrieval-{uuid.uuid4().hex}"
+            with self._cancel_lock:
+                self._active_reasoning_request_id = request_id
+            if cached_scene_plan:
+                set_progress("scene_retrieval", "结构化场景计划命中，正在刷新检索结果",
+                             "按当前记忆重新检索历史记录")
+            else:
+                set_progress("scene_retrieval", "正在按当前场景检索相关历史记忆",
+                             "使用已写入的人物、地点、事件和物品事实，不调用建议推理")
+            started = time.perf_counter()
+            try:
+                result = self.daytime.retrieve_relevant_memories(situation, context={
+                    "source_moment_id": current_moment_id,
+                    "retrieval_only": True,
+                    "memory_modalities": "text",
+                    "reasoning_request_id": request_id,
+                    "cancellation_event": cancel_event,
+                    "current_scene_observations": {
+                        "visual_objects": visual_observations[:8],
+                    },
+                    **({"cached_scene_plan": cached_scene_plan}
+                       if isinstance(cached_scene_plan, dict) else {}),
+                })
+                retrieval_elapsed_ms = int(result.get("elapsed_ms") or
+                                           (time.perf_counter() - started) * 1000)
+                if not cached_scene_plan:
+                    planner = result.get("search_plan") or {}
+                    scene_plan = {
+                        "situation": planner.get("situation") or situation,
+                        "entities": planner.get("entities") or [],
+                        "searches": planner.get("proposed_searches") or planner.get("searches") or [],
+                        "scene_dimensions": planner.get("scene_dimensions") or {},
+                        "planner_method": result.get("scene_plan_method") or
+                                          planner.get("planner_method") or "unknown",
+                    }
+                    plan_payload = {"mode": "scene_plan", "scene_plan": scene_plan}
+                    plan_stored = bool(plan_key) and self.scene_plan_cache.put_scene_plan(
+                        plan_key, plan_payload, plan_stable_ids,
+                        result.get("scene_plan_elapsed_ms") or 0,
+                        duration_kind=result.get("scene_plan_method") or "unknown_scene_plan",
+                    )
+                    plan_cache_status = {
+                        "status": "stored" if plan_stored else "uncached",
+                        "lookup_ms": plan_lookup_ms,
+                        "inference_ms": result.get("scene_plan_elapsed_ms", 0),
+                        "duration_ms": result.get("scene_plan_elapsed_ms", 0),
+                        "duration_kind": result.get("scene_plan_method") or "unknown_scene_plan",
+                    }
+                stored = bool(cache_key) and self.retrieval_cache.put_retrieval(
+                    cache_key, result, stable_ids, retrieval_elapsed_ms)
+                cache_status = {
+                    "status": "stored" if stored else "uncached",
+                    "lookup_ms": lookup_ms,
+                    "inference_ms": retrieval_elapsed_ms,  # Backward-compatible alias.
+                    "duration_ms": retrieval_elapsed_ms,
+                    "duration_kind": "retrieval_total",
+                    "scene_plan": plan_cache_status,
+                }
+            except Exception as exc:
+                cancelled = bool(cancel_event is not None and cancel_event.is_set())
+                return [], {
+                    "status": "cancelled" if cancelled else "error",
+                    "message": "场景检索已停止；已写入的记忆仍保留" if cancelled
+                               else str(exc)[:400],
+                }
+            finally:
+                with self._cancel_lock:
+                    if self._active_reasoning_request_id == request_id:
+                        self._active_reasoning_request_id = None
+
+        details = {}
+        for round_result in result.get("retrieval_rounds") or []:
+            for detail in round_result.get("candidate_details") or []:
+                if isinstance(detail, dict) and detail.get("id"):
+                    details[str(detail["id"])] = detail
+        output = []
+        for candidate in result.get("candidates") or []:
+            mid = str(candidate.get("id") or "")
+            if not mid or mid == current_moment_id:
+                continue
+            moment = archive.get(mid) or {}
+            detail = details.get(mid) or {}
+            mm = moment.get("multimodal") or {}
+            output.append({
+                "id": mid, "layer": 7, "matched_layers": [7],
+                **memory_facts(moment),
+                "score": detail.get("text_relevance"),
+                "match_reasons": detail.get("reasons") or [],
+                "entity_matches": detail.get("entity_matches") or [],
+                "multimodal_link": detail.get("multimodal_link") or {},
+                "timestamp": moment.get("timestamp") or candidate.get("time", ""),
+                "scene": moment.get("scene") or candidate.get("scene", ""),
+                "action": moment.get("user_action") or candidate.get("action", ""),
+                "people": moment.get("people") or candidate.get("people") or [],
+                "location": moment.get("location") or candidate.get("location", ""),
+                "activity": moment.get("activity") or candidate.get("activity", ""),
+                "objects": moment.get("objects") or candidate.get("objects") or [],
+                "environments": moment.get("environments") or [],
+                "summary": moment.get("summary", ""),
+                "source_evidence": moment.get("source_evidence") or "",
+                "source_moment_ids": moment.get("source_moment_ids") or [],
+                "source_link_coverage": moment.get("source_link_coverage", "unknown"),
+                "source_provenance": moment.get("source_provenance") or {},
+                "modalities": {
+                    "visual": bool(mm.get("visual") or mm.get("visual_frames")),
+                    "transcript_text": bool(moment.get("source_evidence")),
+                },
+            })
+            if len(output) >= 5:
+                break
+        for summary in result.get("summary_layers") or []:
+            output.append({
+                "id": f"L{summary.get('layer')}_summary",
+                "layer": summary.get("layer"),
+                "matched_layers": [summary.get("layer")],
+                "score": summary.get("score"),
+                "summary": summary.get("summary", ""),
+                "source_moment_ids": summary.get("source_moment_ids") or [],
+                "source_link_coverage": summary.get("source_link_coverage", "unknown"),
+            })
+        searches = ((result.get("search_plan") or {}).get("searches") or [])
+        metadata = {
+            "status": cache_status["status"], "cache": cache_status,
+            "elapsed_ms": result.get("elapsed_ms"),
+            "scene_plan_elapsed_ms": result.get("scene_plan_elapsed_ms", 0),
+            "scene_plan_cache_used": bool(result.get("scene_plan_cache_used")),
+            "scene_plan_method": result.get("scene_plan_method") or "unknown",
+            "stage_timings_ms": result.get("stage_timings_ms") or {},
+            "model_calls": int(result.get("model_calls", 0) or 0),
+            "scene_understanding": result.get("scene_understanding") or {},
+            "searches": searches[:5],
+            "candidate_count": len(result.get("candidates") or []),
+            "summary_count": len(result.get("summary_layers") or []),
+            "scope": "当前片段沿用已完成的画面/语音感知，不重复分析原视频；仅检索并回传可回查的历史记忆，不生成提醒、诊断或行动建议",
+        }
+        try:
+            log_path = self.mem.memory_dir / "scene_retrieval_log.jsonl"
+            with log_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps({
+                    "dataset_id": dataset_id, "source_moment_id": current_moment_id,
+                    "cache": cache_status, "elapsed_ms": result.get("elapsed_ms"),
+                    "searches": searches[:5],
+                    "candidate_ids": [row.get("id") for row in output],
+                }, ensure_ascii=False) + "\n")
+        except (OSError, TypeError, ValueError):
+            pass
+        return output, metadata
+
+    def _transcribe_audio_evidence(self, multimodal, source_segment_id, video_path=None,
+                                   clip_start_s=0.0, clip_end_s=None, progress=None):
+        """Transcribe source-video audio only; never read benchmark text or captions."""
+        media = multimodal if isinstance(multimodal, dict) else {}
+        jobs = []
+        # Decode source-video audio transiently for transcription. Only the text
+        # transcript and explicit spoken facts enter memory; no audio clip is saved.
+        if video_path:
+            try:
+                start = max(0.0, float(clip_start_s or 0.0))
+                end = float(clip_end_s) if clip_end_s is not None else start + 30.0
+                if end > start:
+                    cursor = start
+                    while cursor < end:
+                        duration = min(20.0, end - cursor)
+                        audio_bytes = _run_ffmpeg([
+                            "-ss", f"{cursor:.3f}", "-i", str(video_path),
+                            "-t", f"{duration:.3f}", "-vn", "-ac", "1", "-ar", "16000",
+                            "-c:a", "pcm_s16le", "-f", "wav", "pipe:1",
+                        ])
+                        if audio_bytes:
+                            jobs.append({"bytes": audio_bytes, "name": "source_audio.wav",
+                                         "mime": "audio/wav", "offset": cursor,
+                                         "duration": duration})
+                        cursor += duration
+            except Exception:
+                # A decode failure only omits transcript text; memory writing
+                # remains available and no legacy audio asset is read as fallback.
+                jobs = []
+        rows = []
+        for job in jobs:
+            audio_data = job.get("bytes")
+            if audio_data is None:
+                try:
+                    audio_data = job["path"].read_bytes()
+                except OSError:
+                    continue
+            cache_key = "whisper-source-audio-v2:" + hashlib.sha256(audio_data).hexdigest()
+            decoded = self._speech_cache.get(cache_key)
+            if decoded is None:
+                if progress:
+                    progress("speech_transcription", "正在把视频语音转成文字")
+                try:
+                    response = requests.post(
+                        self.perceiver.next_api_url() + "/transcribe",
+                        files={"audio": (job["name"], audio_data, job["mime"])},
+                        timeout=(5, 180),
+                    )
+                    response.raise_for_status()
+                    decoded = response.json()
+                    if not isinstance(decoded, dict):
+                        continue
+                    decoded, _inserted = self._speech_cache.put_if_absent(
+                        cache_key, decoded
+                    )
+                except Exception:
+                    # Audio is optional evidence; keep the visual memory write available.
+                    continue
+            language = str(decoded.get("language") or "unknown")[:24]
+            offset = float(job.get("offset") or 0)
+            segments = decoded.get("segments") or []
+            if segments:
+                for segment in segments:
+                    if not isinstance(segment, dict):
+                        continue
+                    text = str(segment.get("text") or "").strip()
+                    if not text:
+                        continue
+                    start = offset + max(0.0, float(segment.get("start") or 0))
+                    end = offset + max(float(segment.get("start") or 0),
+                                       float(segment.get("end") or 0))
+                    rows.append({"start_s": round(start, 2), "end_s": round(end, 2),
+                                 "language": language, "text": text[:1000],
+                                 "source_segment_id": str(source_segment_id or "")[:128]})
+            else:
+                text = str(decoded.get("full_text") or "").strip()
+                if text:
+                    rows.append({"start_s": round(offset, 2),
+                                 "end_s": round(offset + float(job.get("duration") or 0), 2),
+                                 "language": language, "text": text[:1000],
+                                 "source_segment_id": str(source_segment_id or "")[:128]})
+        return "\n".join(
+            f"[audio {row['start_s']:.2f}–{row['end_s']:.2f}s; {row['language']}] {row['text']}"
+            for row in rows
+        )[:4000]
 
     @staticmethod
-    def _recommendation_for_display(result):
-        """Keep per-clip UI/log payload bounded while preserving cited evidence."""
-        rec = result.get("recommendation") or {}
-        cited = set(rec.get("evidence_ids") or [])
-        candidates = []
-        for row in result.get("candidates") or []:
-            if row.get("id") in cited:
-                candidates.append({key: row.get(key) for key in ("id", "scene", "speech")
-                                   if row.get(key) is not None})
-            if len(candidates) >= 12:
-                break
-        inference = result.get("multimodal_inference") or {}
-        inference_display = {
-            key: inference.get(key)
-            for key in ("model", "visual_frames_used", "audio_transcripts_used",
-                        "media_relevance")
-            if inference.get(key) is not None
-        }
-        if isinstance(inference_display.get("media_relevance"), list):
-            inference_display["media_relevance"] = inference_display["media_relevance"][:12]
-        review = result.get("evidence_review") or {}
-        review_display = {
-            key: review.get(key)
-            for key in ("status", "applied", "error")
-            if review.get(key) is not None
-        }
-        for key in ("constraints", "issues"):
-            if isinstance(review.get(key), list):
-                review_display[key] = review[key][:8]
-        for key in ("initial_action_verification", "revision_verification"):
-            value = review.get(key)
-            if isinstance(value, dict):
-                review_display[key] = {
-                    "remaining_issues": value.get("remaining_issues", [])[:8]
-                }
-        return {
-            "recommendation": rec,
-            "model_recommendation": result.get("model_recommendation") or {},
-            "policy_adjustments": (result.get("policy_adjustments") or [])[:8],
-            "evidence_review": review_display,
-            "multimodal_inference": inference_display,
-            "candidates": candidates,
-            "source_moment_id": result.get("source_moment_id"),
-            "elapsed_ms": result.get("elapsed_ms"),
-        }
+    def _entity_key(value):
+        return " ".join(str(value or "").casefold().split()).strip(" .,:;-_")
 
-    def _recommend_after_write(self, moment_id, dataset_id, progress=None):
-        """Generate one grounded, proactive recommendation immediately after each clip write."""
-        request_id = f"step-{uuid.uuid4().hex}"
-        cancel_event = self._active_step_cancel
-        with self._cancel_lock:
-            self._active_reasoning_request_id = request_id
-        context = dict(progress or {})
-        self._set_step_progress(
-            **context, stage="advising",
-            message=f"片段 {dataset_id} 已写入；正在结合当前画面、语音和相关记忆给出建议",
-            output={"id": dataset_id, "text": "正在结合多模态证据与相关记忆生成建议"},
-        )
+    def _refresh_existing_multimodal(self, m, moment_id, fields, source_provenance):
+        """Refresh source-linked context evidence without requiring model inference.
+
+        Existing person/object crops are retained only when their exact entity labels
+        still occur in the refreshed perception. New detector boxes are never guessed.
+        """
+        stored = self.mem.memory.get("layer7", {}).get("moments", {}).get(moment_id)
+        if not isinstance(stored, dict):
+            return False
+        old_media = stored.get("multimodal") or {}
+        if old_media.get("capture_version") == CAPTURE_VERSION:
+            return False
+        video_path = video_path_of(m)
+        if not video_path or not Path(video_path).is_file():
+            return False
+        clip_start, clip_end = clip_range(m)
         try:
-            result = self.daytime.advise("", context={
-                "source_moment_id": moment_id,
-                "proactive": True,
-                "reasoning_request_id": request_id,
-                "cancellation_event": cancel_event,
-            })
-            with (self.mem.memory_dir / "reasoning_log.jsonl").open("a", encoding="utf-8") as f:
-                f.write(json.dumps(result, ensure_ascii=False) + "\n")
-            return self._recommendation_for_display(result)
-        except Exception as exc:
-            return {
-                "error": "主动建议已停止" if cancel_event is not None and cancel_event.is_set()
-                         else str(exc)[:500],
-                "cancelled": bool(cancel_event is not None and cancel_event.is_set()),
-                "source_moment_id": moment_id,
+            media = self.media_store.capture(
+                video_path, clip_start, clip_end,
+                source_id=str(m.get("id") or ""), fields=fields,
+                recent_media=[x.get("multimodal") for x in
+                              list(self.mem.memory.get("layer7", {}).get("moments", {}).values())[-100:]],
+                source_provenance=source_provenance,
+            )
+            if not isinstance(media, dict) or media.get("capture_status") != "captured":
+                return False
+            context_frames = self.media_store.sample_visual_candidates(
+                video_path, clip_start, clip_end,
+                source_id=str(m.get("id") or ""), count=7)
+            if context_frames:
+                media["entity_visuals"] = self.media_store.capture_context_entities(
+                    context_frames, fields, source_id=str(m.get("id") or ""),
+                    clip_start_s=clip_start,
+                )
+            else:
+                media["entity_visuals"] = {
+                    "schema": 1, "status": "no_visual_evidence",
+                    "assets": [], "items": [],
+                }
+            current_objects = {
+                self._entity_key(x.get("name") if isinstance(x, dict) else x)
+                for x in fields.get("objects") or []
             }
-        finally:
-            with self._cancel_lock:
-                if self._active_reasoning_request_id == request_id:
-                    self._active_reasoning_request_id = None
+            current_people = {
+                self._entity_key(x.get("entity"))
+                for x in fields.get("person_observations") or [] if isinstance(x, dict)
+            }
+            for key, allowed, label_key in (
+                ("object_visuals", current_objects, "object"),
+                ("person_visuals", current_people, "person"),
+            ):
+                old = old_media.get(key)
+                if not isinstance(old, dict):
+                    continue
+                kept = [dict(item) for item in old.get("items") or []
+                        if isinstance(item, dict)
+                        and self._entity_key(item.get(label_key)) in allowed]
+                if kept:
+                    media[key] = {**old, "items": kept}
+            media["capture_version"] = CAPTURE_VERSION
+            media["source_provenance"] = dict(source_provenance)
+            stored["multimodal"] = media
+            provenance = stored.setdefault("source_provenance", {})
+            if isinstance(provenance, dict):
+                provenance["multimodal_capture_version"] = CAPTURE_VERSION
+            media["entity_visuals"] = _build_entity_visuals(stored)
+            self.mem._save()
+            return True
+        except Exception:
+            # Text-memory refresh remains usable if local video decoding or asset
+            # storage fails; leave the previous multimodal payload untouched.
+            return False
+
+    def _refresh_existing_source_record(self, m, moment_id, force, update):
+        """Refresh an existing record only from a current, fingerprinted cache row."""
+        stored = self.mem.memory.get("layer7", {}).get("moments", {}).get(moment_id)
+        if not isinstance(stored, dict):
+            return None
+        old = stored.get("source_provenance") or {}
+        dataset_id = str(m.get("id") or "")
+        video_path = video_path_of(m)
+        clip_start, clip_end = clip_range(m)
+        expected_video = _source_video_id(m, video_path)
+        try:
+            same_clip = (
+                str(old.get("source_segment_id") or "") == dataset_id
+                and str(old.get("source_video_id") or "") == expected_video
+                and abs(float(old.get("clip_start_s")) - float(clip_start or 0)) <= 0.05
+                and (clip_end is None or abs(float(old.get("clip_end_s")) - float(clip_end)) <= 0.05)
+            )
+        except (TypeError, ValueError):
+            same_clip = False
+        if not same_clip:
+            return None
+        stale_version = (
+            old.get("perception_prompt_version") != PROMPT_VERSION
+            or old.get("list_parser_version") != LIST_PARSER_VERSION
+        )
+        stored_multimodal = stored.get("multimodal") or {}
+        stale_multimodal = stored_multimodal.get("capture_version") != CAPTURE_VERSION
+        if not force and not stale_version and not stale_multimodal:
+            return None
+        update("cache_refresh", "正在核验缓存版本，并刷新同一视频片段的已有记忆")
+        def perception_progress(event):
+            update(event.get("stage", "model_inference"),
+                   event.get("message", "正在读取当前片段的有效缓存"))
+        result = self.perceiver.perceive(
+            {"id": dataset_id, "video": m.get("video", ""),
+             "start_time": m.get("start_time"), "end_time": m.get("end_time")},
+            force=force, cancel_event=self._active_step_cancel,
+            progress_callback=perception_progress, allow_legacy_cache=False,
+            allow_stale_cache_fallback=True,
+        )
+        fields = result.get("fields")
+        fingerprint = result.get("source_input_fingerprint") or {}
+        if (result.get("stale_cache_fallback") and isinstance(fields, dict)
+                and fingerprint.get("video_sha256") and fingerprint.get("clip_sha256")):
+            return result, copy.deepcopy(fields)
+        if (not isinstance(fields, dict) or not fingerprint.get("video_sha256")
+                or not fingerprint.get("clip_sha256")
+                or result.get("prompt_version") != PROMPT_VERSION
+                or result.get("list_parser_version") != LIST_PARSER_VERSION):
+            return None
+        fields = copy.deepcopy(fields)
+        frame_times = result.get("frame_times_s") or []
+        def attach_refs(rows, modality):
+            linked = []
+            for original in rows if isinstance(rows, list) else []:
+                if not isinstance(original, dict):
+                    continue
+                row = dict(original)
+                ref = {
+                    "source_segment_id": dataset_id,
+                    "clip_start_s": round(float(clip_start or 0), 2),
+                    "clip_end_s": round(float(clip_end), 2) if clip_end is not None else None,
+                    "modality": modality,
+                }
+                index = row.get("frame_index")
+                if isinstance(index, int) and not isinstance(index, bool):
+                    ref["frame_index"] = index
+                    if 1 <= index <= len(frame_times):
+                        ref["frame_time_s"] = frame_times[index - 1]
+                        row["frame_time_s"] = frame_times[index - 1]
+                row.setdefault("modality", modality)
+                row["evidence_ref"] = ref
+                linked.append(row)
+            return linked
+        fields["person_observations"] = attach_refs(
+            fields.get("person_observations") or [], "visual")
+        visual_facts = attach_refs(fields.get("temporal_facts") or [], "visual")
+        previous_facts = stored.get("temporal_facts") or []
+        speech_facts = [copy.deepcopy(row) for row in previous_facts
+                        if isinstance(row, dict) and row.get("modality") == "speech"]
+        fields["temporal_facts"] = visual_facts + speech_facts
+        normalize_object_transition_facts(fields)
+        source_day = next((part.upper() for part in dataset_id.split("_")
+                           if part.upper().startswith("DAY") and part[3:].isdigit()), "")
+        source_time = {
+            "day_label": source_day,
+            "time_of_day": _clock_from_id(dataset_id),
+            "time_occasion": str(fields.get("time_occasion") or "")[:200],
+            "clip_start_s": round(float(clip_start or 0), 2),
+            "basis": "dataset_relative" if source_day else "video_relative",
+            "source_segment_id": dataset_id,
+        }
+        if clip_end is not None:
+            source_time["clip_end_s"] = round(float(clip_end), 2)
+        source_provenance = {
+            "source_video_id": expected_video,
+            "source_segment_id": dataset_id,
+            "clip_start_s": round(float(clip_start or 0), 2),
+            "clip_end_s": round(float(clip_end), 2) if clip_end is not None else None,
+            "source_video_sha256": fingerprint["video_sha256"],
+            "source_clip_sha256": fingerprint["clip_sha256"],
+            "perception_prompt_version": result.get("prompt_version"),
+            "list_parser_version": result.get("list_parser_version"),
+            "multimodal_capture_version": CAPTURE_VERSION,
+            "extraction_batch_id": old.get("extraction_batch_id") or self.extraction_batch_id,
+        }
+        updates = {
+            "scene": fields.get("scene") or "",
+            "user_action": fields.get("user_action") or "",
+            "interaction_details": fields.get("interaction_details") or "",
+            "person_observations": fields.get("person_observations") or [],
+            "temporal_facts": fields.get("temporal_facts") or [],
+            "source_time": source_time,
+            "location": fields.get("location") or "",
+            "activity": fields.get("activity") or "",
+            "environments": fields.get("environments") or [],
+            "objects": fields.get("objects") or [],
+        }
+        if fields.get("people"):
+            updates["people"] = fields["people"]
+        if fields.get("time_occasion"):
+            updates["notes"] = str(fields["time_occasion"])[:200]
+        refreshed = self.mem.refresh_source_moment(
+            moment_id, updates, source_provenance, expected_segment_id=dataset_id)
+        multimodal_refreshed = False
+        if refreshed and stale_multimodal:
+            multimodal_refreshed = self._refresh_existing_multimodal(
+                m, moment_id, fields, source_provenance)
+        result["multimodal_refreshed"] = multimodal_refreshed
+        if not refreshed and not multimodal_refreshed:
+            return None
+        if result.get("source") == "cache_quality_warning":
+            target = self.mem.memory.get("layer7", {}).get("moments", {}).get(moment_id)
+            if isinstance(target, dict):
+                provenance = target.setdefault("source_provenance", {})
+                provenance["perception_status"] = "cache_quality_warning"
+                provenance["perception_quality_warning"] = str(
+                    result.get("quality_warning") or "")[:700]
+                self.mem._save()
+        fields["source_provenance"] = source_provenance
+        self._qwen_fields[dataset_id] = fields
+        return result, fields
 
     def _add_one(self, m, force=False, progress=None):
         """用 Qwen 的感知产出写入一条记忆，返回 (moment_id, info)。"""
@@ -704,10 +1796,24 @@ class InteractiveSession:
             if progress:
                 self._set_step_progress(**progress, stage=stage, message=message,
                                         output=output)
+        cancel_event = self._active_step_cancel
+        if cancel_event is not None and cancel_event.is_set():
+            info = {"dataset_id": dataset_id, "source": "cancelled",
+                    "cancelled": True, "error": "当前片段处理已终止"}
+            update("cancelled", info["error"])
+            return None, info
         existing_mid = self.id_map.get(dataset_id)
         if existing_mid:
             cached = self.perceiver.cache.get(dataset_id) or {}
-            fields = self._qwen_fields.get(dataset_id) or cached.get("fields") or {}
+            fields = cached.get("fields") or self._qwen_fields.get(dataset_id) or {}
+            refresh = self._refresh_existing_source_record(
+                m, existing_mid, force, update)
+            refreshed_existing = refresh is not None
+            if refreshed_existing:
+                refresh_result, fields = refresh
+                cached = refresh_result
+                if refresh_result.get("stale_cache_fallback"):
+                    refreshed_existing = False
             info = {
                 "dataset_id": dataset_id,
                 "moment_id": existing_mid,
@@ -715,14 +1821,26 @@ class InteractiveSession:
                 "raw": cached.get("raw", ""),
                 "elapsed_ms": cached.get("elapsed_ms"),
                 "num_frames": cached.get("num_frames"),
-                "source": "cache",
+                "source": cached.get("source", "cache"),
+                "memory_refreshed": refreshed_existing,
+                "stale_cache_fallback": bool(cached.get("stale_cache_fallback")),
+                "quality_warning": cached.get("quality_warning", ""),
+                "multimodal_refreshed": bool(cached.get("multimodal_refreshed")),
                 "eval": golden_eval(fields, m.get("ground_truth", {})),
             }
-            update("cached_memory", "这条记忆已在当前会话中，复用现有记录",
-                   self._progress_text(m, info))
-            info["recommendation"] = self._recommend_after_write(
-                existing_mid, dataset_id, progress)
-            update("done", "片段处理完成；已生成对应建议",
+            if refreshed_existing and cached.get("multimodal_refreshed"):
+                message = "已更新同一片段的记忆与多模态证据，没有重复新增"
+            elif refreshed_existing:
+                message = "已用当前缓存更新同一片段的记忆，没有重复新增"
+            else:
+                message = "这条记忆已在当前会话中，复用现有记录"
+            update("cached_memory", message, self._progress_text(m, info))
+            (info["retrieved_memories"], info["retrieval_meta"]) = self._retrieve_after_write(
+                existing_mid, fields, dataset_id=dataset_id, progress=progress)
+            retrieval_message = ("片段处理完成；已检索相关历史记忆"
+                                 if info["retrieval_meta"].get("status") in {"hit", "stored", "uncached"}
+                                 else "片段处理完成；场景检索未完成，已写入记忆仍保留")
+            update("done", retrieval_message,
                    self._progress_text(m, info))
             self._set_step_progress(completed_item=self._progress_text(m, info))
             return existing_mid, info
@@ -731,8 +1849,23 @@ class InteractiveSession:
         def on_perception(event):
             update(event.get("stage", "model_inference"),
                    event.get("message", "正在处理当前片段"))
-        r = self.perceiver.perceive(m, force=force, cancel_event=cancel_event,
-                                    progress_callback=on_perception)
+        # Strict allowlist: benchmark captions, transcripts and answer labels
+        # never enter the perception/cache/model call.
+        perception_input = {
+            "id": m.get("id", ""),
+            "video": m.get("video", ""),
+            "start_time": m.get("start_time"),
+            "end_time": m.get("end_time"),
+        }
+        r = self.perceiver.perceive(perception_input, force=force, cancel_event=cancel_event,
+                                    progress_callback=on_perception,
+                                    allow_legacy_cache=False,
+                                    allow_stale_cache_fallback=True)
+        if cancel_event is not None and cancel_event.is_set():
+            info = {"dataset_id": dataset_id, "source": "cancelled",
+                    "cancelled": True, "error": "当前片段处理已终止"}
+            update("cancelled", info["error"])
+            return None, info
         if not r.get("fields"):
             info = {"error": r.get("error", "感知失败"),
                           "source": r.get("source", "error"),
@@ -741,7 +1874,7 @@ class InteractiveSession:
                    info.get("error") or "感知失败", self._progress_text(m, info))
             self._set_step_progress(completed_item=self._progress_text(m, info))
             return None, info
-        f = r["fields"]
+        f = dict(r["fields"])
         update("write_memory", "感知结果已生成，正在写入记忆", self._progress_text(m, {"qwen": f}))
         multimodal = None
         media_error = None
@@ -753,7 +1886,87 @@ class InteractiveSession:
             "clip_start_s": round(float(clip_start or 0), 2),
             "clip_end_s": round(float(clip_end), 2) if clip_end is not None else None,
             "extraction_batch_id": self.extraction_batch_id,
+            "perception_prompt_version": r.get("prompt_version") or PROMPT_VERSION,
+            "list_parser_version": r.get("list_parser_version") or LIST_PARSER_VERSION,
+            "multimodal_capture_version": CAPTURE_VERSION,
         }
+        if r.get("stale_cache_fallback"):
+            source_provenance["perception_status"] = "stale_cache_fallback"
+            source_provenance["perception_refresh_error"] = str(
+                r.get("stale_cache_reason") or "")[:500]
+        elif r.get("source") == "cache_quality_warning":
+            source_provenance["perception_status"] = "cache_quality_warning"
+            source_provenance["perception_quality_warning"] = str(
+                r.get("quality_warning") or "")[:700]
+        input_fingerprint = r.get("source_input_fingerprint") or {}
+        if input_fingerprint.get("video_sha256"):
+            source_provenance["source_video_sha256"] = input_fingerprint["video_sha256"]
+            source_provenance["source_clip_sha256"] = input_fingerprint.get("clip_sha256", "")
+        source_day = next((part.upper() for part in str(dataset_id).split("_")
+                           if part.upper().startswith("DAY")
+                           and part[3:].isdigit()), "")
+        source_time = {
+            "day_label": source_day,
+            "time_of_day": _clock_from_id(dataset_id),
+            "time_occasion": str(f.get("time_occasion") or "")[:200],
+            "clip_start_s": round(float(clip_start or 0), 2),
+            "basis": "dataset_relative" if source_day else "video_relative",
+            "source_segment_id": dataset_id,
+        }
+        if clip_end is not None:
+            source_time["clip_end_s"] = round(float(clip_end), 2)
+        frame_times = r.get("frame_times_s") or []
+
+        def attach_evidence_refs(rows, default_modality):
+            linked = []
+            for original in rows if isinstance(rows, list) else []:
+                if not isinstance(original, dict):
+                    continue
+                row = dict(original)
+                ref = {
+                    "source_segment_id": source_provenance["source_segment_id"],
+                    "clip_start_s": source_provenance["clip_start_s"],
+                    "clip_end_s": source_provenance.get("clip_end_s"),
+                    "modality": str(row.get("modality") or default_modality)[:16],
+                }
+                frame_index = row.get("frame_index")
+                if isinstance(frame_index, int) and not isinstance(frame_index, bool):
+                    ref["frame_index"] = frame_index
+                    if 1 <= frame_index <= len(frame_times):
+                        ref["frame_time_s"] = frame_times[frame_index - 1]
+                        row["frame_time_s"] = frame_times[frame_index - 1]
+                row["evidence_ref"] = ref
+                scope = str(row.get("time_scope") or "")
+                if (default_modality == "visual"
+                        and str(row.get("predicate") or "").casefold() in {
+                            "move", "moved", "relocate", "relocated", "transfer", "transferred"
+                        }):
+                    span = re.search(r"frames?\s+(\d+)\s*(?:to|[-–])\s*(\d+)", scope, re.I)
+                    if span:
+                        start_index, end_index = int(span.group(1)), int(span.group(2))
+                        transition_refs = []
+                        for index in dict.fromkeys((start_index, end_index)):
+                            if not (1 <= index <= len(frame_times)):
+                                continue
+                            transition_refs.append({
+                                "source_segment_id": source_provenance["source_segment_id"],
+                                "clip_start_s": source_provenance["clip_start_s"],
+                                "clip_end_s": source_provenance.get("clip_end_s"),
+                                "modality": "visual",
+                                "frame_index": index,
+                                "frame_time_s": frame_times[index - 1],
+                            })
+                        if len(transition_refs) > 1:
+                            row["evidence_refs"] = transition_refs
+                linked.append(row)
+            return linked
+
+        person_observations = attach_evidence_refs(
+            f.get("person_observations") or [], "visual")
+        temporal_facts = attach_evidence_refs(
+            f.get("temporal_facts") or [], "visual")
+        f["person_observations"] = person_observations
+        f["temporal_facts"] = temporal_facts
         if video_path and os.environ.get("MEMORY_CAPTURE_MULTIMODAL", "1") != "0":
             try:
                 if self.media_store.size_bytes() + 48_000 > self.media_store.asset_budget:
@@ -762,7 +1975,6 @@ class InteractiveSession:
                     self.media_store._bytes_cached = None
                 multimodal = self.media_store.capture(
                     video_path, clip_start, clip_end,
-                    transcript=m.get("transcript") or "",
                     source_id=dataset_id, fields=f,
                     recent_media=[x.get("multimodal") for x in
                                   list(self.mem.memory["layer7"]["moments"].values())[-100:]],
@@ -772,36 +1984,66 @@ class InteractiveSession:
                 visual_refs = multimodal.get("visual_frames") or (
                     [multimodal.get("visual")] if multimodal.get("visual") else [])
                 if object_labels and visual_refs:
-                    update("object_visual_grounding", "正在从更多时点逐件核对物品画面")
+                    update("object_visual_grounding_lookup", "正在检查物品与画面的持久缓存")
+                    source_grounding_key = self.grounding_cache.source_key(
+                        dataset_id, video_path, clip_start, clip_end, object_labels
+                    )
+                    try:
+                        grounding, grounding_lookup_ms = self.grounding_cache.get_source(
+                            source_grounding_key
+                        )
+                    except Exception:
+                        grounding, grounding_lookup_ms = None, 0
+                    # A source-cache hit skips model inference, not frame decoding: cached
+                    # bounding boxes still need the matching pixels to materialize object crops.
                     candidate_frames = self.media_store.sample_visual_candidates(
                         video_path, clip_start, clip_end, source_id=dataset_id, count=7)
-                    frame_inputs = candidate_frames
-                    if not frame_inputs:
-                        for ref in visual_refs[:3]:
-                            asset_path = Path(self.mem.memory_dir) / str(ref.get("asset") or "")
-                            if ref.get("asset") and asset_path.is_file():
-                                frame_inputs.append({
-                                    **ref,
-                                    "mime": ref.get("mime") or "image/webp",
-                                    "bytes": asset_path.read_bytes(),
-                                })
-                    try:
-                        grounding = self.perceiver.ground_objects(
-                            object_labels, frame_inputs, cancel_event=cancel_event,
-                            progress_callback=lambda event: update(
-                                event.get("stage", "object_visual_grounding"),
-                                event.get("message", "正在核对物品画面"),
-                                self._progress_text(m, {"qwen": f}),
-                            ),
-                        )
-                    except Exception as exc:
-                        grounding = {
-                            "schema": 1, "status": "unavailable", "model": "Qwen3-VL",
-                            "message": str(exc)[:240],
-                            "items": [{"object": str(label), "status": "not_verified",
-                                       "appearance": "", "frame_indices": []}
-                                      for label in object_labels[:12]],
-                        }
+                    grounding_key = None
+                    if grounding is None:
+                        frame_inputs = candidate_frames
+                        if not frame_inputs:
+                            for ref in visual_refs[:3]:
+                                asset_path = Path(self.mem.memory_dir) / str(ref.get("asset") or "")
+                                if ref.get("asset") and asset_path.is_file():
+                                    frame_inputs.append({
+                                        **ref, "mime": ref.get("mime") or "image/webp",
+                                        "bytes": asset_path.read_bytes(),
+                                    })
+                        try:
+                            grounding_key = self.grounding_cache.key(
+                                dataset_id, object_labels, frame_inputs
+                            )
+                            grounding, grounding_lookup_ms = self.grounding_cache.get(grounding_key)
+                        except Exception:
+                            grounding_key, grounding, grounding_lookup_ms = None, None, 0
+                        if grounding is not None and source_grounding_key:
+                            self.grounding_cache.put_source(source_grounding_key, grounding)
+                    if grounding is not None:
+                        update("object_grounding_cache_hit",
+                               f"物品画面对照命中缓存（{grounding_lookup_ms} ms），跳过视觉推理")
+                    else:
+                        update("object_visual_grounding",
+                               "缓存未命中，正在逐件核对物品与关键帧")
+                        try:
+                            grounding = self.perceiver.ground_objects(
+                                object_labels, frame_inputs, cancel_event=cancel_event,
+                                progress_callback=lambda event: update(
+                                    event.get("stage", "object_visual_grounding"),
+                                    event.get("message", "正在核对物品画面"),
+                                    self._progress_text(m, {"qwen": f}),
+                                ),
+                            )
+                        except Exception as exc:
+                            grounding = {
+                                "schema": 1, "status": "unavailable", "model": "Qwen3-VL",
+                                "message": str(exc)[:240],
+                                "items": [{"object": str(label), "status": "not_verified",
+                                           "appearance": "", "frame_indices": []}
+                                          for label in object_labels[:12]],
+                            }
+                        self.grounding_cache.put(grounding_key, grounding)
+                        if source_grounding_key:
+                            self.grounding_cache.put_source(source_grounding_key, grounding)
 
                     saved_by_index = {}
                     if candidate_frames and grounding.get("status") == "completed":
@@ -843,6 +2085,7 @@ class InteractiveSession:
                                     "dhash": frame.get("dhash") or "",
                                     "at_s": frame.get("at_s"),
                                     "source_id": frame.get("source_id") or dataset_id,
+                                    "quality_tier": "recent",
                                 })
                                 saved_by_index[index] = saved
                         if saved_by_index:
@@ -859,27 +2102,249 @@ class InteractiveSession:
                             index: ref for index, ref in enumerate(visual_refs[:3], start=1)
                         }
                     for item in grounding.get("items") or []:
-                        frame_refs = [
-                            saved_by_index[index]
-                            for index in item.pop("frame_indices", [])
-                            if index in saved_by_index
-                        ]
-                        item["frame_refs"] = [{
-                            "asset": ref.get("asset"), "at_s": ref.get("at_s"),
-                            "source_id": ref.get("source_id") or dataset_id,
-                        } for ref in frame_refs if ref.get("asset")]
+                        boxes = {}
+                        for box in item.get("frame_boxes") or []:
+                            try:
+                                box_index = int(box.get("frame_index"))
+                                bbox = box.get("bbox")
+                            except (AttributeError, TypeError, ValueError):
+                                continue
+                            max_frame_index = len(candidate_frames) if candidate_frames else 7
+                            if 1 <= box_index <= max_frame_index and isinstance(bbox, list) and len(bbox) == 4:
+                                boxes[box_index] = bbox
+                        requested = []
+                        for index in item.pop("frame_indices", []):
+                            if isinstance(index, int) and index not in requested:
+                                requested.append(index)
+                        for index in boxes:
+                            if index not in requested:
+                                requested.append(index)
+                        frame_refs = []
+                        for index in requested[:1]:
+                            if candidate_frames:
+                                if not (1 <= index <= len(candidate_frames)):
+                                    continue
+                                frame = candidate_frames[index - 1]
+                                source_ref = saved_by_index.get(index)
+                                if not source_ref:
+                                    source_bytes = self.media_store.fit_visual_candidate(
+                                        frame.get("bytes"), 6_000)
+                                    source_ref = self.media_store._put(
+                                        "visual", source_bytes, "webp", 6_000)
+                                    if source_ref:
+                                        source_ref.update({
+                                            "mime": "image/webp",
+                                            "dhash": frame.get("dhash") or "",
+                                            "at_s": frame.get("at_s"),
+                                            "source_id": frame.get("source_id") or dataset_id,
+                                            "quality_tier": "recent",
+                                        })
+                                        saved_by_index[index] = source_ref
+                            else:
+                                if not visual_refs:
+                                    continue
+                                ratio = (index - 1) / 6 if index > 1 else 0
+                                ref_index = round(ratio * (len(visual_refs) - 1))
+                                source_ref = visual_refs[max(0, min(ref_index, len(visual_refs) - 1))]
+                                frame = {"at_s": source_ref.get("at_s"),
+                                         "source_id": source_ref.get("source_id") or dataset_id}
+                            if not source_ref or not source_ref.get("asset"):
+                                continue
+                            crop_ref = None
+                            bbox = boxes.get(index) if candidate_frames else None
+                            if bbox:
+                                crop_bytes = self.media_store.crop_visual_candidate(
+                                    frame.get("bytes"), bbox, 12_000)
+                                crop_ref = self.media_store._put(
+                                    "visual", crop_bytes, "webp", 12_000)
+                            primary_ref = crop_ref or source_ref
+                            frame_ref = {
+                                "asset": primary_ref.get("asset"),
+                                "bytes": int(primary_ref.get("bytes") or 0),
+                                "at_s": frame.get("at_s"),
+                                "source_id": frame.get("source_id") or dataset_id,
+                                "quality_tier": "recent",
+                            }
+                            if crop_ref:
+                                frame_ref.update({
+                                    "source_asset": source_ref["asset"],
+                                    "crop_bbox": [round(float(value), 5) for value in bbox],
+                                    "visual_role": "object_crop",
+                                })
+                            else:
+                                frame_ref["visual_role"] = "source_frame"
+                            frame_refs.append(frame_ref)
+                        item["frame_refs"] = frame_refs
+                        item["crop_count"] = sum(
+                            ref.get("visual_role") == "object_crop" for ref in frame_refs)
+                        item.pop("frame_boxes", None)
                         if item.get("status") in {"grounded", "visible_unlabeled"} and not item["frame_refs"]:
                             item["status"] = "not_verified"
                             item["appearance"] = ""
+                    for item in grounding.get("items") or []:
+                        item["appearance"] = _remove_visual_age_guess(item.get("appearance"))
+                    grounding["crop_schema"] = 1
+                    grounding["crop_method"] = "Qwen3-VL normalized object box with padded WebP crop"
                     multimodal["object_visuals"] = grounding
                     if cancel_event is not None and cancel_event.is_set():
                         return None, {
                             "error": "物品画面核对已停止，当前片段未写入记忆",
                             "source": "cancelled", "cancelled": True,
                         }
+                person_rows = [row for row in person_observations
+                               if isinstance(row, dict) and str(row.get("entity") or "").strip()]
+                if person_rows and visual_refs:
+                    update("person_visual_grounding_lookup", "正在检查人物局部画面的持久缓存")
+                    person_frames = self.media_store.sample_visual_candidates(
+                        video_path, clip_start, clip_end, source_id=dataset_id, count=7)
+                    if not person_frames:
+                        for ref in visual_refs[:3]:
+                            asset_path = Path(self.mem.memory_dir) / str(ref.get("asset") or "")
+                            if ref.get("asset") and asset_path.is_file():
+                                person_frames.append({
+                                    **ref, "mime": ref.get("mime") or "image/webp",
+                                    "bytes": asset_path.read_bytes(),
+                                })
+                    person_key = None
+                    try:
+                        # Include the appearance hint so repeated clip-local labels cannot
+                        # accidentally reuse a crop for a different visually described person.
+                        person_cache_labels = [
+                            "person-crop-v1: " + str(row.get("entity") or "").strip()
+                            + " | " + str(row.get("appearance") or "").strip()
+                            for row in person_rows[:8]
+                        ]
+                        person_key = self.grounding_cache.key(
+                            dataset_id, person_cache_labels, person_frames)
+                        person_grounding, person_lookup_ms = self.grounding_cache.get(person_key)
+                    except Exception:
+                        person_key, person_grounding, person_lookup_ms = None, None, 0
+                    if person_grounding is not None:
+                        update("person_grounding_cache_hit",
+                               f"人物画面缓存已命中（{person_lookup_ms} ms），跳过视觉推理")
+                    else:
+                        update("person_visual_grounding", "缓存未命中，正在定位人物并生成局部裁剪")
+                        try:
+                            person_grounding = self.perceiver.ground_people(
+                                person_rows, person_frames, cancel_event=cancel_event,
+                                progress_callback=lambda event: update(
+                                    event.get("stage", "person_visual_grounding"),
+                                    event.get("message", "正在定位人物画面"),
+                                    self._progress_text(m, {"qwen": f}),
+                                ),
+                            )
+                        except Exception as exc:
+                            person_grounding = {
+                                "schema": 1, "status": "unavailable", "model": "Qwen3-VL",
+                                "message": str(exc)[:240],
+                                "items": [{"person": str(row.get("entity") or ""),
+                                           "status": "not_verified", "appearance": "",
+                                           "frame_indices": [], "frame_boxes": []}
+                                          for row in person_rows[:8]],
+                            }
+                        self.grounding_cache.put(person_key, person_grounding)
+
+                    for item in person_grounding.get("items") or []:
+                        boxes = {int(box.get("frame_index")): box.get("bbox")
+                                 for box in item.get("frame_boxes") or []
+                                 if isinstance(box, dict)
+                                 and isinstance(box.get("frame_index"), int)
+                                 and isinstance(box.get("bbox"), list)}
+                        requested = []
+                        for index in item.pop("frame_indices", []):
+                            if isinstance(index, int) and index not in requested:
+                                requested.append(index)
+                        for index in boxes:
+                            if index not in requested:
+                                requested.append(index)
+                        frame_refs = []
+                        for index in requested[:1]:
+                            if not (1 <= index <= len(person_frames)):
+                                continue
+                            frame = person_frames[index - 1]
+                            bbox = boxes.get(index)
+                            if not bbox:
+                                continue
+                            crop_bytes = self.media_store.crop_visual_candidate(
+                                frame.get("bytes"), bbox, 12_000)
+                            crop_ref = self.media_store._put(
+                                "visual", crop_bytes, "webp", 12_000)
+                            if not crop_ref or not crop_ref.get("asset"):
+                                continue
+                            source_bytes = self.media_store.fit_visual_candidate(
+                                frame.get("bytes"), 6_000)
+                            source_ref = self.media_store._put(
+                                "visual", source_bytes, "webp", 6_000)
+                            if source_ref:
+                                source_ref.update({
+                                    "mime": "image/webp",
+                                    "dhash": frame.get("dhash") or "",
+                                    "at_s": frame.get("at_s"),
+                                    "source_id": frame.get("source_id") or dataset_id,
+                                })
+                            frame_ref = {
+                                "asset": crop_ref["asset"],
+                                "at_s": frame.get("at_s"),
+                                "source_id": frame.get("source_id") or dataset_id,
+                                "visual_role": "person_crop",
+                                "crop_bbox": [round(float(value), 5) for value in bbox],
+                            }
+                            if source_ref and source_ref.get("asset"):
+                                frame_ref["source_asset"] = source_ref["asset"]
+                            frame_refs.append(frame_ref)
+                        item["frame_refs"] = frame_refs
+                        item["crop_count"] = len(frame_refs)
+                        item.pop("frame_boxes", None)
+                        if not frame_refs:
+                            item["status"] = "not_verified"
+                            item["appearance"] = ""
+                    person_grounding["crop_schema"] = 1
+                    person_grounding["crop_method"] = (
+                        "Qwen3-VL normalized whole-person box with padded WebP crop")
+                    multimodal["person_visuals"] = person_grounding
+                    if cancel_event is not None and cancel_event.is_set():
+                        return None, {
+                            "error": "人物画面核对已停止，当前片段未写入记忆",
+                            "source": "cancelled", "cancelled": True,
+                        }
+                # People and objects use tight grounded crops above. Scene, place,
+                # environment, activity, and each event also get source-linked
+                # context crops, so every stored memory dimension can be inspected
+                # against its supporting frame in the UI.
+                try:
+                    context_frames = (locals().get("candidate_frames")
+                                      or locals().get("person_frames") or [])
+                    if not context_frames:
+                        context_frames = self.media_store.sample_visual_candidates(
+                            video_path, clip_start, clip_end,
+                            source_id=dataset_id, count=7)
+                    multimodal["entity_visuals"] = self.media_store.capture_context_entities(
+                        context_frames, f, source_id=dataset_id,
+                        clip_start_s=clip_start,
+                    )
+                except Exception as context_exc:
+                    multimodal["entity_visuals"] = {
+                        "schema": 1, "status": "unavailable",
+                        "message": str(context_exc)[:240], "assets": [], "items": [],
+                    }
             except Exception as exc:
                 # A media extraction failure must not prevent text memory CRUD.
                 media_error = str(exc)
+        source_audio_text = self._transcribe_audio_evidence(
+            multimodal, dataset_id, video_path=video_path,
+            clip_start_s=clip_start, clip_end_s=clip_end,
+            progress=lambda stage, message: update(stage, message),
+        )
+        if source_audio_text:
+            f["source_evidence"] = source_audio_text
+            update("speech_fact_extract", "整理原声中明确说出的年龄与计划")
+            speech_facts = _extract_explicit_speech_facts(
+                source_audio_text, dataset_id)
+            if speech_facts:
+                temporal_facts.extend(speech_facts)
+                f["temporal_facts"] = temporal_facts
+        # Re-type explicit object transitions before indexing/retrieval; preserve the acting person.
+        normalize_object_transition_facts(f)
         mid = self.daytime.ingest(
             scene=f["scene"],
             user_action=f["user_action"],
@@ -893,6 +2358,10 @@ class InteractiveSession:
             extra_notes=(f.get("time_occasion") or "")[:200],
             timestamp=(time.strftime("%Y-%m-%d") + "T" + (_clock_from_id(m.get("id", "")) or time.strftime("%H:%M:%S"))),
             source_evidence=f.get("source_evidence") or "",
+            interaction_details=f.get("interaction_details") or "",
+            person_observations=person_observations,
+            temporal_facts=temporal_facts,
+            source_time=source_time,
             multimodal=multimodal,
             source_provenance=source_provenance,
         )
@@ -906,17 +2375,23 @@ class InteractiveSession:
             "moment_id": mid,
             "qwen": f,
             "raw": r.get("raw", ""),
+            "raw_model_output": r.get("raw_model_output", ""),
             "elapsed_ms": r.get("elapsed_ms"),
             "num_frames": r.get("num_frames"),
             "source": r.get("source", "qwen"),
+            "quality_warning": r.get("quality_warning", ""),
+            "stale_cache_fallback": bool(r.get("stale_cache_fallback")),
+            "multimodal_refreshed": False,
             "eval": golden_eval(f, m.get("ground_truth", {})),
             "multimodal": multimodal,
             "media_error": media_error,
         }
-        info["recommendation"] = self._recommend_after_write(mid, dataset_id, progress)
-        advice_message = ("片段已写入并生成建议" if not info["recommendation"].get("error")
-                          else "记忆已写入；建议生成失败，可查看错误")
-        update("done", advice_message, self._progress_text(m, info))
+        (info["retrieved_memories"], info["retrieval_meta"]) = self._retrieve_after_write(
+            mid, f, dataset_id=dataset_id, progress=progress)
+        retrieval_message = ("片段已写入并检索相关历史记忆"
+                             if info["retrieval_meta"].get("status") in {"hit", "stored", "uncached"}
+                             else "片段已写入；场景检索未完成，记忆已保留")
+        update("done", retrieval_message, self._progress_text(m, info))
         self._set_step_progress(completed_item=self._progress_text(m, info))
         return mid, info
 
@@ -927,7 +2402,15 @@ class InteractiveSession:
     def _build(self):
         mem_dir = RUNS / "interactive_mem" / self.key
         mem_dir.mkdir(parents=True, exist_ok=True)
-        if any(mem_dir.iterdir()):
+        resuming = self._resume_state is not None
+        if any(mem_dir.iterdir()) and not resuming:
+            # 归档前先剥离旧会话的原始音频，只保留已有转写文字。
+            old_mem = PersonMemory(memory_dir=str(mem_dir))
+            if strip_audio_assets(old_mem.memory):
+                old_mem._save()
+            old_store = MultimodalAssetStore(mem_dir)
+            old_store.release_unreferenced(
+                old_mem.memory.get("layer7", {}).get("moments", {}))
             # 旧会话数据改名归档（os.rename 不触发 safe-delete 钩子，避免 trash 权限问题）
             trash_dir = RUNS / "interactive_mem" / "_trash"
             trash_dir.mkdir(exist_ok=True)
@@ -935,6 +2418,11 @@ class InteractiveSession:
             mem_dir.mkdir(parents=True, exist_ok=True)
         self.mem = PersonMemory(memory_dir=str(mem_dir))
         self.media_store = MultimodalAssetStore(mem_dir)
+        if strip_audio_assets(self.mem.memory):
+            self.mem._save()
+            self.media_store._bytes_cached = None
+            self.media_store.release_unreferenced(
+                self.mem.memory.get("layer7", {}).get("moments", {}))
         self._install_operation_audit()
         self.daytime = DaytimeProcessor(self.mem)
         self.daytime.start_scene(f"{self.key}_{time.strftime('%Y-%m-%d')}")
@@ -943,15 +2431,55 @@ class InteractiveSession:
 
         if self.key == "short_term":
             self.steps = self._plan_short()
+        elif self.key == "custom_test":
+            self.steps = self._plan_custom()
         else:
             self.steps = self._plan_long()
 
-        self._log_snapshot("初始状态", "init", "会话创建，等待第一步")
+        if resuming:
+            checkpoint = self._resume_state
+            expected_dataset = str(checkpoint.get("dataset_id") or "")
+            if expected_dataset and expected_dataset != self.dataset_id:
+                raise ValueError("会话恢复数据集与当前记忆库不一致")
+            self.pos = max(0, min(int(checkpoint.get("pos") or 0), len(self.steps)))
+            self.log = copy.deepcopy(checkpoint.get("log") or [])
+            strip_audio_assets(self.log)
+            self.operation_log = copy.deepcopy(checkpoint.get("operations") or [])
+            self.auto_paused = bool(checkpoint.get("auto_paused"))
+            self.step_cancelled = bool(checkpoint.get("step_cancelled"))
+            for moment_id, moment in self.mem.memory.get("layer7", {}).get("moments", {}).items():
+                source_id = str((moment.get("source_provenance") or {}).get("source_segment_id") or "")
+                if source_id:
+                    self.id_map[source_id] = moment_id
+            for moment in self.moments:
+                cached = self.perceiver.cache.get(moment.get("id", "")) or {}
+                if cached.get("fields"):
+                    self._qwen_fields[moment["id"]] = cached["fields"]
+            self.step_progress = None
+            self.nightly_progress = None
+            # Refresh the latest restored visual snapshot from disk so a
+            # completed media backfill is visible without re-running the step.
+            if self.log:
+                latest = self.log[-1]
+                snap = rs.snapshot(
+                    self.mem, str(latest.get("title") or "恢复后的记忆快照"),
+                    action=str(latest.get("kind") or "resume"))
+                snap["full"] = self._full_snapshot()
+                snap["layer7_active_moments"] = snap["full"]["layer7_active_total"]
+                snap["layer7_merged_moments"] = snap["full"]["layer7_merged_total"]
+                latest["snapshot"] = snap
+            self._resume_state = None
+        else:
+            self._log_snapshot("初始状态", "init", "会话创建，等待第一步")
 
     def _display_brief(self, m):
         """Current-step preview uses the same cached English fields that feed memory."""
         brief = moment_brief(m)
-        cached = (self.perceiver.cache.get(m.get("id", "")) or {}).get("fields") or {}
+        cache_entry = self.perceiver.cache.get(m.get("id", "")) or {}
+        cache_is_current = cache_entry.get("prompt_version") == PROMPT_VERSION
+        brief['preview_source'] = 'previous_perception' if cache_is_current else 'video_only'
+        brief['preview_prompt_version'] = cache_entry.get('prompt_version') if cache_is_current else ''
+        cached = (cache_entry.get("fields") or {}) if cache_is_current else {}
         if cached:
             if cached.get("scene"):
                 brief["scene"] = cached["scene"]
@@ -960,8 +2488,6 @@ class InteractiveSession:
             for key in ("people", "location", "activity"):
                 if cached.get(key):
                     brief[key] = cached[key]
-        if not brief.get("action") or any("\u3400" <= ch <= "\u9fff" for ch in str(brief.get("action", ""))):
-            brief["action"] = "English summary will appear after this step runs."
         return brief
 
     def _plan_short(self):
@@ -996,28 +2522,8 @@ class InteractiveSession:
             }
             # 每个人物都保留完整的 CRUD 演示路径；没有预设操作时，
             # 从该人物自己的片段生成一条可追溯的演示操作。
-            if not plan["update"]:
-                for m in moments:
-                    gt = m.get("ground_truth", {})
-                    for field, gt_key in (
-                        ("environments", "environments_gt"),
-                        ("objects", "objects_gt"),
-                        ("location", "location_gt"),
-                        ("people", "people_gt"),
-                        ("activity", "activity_gt"),
-                    ):
-                        value = gt.get(gt_key)
-                        if isinstance(value, list) and value:
-                            value = value[0]
-                        if value:
-                            plan["update"] = [{
-                                "id": m["id"], "field": field,
-                                "new_value": value,
-                                "reason": "按该片段标注生成的 CRUD 演示操作",
-                            }]
-                            break
-                    if plan["update"]:
-                        break
+            # Do not synthesize memory operations from benchmark labels.
+            # A missing CRUD demo is preferable to contaminating memory.
             if not plan["highlight"]:
                 plan["highlight"] = [moments[0]["id"]]
             if not plan["delete"]:
@@ -1080,7 +2586,7 @@ class InteractiveSession:
         steps.append({
             "kind": "merge_candidates",
             "title": "检查相似事件候选（需要逐条确认）",
-            "detail": {"note": "候选依据：同源片段重叠≥80%，或120秒内Scene与Action合并文本相似度≥92%且共享人物/物品。画面/音频只供核对；扫描不改数据，逐条确认后才归并。"},
+            "detail": {"note": "候选依据：同源片段重叠≥80%，或120秒内Scene与Action合并文本相似度≥92%且共享人物/物品。画面与语音转写文本只供核对；扫描不改数据，逐条确认后才归并。"},
             "inputs": [],
             "run": run_merge_candidates,
         })
@@ -1270,25 +2776,101 @@ class InteractiveSession:
 
         return steps
 
-    def _plan_long(self):
-        """长期场景：白天按小时批量写入 + 夜间整理 4 步。"""
-        self.dataset_key = "long_day"
-        default_meta = json.load(open(LONG_META, encoding="utf-8"))
-        participant = self.participant or default_meta.get("participant", "A1_JAKE")
-        meta_path = LONG_PERSON_DIR / f"{participant}.meta.json"
-        data_path = LONG_PERSON_DIR / f"{participant}.jsonl"
-        if not meta_path.exists() or not data_path.exists():
-            raise ValueError(f"没有 {participant} 的长期数据集")
-        meta = json.load(open(meta_path, encoding="utf-8"))
-        moments = _load_jsonl(data_path)
-        self.participant = participant
-        self.moments = moments
-        self.meta = meta
+    def _plan_custom(self):
+        """Run a selected test collection as an isolated, one-off retrieval evaluation."""
         self.dataset_options = interactive_dataset_options()
-        self.dataset_id = f"long_term|long_day|{participant}"
+        if not self.dataset_key.startswith("feishu:"):
+            self.dataset_key = "feishu:all"
+        selector = self.dataset_key
+        moments = feishu_test_moments(selector)
+        if not moments:
+            raise ValueError("所选自定义测试集没有可运行的视频")
+
+        category = selector.split(":", 1)[1]
+        category_name = ("全部类别" if category == "all"
+                         else FEISHU_TESTSET_LABELS.get(category, category))
+        self.participant = None
+        self.moments = moments
+        self.meta = {
+            "participant": "Feishu custom test set",
+            "available_count": len(moments),
+            "total_candidates": len(moments),
+            "coverage": 1.0,
+        }
+        self.dataset_id = f"custom_test|{selector}|all"
+        self.participant_label = category_name
         self.dataset_note = next(
             (x["note"] for x in self.dataset_options if x["value"] == self.dataset_id), "")
-        self.participant_label = PARTICIPANT_NAMES.get(participant, participant)
+
+        steps = []
+        total = len(moments)
+        for index, moment in enumerate(moments, 1):
+            def run(moment=moment, index=index, force=False):
+                context = {
+                    "item_index": index,
+                    "item_total": total,
+                    "label": f"自定义测评 · 片段 {index}/{total}",
+                }
+                self._set_step_progress(
+                    **context,
+                    stage="item_start",
+                    message=f"正在感知并检索第 {index}/{total} 段：{moment.get('id', '')}",
+                )
+                moment_id, info = self._add_one(moment, force=force, progress=context)
+                if moment_id is None:
+                    message = "实时推理已停止" if info.get("cancelled") else "感知失败"
+                    return f"{message}：{info.get('error')}", {"kind": "single", **info}
+                return (
+                    f"已处理 {moment.get('id')}：写入记忆并检索历史片段",
+                    {"kind": "single", **info},
+                )
+
+            steps.append({
+                "kind": "add",
+                "title": f"场景测评 · 写入并检索片段 {index}/{total}",
+                "inputs": [self._display_brief(moment)],
+                "run": run,
+            })
+        return steps
+
+    def _plan_long(self):
+        """长期场景：白天按小时批量写入 + 夜间整理 4 步。"""
+        self.dataset_options = interactive_dataset_options()
+        if self.dataset_key.startswith("feishu:"):
+            selector = self.dataset_key
+            moments = feishu_test_moments(selector)
+            category = selector.split(":", 1)[1]
+            category_name = ("全部类别" if category == "all"
+                             else FEISHU_TESTSET_LABELS.get(category, category))
+            self.participant = None
+            self.moments = moments
+            self.meta = {
+                "participant": "Feishu custom test set",
+                "hours_covered": ["12"],
+                "available_count": len(moments),
+                "total_candidates": len(moments),
+                "coverage": 1.0,
+                "complete": False,
+            }
+            self.dataset_id = f"long_term|{selector}|all"
+            self.participant_label = f"自定义测试集 · {category_name}"
+        else:
+            self.dataset_key = "long_day"
+            default_meta = json.load(open(LONG_META, encoding="utf-8"))
+            participant = self.participant or default_meta.get("participant", "A1_JAKE")
+            meta_path = LONG_PERSON_DIR / f"{participant}.meta.json"
+            data_path = LONG_PERSON_DIR / f"{participant}.jsonl"
+            if not meta_path.exists() or not data_path.exists():
+                raise ValueError(f"没有 {participant} 的长期数据集")
+            meta = json.load(open(meta_path, encoding="utf-8"))
+            moments = _load_jsonl(data_path)
+            self.participant = participant
+            self.moments = moments
+            self.meta = meta
+            self.dataset_id = f"long_term|long_day|{participant}"
+            self.participant_label = PARTICIPANT_NAMES.get(participant, participant)
+        self.dataset_note = next(
+            (x["note"] for x in self.dataset_options if x["value"] == self.dataset_id), "")
         steps = []
 
         # 白天：按小时分批
@@ -1311,7 +2893,7 @@ class InteractiveSession:
                     if mid:
                         ok += 1
                     items.append(info)
-                    if info.get("cancelled"):
+                    if info.get("cancelled") or (self._active_step_cancel and self._active_step_cancel.is_set()):
                         cancelled = True
                         break
                 msg = f"{h}:00 时段：Qwen 感知 {ok}/{len(group)} 条并写入记忆"
@@ -1339,7 +2921,7 @@ class InteractiveSession:
         steps.append({
             "kind": "merge_candidates",
             "title": "检查相似事件候选（需要逐条确认）",
-            "detail": {"note": "候选依据：同源片段重叠≥80%，或120秒内Scene与Action合并文本相似度≥92%且共享人物/物品。画面/音频只供核对；扫描不改数据，逐条确认后才归并。"},
+            "detail": {"note": "候选依据：同源片段重叠≥80%，或120秒内Scene与Action合并文本相似度≥92%且共享人物/物品。画面与语音转写文本只供核对；扫描不改数据，逐条确认后才归并。"},
             "inputs": [],
             "run": run_merge_candidates,
         })
@@ -1423,12 +3005,16 @@ class InteractiveSession:
         def fmt(x, with_stale=False):
             d = {"id": x.get("id", ""), "scene": x.get("scene", ""),
                  "user_action": x.get("user_action", ""),
+                 "interaction_details": x.get("interaction_details", ""),
                  "location": x.get("location", ""),
                  "activity": x.get("activity", ""),
                  "people": x.get("people", []),
                  "objects": x.get("objects", []),
                  "environments": x.get("environments", []),
                  "notes": x.get("notes", ""),
+                 "person_observations": copy.deepcopy(x.get("person_observations", [])),
+                 "temporal_facts": copy.deepcopy(x.get("temporal_facts", [])),
+                 "source_time": copy.deepcopy(x.get("source_time", {})),
                  "highlight": x.get("highlighted", False),
                  "timestamp": x.get("timestamp", "")}
             if with_stale:
@@ -1439,17 +3025,33 @@ class InteractiveSession:
             media = x.get("multimodal")
             if isinstance(media, dict):
                 d["multimodal"] = copy.deepcopy(media)
-                for kind in ("visual", "audio"):
-                    for temporal_ref in media_refs(d["multimodal"], kind):
-                        temporal_ref["url"] = "/api/memory_asset?p=" + quote(temporal_ref["asset"])
-                    ref = d["multimodal"].get(kind)
-                    if isinstance(ref, dict) and ref.get("asset"):
-                        ref["url"] = "/api/memory_asset?p=" + quote(ref["asset"])
+                strip_audio_assets(d)
+                for temporal_ref in media_refs(d["multimodal"], "visual"):
+                    temporal_ref["url"] = "/api/memory_asset?p=" + quote(temporal_ref["asset"])
+                ref = d["multimodal"].get("visual")
+                if isinstance(ref, dict) and ref.get("asset"):
+                    ref["url"] = "/api/memory_asset?p=" + quote(ref["asset"])
                 object_visuals = d["multimodal"].get("object_visuals") or {}
-                for item in object_visuals.get("items") or []:
-                    for frame_ref in item.get("frame_refs") or []:
-                        if frame_ref.get("asset"):
-                            frame_ref["url"] = "/api/memory_asset?p=" + quote(frame_ref["asset"])
+                for visuals in (object_visuals, d["multimodal"].get("person_visuals") or {}):
+                    for item in visuals.get("items") or []:
+                        for frame_ref in item.get("frame_refs") or []:
+                            if frame_ref.get("asset"):
+                                frame_ref["url"] = "/api/memory_asset?p=" + quote(frame_ref["asset"])
+                            if frame_ref.get("source_asset"):
+                                frame_ref["source_url"] = "/api/memory_asset?p=" + quote(frame_ref["source_asset"])
+                entity_visuals = d["multimodal"].get("entity_visuals") or {}
+                entity_assets = entity_visuals.get("assets") or []
+                for asset_ref in entity_assets:
+                    if asset_ref.get("asset"):
+                        asset_ref["url"] = "/api/memory_asset?p=" + quote(asset_ref["asset"])
+                    if asset_ref.get("source_asset"):
+                        asset_ref["source_url"] = "/api/memory_asset?p=" + quote(asset_ref["source_asset"])
+                for entity_item in entity_visuals.get("items") or []:
+                    entity_item["frame_refs"] = [
+                        copy.deepcopy(entity_assets[index])
+                        for index in entity_item.get("asset_indices") or []
+                        if isinstance(index, int) and 0 <= index < len(entity_assets)
+                    ]
             source = x.get("source_provenance")
             if isinstance(source, dict):
                 d["source_provenance"] = copy.deepcopy(source)
@@ -1477,6 +3079,46 @@ class InteractiveSession:
                         if candidate in l7.get("moments", {})), None)
             if mid:
                 object_index_samples[tag] = [fmt(l7["moments"][mid], True)]
+        def asset_bytes_for(node):
+            """Count unique stored visual assets referenced by one memory layer."""
+            asset_paths = set()
+
+            def collect(value):
+                if isinstance(value, dict):
+                    for field in ("asset", "source_asset"):
+                        asset = value.get(field)
+                        if isinstance(asset, str):
+                            normalized = asset.replace(chr(92), "/").lstrip("/")
+                            if normalized.startswith("assets/"):
+                                asset_paths.add(normalized)
+                    for child in value.values():
+                        collect(child)
+                elif isinstance(value, (list, tuple)):
+                    for child in value:
+                        collect(child)
+
+            collect(node)
+            total = 0
+            asset_root = self.media_store.asset_root.resolve()
+            for asset in asset_paths:
+                path = (self.media_store.root / asset).resolve()
+                try:
+                    path.relative_to(asset_root)
+                except ValueError:
+                    continue
+                if path.is_file():
+                    total += path.stat().st_size
+            return total
+
+        layer_asset_bytes = {
+            "layer1": asset_bytes_for(m.get("layer1", [])),
+            "layer2": asset_bytes_for(m.get("layer2", [])),
+            "layer3": asset_bytes_for(m.get("layer3", [])),
+            "layer4": asset_bytes_for(m.get("layer4", {})),
+            "layer5": asset_bytes_for(m.get("layer5", {})),
+            "layer6": asset_bytes_for(m.get("layer6", {})),
+            "layer7": asset_bytes_for(l7.get("moments", {})),
+        }
         return {
             "layer1": [fmt(x) for x in m.get("layer1", [])[:30]],
             "layer2": [fmt(x) for x in m.get("layer2", [])[:30]],
@@ -1493,6 +3135,7 @@ class InteractiveSession:
             "metadata": m.get("metadata", {}),
             "entity_relationships": entity_graph_summary(l7, limit=12),
             "multimodal_asset_bytes": self.media_store.size_bytes(),
+            "layer_asset_bytes": layer_asset_bytes,
             "daytime": self.daytime.snapshot(),
         }
 
@@ -1522,7 +3165,7 @@ class InteractiveSession:
         with self._cancel_lock:
             self._active_step_cancel = cancel_event
             self._active_step_force = bool(force)
-            if force and self._pending_cancel:
+            if self._pending_cancel:
                 cancel_event.set()
                 self._pending_cancel = False
         self._active_step_no = self.pos + 1
@@ -1535,7 +3178,9 @@ class InteractiveSession:
             output=None, completed=[], run_id=progress_id or uuid.uuid4().hex,
         )
         try:
-            if step["kind"] == "nightly":
+            if cancel_event.is_set():
+                msg, perception = "当前步骤已终止；没有开始后续处理", {"cancelled": True}
+            elif step["kind"] == "nightly":
                 msg, perception = step["run"](force=force, use_cache=use_cache)
             else:
                 msg, perception = step["run"](force=force)
@@ -1590,6 +3235,11 @@ class InteractiveSession:
             slim.append(e2)
 
         meta = SCENARIO_META[self.key]
+        cache_entries = getattr(self.perceiver, "cache", {}) or {}
+        current_cache_count = sum(
+            entry.get("prompt_version") == PROMPT_VERSION
+            for entry in cache_entries.values() if isinstance(entry, dict)
+        )
         extra = {
             "participant": self.participant,
             "participant_label": self.participant_label,
@@ -1605,13 +3255,26 @@ class InteractiveSession:
         if self.key == "short_term" and self.participant:
             display_name += f" · {self.participant_label}"
         elif self.key == "long_term":
-            display_name += f" · {self.participant_label}"
-            if not self.meta.get("complete", False):
-                display_name += "（部分视频）"
             extra["available_count"] = self.meta.get("available_count", len(self.moments))
             extra["total_candidates"] = self.meta.get("total_candidates", len(self.moments))
             extra["coverage"] = self.meta.get("coverage", 1.0)
-            extra["complete_day"] = self.meta.get("complete", False)
+            if self.dataset_key.startswith("feishu:"):
+                display_name += " · 飞书自定义测试集"
+                extra["complete_day"] = False
+                extra["custom_test_dataset"] = True
+            else:
+                display_name += f" · {self.participant_label}"
+                if not self.meta.get("complete", False):
+                    display_name += "（部分视频）"
+                extra["complete_day"] = self.meta.get("complete", False)
+            description = self.dataset_note
+        elif self.key == "custom_test":
+            display_name += f" · {self.participant_label}"
+            extra["available_count"] = self.meta.get("available_count", len(self.moments))
+            extra["total_candidates"] = self.meta.get("total_candidates", len(self.moments))
+            extra["coverage"] = self.meta.get("coverage", 1.0)
+            extra["custom_test_dataset"] = True
+            extra["complete_day"] = False
             description = self.dataset_note
         return {
             "scenario": self.key,
@@ -1631,7 +3294,9 @@ class InteractiveSession:
             "qwen": {
                 "ok": bool(self.qwen_health.get("model_loaded")),
                 "gpu": (self.qwen_health.get("gpu") or {}).get("name"),
-                "cached": len(getattr(self.perceiver, "cache", {}) or {}),
+                "cached": current_cache_count,
+                "legacy_cached": max(0, len(cache_entries) - current_cache_count),
+                "cache_prompt_version": PROMPT_VERSION,
             },
             **extra,
         }

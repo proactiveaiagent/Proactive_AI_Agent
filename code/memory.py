@@ -127,14 +127,19 @@ def _is_valid_person_tag(tag: str) -> bool:
         return False
     if lowered in PLACEHOLDER_TAGS:
         return False
-    if len(cleaned) > 30:
+    if re.fullmatch(r"(?:(?:unidentified|unknown)\s+)?person\s+\d+", lowered):
+        return False
+    # Descriptive visual aliases are longer than conventional names, but remain
+    # useful searchable entity keys when they are concise and non-sentential.
+    if len(cleaned) > 180:
         return False
     for pat in NON_PERSON_PATTERNS:
         if pat in lowered:
             return False
-    for verb_clause in (" is ", " are ", " was ", " were ", " visible", " seated", " standing", " walking"):
-        if verb_clause in lowered:
-            return False
+    if not lowered.startswith("person "):
+        for verb_clause in (" is ", " are ", " was ", " were ", " visible", " seated", " standing", " walking"):
+            if verb_clause in lowered:
+                return False
     return True
 
 
@@ -153,18 +158,24 @@ def _is_valid_index_tag(index_key: str, tag: str) -> bool:
     if index_key == "locations":
         if lowered in {"none", "n/a", "unknown", "无", "暂无", "canonical_location"}:
             return False
-        if len(cleaned) > 80:
+        if len(cleaned) > 180:
             return False
     if index_key == "activity_events":
         if lowered in {"none", "n/a", "unknown", "无", "暂无", "event_tag"}:
             return False
-        if len(cleaned) > 80:
+        if len(cleaned) > 220:
             return False
-    if index_key in ("environments", "objects"):
+    if index_key == "environments":
+        if lowered in {"none", "n/a", "unknown", "无", "暂无"} or len(cleaned) > 260:
+            return False
+    if index_key == "objects":
         if lowered in {"none", "n/a", "unknown", "无", "暂无"}:
             return False
-        if len(cleaned) > 80:
+        if len(cleaned) > 120 or re.match(
+                r"^(?:from|to|toward|towards|into|out of|near|at|inside|outside)\s+", lowered):
             return False
+    if index_key == "time_nodes" and len(cleaned) > 220:
+        return False
     return True
 
 
@@ -182,6 +193,308 @@ def _clean_layer7_indices(layer7: Dict) -> Dict[str, List[str]]:
             del idx[b]
             removed[k].append(b)
     return removed
+
+
+def _upgrade_legacy_person_labels(moment: Dict) -> bool:
+    """Replace legacy numbered person placeholders with visible-description aliases."""
+    if not isinstance(moment, dict):
+        return False
+    observations = moment.get("person_observations") or []
+    mapping = {}
+    for row in observations:
+        if not isinstance(row, dict):
+            continue
+        original = " ".join(str(row.get("entity") or "").split())
+        if not re.fullmatch(r"(?:(?:unidentified|unknown)\s+)?person\s+\d+", original, re.I):
+            continue
+        appearance = " ".join(str(row.get("appearance") or "").split()).strip(" .;,:-")
+        face = " ".join(str(row.get("face_features") or "").split()).strip(" .;,:-")
+        alias_appearance = re.split(
+            r",\s*(?:standing|sitting|seated|walking|moving|turning|looking)\b",
+            appearance, maxsplit=1, flags=re.I)[0].strip(" .;,:-")
+        descriptor = alias_appearance or appearance or face
+        if not descriptor:
+            continue
+        alias = descriptor if re.match(r"^person\b", descriptor, re.I) else (
+            "person " + descriptor if re.match(
+                r"^(?:wearing|with|in|has|holding|standing|sitting|seated)\b", descriptor, re.I)
+            else "person with " + descriptor)
+        alias = alias[:180].rstrip(" .;,:-")
+        if alias and alias.casefold() != original.casefold():
+            mapping[original] = alias
+            row["entity"] = alias
+    if not mapping:
+        return False
+
+    def replace(value):
+        if isinstance(value, str):
+            result = value
+            for original, alias in sorted(mapping.items(), key=lambda pair: len(pair[0]), reverse=True):
+                result = re.sub(r"(?<![\w])" + re.escape(original) + r"(?![\w])",
+                                lambda _match, replacement=alias: replacement,
+                                result, flags=re.I)
+            return result
+        if isinstance(value, list):
+            return [replace(item) for item in value]
+        if isinstance(value, dict):
+            return {key: replace(item) for key, item in value.items()}
+        return value
+
+    for field in ("scene", "user_action", "interaction_details", "location", "activity",
+                  "environments", "objects", "people", "person_observations", "temporal_facts",
+                  "multimodal"):
+        if field in moment:
+            moment[field] = replace(moment[field])
+    return True
+
+
+def _moment_time_tags(moment: Dict) -> list:
+    """Return only source-grounded time keys; never index ingest time as event time."""
+    source = moment.get("source_time") or {}
+    tags = []
+    for key in ("absolute_date", "day_label", "time_of_day"):
+        value = source.get(key)
+        if isinstance(value, str) and value.strip():
+            value = value.strip()[:128]
+            if value not in tags:
+                tags.append(value)
+    day = str(source.get("day_label") or source.get("absolute_date") or "").strip()
+    clock = str(source.get("time_of_day") or "").strip()
+    if day and clock:
+        tags.append(f"{day} {clock}"[:220])
+    basis = str(source.get("basis") or "").casefold()
+    segment = str(source.get("source_segment_id") or
+                  (moment.get("source_provenance") or {}).get("source_segment_id") or "").strip()
+    if not tags and segment and basis in {"video_relative", "dataset_relative"}:
+        try:
+            start = float(source.get("clip_start_s", 0) or 0)
+            end = float(source.get("clip_end_s", start) or start)
+            if math.isfinite(start) and math.isfinite(end) and start >= 0 and end >= start:
+                tags.append(f"{segment} · 视频相对 {start:.2f}–{end:.2f}s"[:220])
+        except (TypeError, ValueError):
+            pass
+    if not tags and not source:
+        timestamp = str(moment.get("timestamp") or "")
+        try:
+            tags.append(datetime.fromisoformat(timestamp).date().isoformat())
+        except (TypeError, ValueError):
+            pass
+    return list(dict.fromkeys(tag for tag in tags if _is_valid_index_tag("time_nodes", tag)))
+
+
+def _moment_index_tags(moment: Dict) -> Dict[str, list]:
+    """Derive retrieval keys from the stored source-linked moment, not only caller labels."""
+    if not isinstance(moment, dict):
+        return {key: [] for key in LAYER7_INDICES}
+    tags = {key: [] for key in LAYER7_INDICES}
+
+    def add(index_key, value):
+        if isinstance(value, str):
+            value = value.strip()
+        if value and _is_valid_index_tag(index_key, value) and value not in tags[index_key]:
+            tags[index_key].append(value)
+
+    for person in moment.get("people") or []:
+        add("people", person)
+    for row in moment.get("person_observations") or []:
+        if isinstance(row, dict):
+            add("people", row.get("entity"))
+    add("locations", moment.get("location"))
+    add("activity_events", moment.get("activity"))
+    for value in moment.get("environments") or []:
+        add("environments", value)
+    for value in moment.get("objects") or []:
+        add("objects", value)
+    for row in moment.get("object_observations") or []:
+        if isinstance(row, dict):
+            add("objects", row.get("object"))
+
+    for fact in moment.get("temporal_facts") or []:
+        if not isinstance(fact, dict):
+            continue
+        subject = fact.get("subject")
+        kind = str(fact.get("subject_type") or "").casefold()
+        if kind == "person":
+            add("people", subject)
+        elif kind == "object":
+            add("objects", subject)
+        elif kind == "place":
+            add("locations", subject)
+        elif kind == "environment":
+            add("environments", subject)
+        elif kind == "event":
+            add("activity_events", subject)
+        if kind == "place":
+            add("locations", fact.get("from_location"))
+            add("locations", fact.get("to_location"))
+        if kind == "person":
+            add("people", fact.get("actor"))
+            for affected in fact.get("affected_people") or []:
+                add("people", affected)
+    tags["time_nodes"] = _moment_time_tags(moment)
+    return tags
+
+
+def _build_entity_visuals(moment: Dict) -> dict:
+    """Link each memory entity to existing image assets without duplicating image bytes."""
+    media = moment.get("multimodal") or {}
+    if not isinstance(media, dict):
+        return {"schema": 1, "assets": [], "items": []}
+    assets, asset_index, items = [], {}, []
+    provided_entity_visuals = media.get("entity_visuals") or {}
+    provided_assets = (provided_entity_visuals.get("assets") or []
+                       if isinstance(provided_entity_visuals, dict) else [])
+    provided_context_items = [
+        item for item in (provided_entity_visuals.get("items") or [])
+        if isinstance(item, dict)
+        and item.get("entity_type") in {"scene", "location", "environment", "activity", "event"}
+    ] if isinstance(provided_entity_visuals, dict) else []
+    source_id = str((moment.get("source_provenance") or {}).get("source_segment_id") or
+                    media.get("source_id") or "")
+
+    def asset_id(ref, role=None):
+        if not isinstance(ref, dict) or not isinstance(ref.get("asset"), str) or not ref["asset"].startswith("assets/"):
+            return None
+        asset = ref["asset"].replace(chr(92), "/")
+        key = (asset, role or ref.get("visual_role") or "")
+        if key not in asset_index:
+            row = {"asset": asset, "visual_role": key[1] or "source_frame"}
+            for name in ("bytes", "mime", "dhash", "at_s", "source_id", "quality_tier", "crop_bbox"):
+                value = ref.get(name)
+                if value not in (None, ""):
+                    row[name] = copy.deepcopy(value)
+            if not row.get("source_id") and source_id:
+                row["source_id"] = source_id
+            if ref.get("source_asset"):
+                row["source_asset"] = str(ref["source_asset"]).replace(chr(92), "/")
+            asset_index[key] = len(assets)
+            assets.append(row)
+        return asset_index[key]
+
+    def add_item(kind, entity, description, refs, fallback_refs=None, status="linked"):
+        entity = " ".join(str(entity or "").split()).strip()
+        if not entity:
+            return
+        indices = []
+        for ref in refs or []:
+            index = asset_id(ref)
+            if index is not None and index not in indices:
+                indices.append(index)
+        if not indices:
+            for ref in fallback_refs or []:
+                index = asset_id(ref, "scene_context_fallback")
+                if index is not None and index not in indices:
+                    indices.append(index)
+        items.append({"entity_type": kind, "entity": entity[:500],
+                      "description": " ".join(str(description or "").split())[:600],
+                      "status": status if indices else "no_visual_evidence",
+                      "asset_indices": indices[:8]})
+
+    scene_frames = []
+    for ref in media.get("visual_frames") or []:
+        if isinstance(ref, dict):
+            scene_frames.append({**ref, "visual_role": "scene_context"})
+    if not scene_frames and isinstance(media.get("visual"), dict):
+        scene_frames.append({**media["visual"], "visual_role": "scene_context"})
+    scene_frames = scene_frames[:4]
+
+    # Person/object crops are the preferred evidence. Keep a full scene frame as
+    # a fallback so an entity is still inspectable when a crop could not be made.
+    person_visuals = media.get("person_visuals") or {}
+    person_items = person_visuals.get("items") or [] if isinstance(person_visuals, dict) else []
+    people_by_name = {str(row.get("person") or "").casefold(): row
+                      for row in person_items if isinstance(row, dict)}
+    for row in moment.get("person_observations") or []:
+        if not isinstance(row, dict):
+            continue
+        name = str(row.get("entity") or "").strip()
+        visual = people_by_name.get(name.casefold()) or {}
+        refs = visual.get("frame_refs") or []
+        add_item("person", name, row.get("appearance") or visual.get("appearance"),
+                 refs, scene_frames, "grounded" if refs else "context_fallback")
+
+    object_visuals = media.get("object_visuals") or {}
+    object_items = object_visuals.get("items") or [] if isinstance(object_visuals, dict) else []
+    objects_by_name = {str(row.get("object") or "").casefold(): row
+                        for row in object_items if isinstance(row, dict)}
+    observations = moment.get("object_observations") or []
+    if not observations:
+        observations = [{"object": row.get("object"), "appearance": row.get("appearance")}
+                        for row in object_items if isinstance(row, dict)]
+    for row in observations:
+        if not isinstance(row, dict):
+            continue
+        name = str(row.get("object") or "").strip()
+        visual = objects_by_name.get(name.casefold()) or {}
+        refs = visual.get("frame_refs") or []
+        add_item("object", name, row.get("appearance") or visual.get("appearance"),
+                 refs, scene_frames, "grounded" if refs else "context_fallback")
+
+    if not provided_context_items:
+        add_item("scene", moment.get("scene"), "", scene_frames, status="context")
+    if moment.get("location") and not provided_context_items:
+        add_item("location", moment.get("location"), "", scene_frames[1:2] or scene_frames,
+                 status="context")
+    if not provided_context_items:
+        for environment in moment.get("environments") or []:
+            add_item("environment", environment, "", scene_frames, status="context")
+
+    # Activity-level images are selected from the observed event times where possible.
+    facts = [row for row in moment.get("temporal_facts") or [] if isinstance(row, dict)]
+    activity_refs = []
+    for fact in facts:
+        if fact.get("modality") not in (None, "visual"):
+            continue
+        ref = fact.get("evidence_ref") or {}
+        try:
+            at = float(ref.get("frame_time_s", fact.get("frame_time_s")))
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(at):
+            continue
+        if scene_frames:
+            best = min(scene_frames, key=lambda frame: abs(float(frame.get("at_s") or 0) - at))
+            if best not in activity_refs:
+                activity_refs.append(best)
+    if not activity_refs:
+        activity_refs = scene_frames
+    if moment.get("activity") and not provided_context_items:
+        add_item("activity", moment.get("activity"), "", activity_refs[:4], status="context")
+    for fact in ([] if provided_context_items else facts[:16]):
+        kind = str(fact.get("subject_type") or "").casefold()
+        if kind not in {"event", "person", "object", "place", "environment"}:
+            continue
+        label = " · ".join(str(fact.get(key) or "").strip()
+                            for key in ("subject", "predicate", "value") if fact.get(key))
+        ref = fact.get("evidence_ref") or {}
+        refs = []
+        try:
+            at = float(ref.get("frame_time_s", fact.get("frame_time_s")))
+        except (TypeError, ValueError):
+            at = None
+        if at is not None and scene_frames:
+            refs = [min(scene_frames, key=lambda frame: abs(float(frame.get("at_s") or 0) - at))]
+        add_item("event", label, str(fact.get("time_scope") or ""), refs,
+                 scene_frames, "event_frame" if refs else "context_fallback")
+    for item in provided_context_items:
+        entity_type = str(item.get("entity_type") or "")
+        entity = " ".join(str(item.get("entity") or "").split()).strip()
+        if not entity:
+            continue
+        indices = []
+        for index in item.get("asset_indices") or []:
+            if not isinstance(index, int) or isinstance(index, bool) or not 0 <= index < len(provided_assets):
+                continue
+            asset_index_value = asset_id(provided_assets[index])
+            if asset_index_value is not None and asset_index_value not in indices:
+                indices.append(asset_index_value)
+        items.append({
+            "entity_type": entity_type, "entity": entity[:500],
+            "description": " ".join(str(item.get("description") or "").split())[:600],
+            "status": str(item.get("status") or ("grounded" if indices else "no_visual_evidence")),
+            "asset_indices": indices[:8],
+        })
+    return {"schema": 1, "assets": assets, "items": items[:64]}
 
 
 def _migrate_profile(profile: Dict) -> Dict:
@@ -457,80 +770,83 @@ def _retrieval_tokens(text: str) -> list:
             and token not in _SEARCH_ZH_STOPWORDS
             and (len(token) > 1 or '\u4e00' <= token <= '\u9fff')]
 
-def _rank_memory_docs(query_text: str, documents: list) -> list:
-    """Rank active memories with field-aware BM25.
-
-    Text is scored within semantic fields (scene/action/entities/tags) instead
-    of flattening a whole record into one long document. This keeps concise
-    people, object, place, and activity fields searchable when action text is
-    much longer. Normalized translated text remains searchable at a lower
-    weight so multilingual queries still work without live translation.
-    """
-    documents = [doc for doc in documents
-                 if isinstance(doc, dict) and not doc.get("stale")
-                 and not doc.get("merged_into")]
-    if not documents:
-        return []
-    query_terms = list(dict.fromkeys(_retrieval_tokens(str(query_text or "")[:1200])))
-    if not query_terms:
-        return []
-
-    # Keep the full transcript sidecar in L7 for audit, but exclude it from
-    # default retrieval: long, noisy speech can outrank the structured memory
-    # fields that are actually passed to the answer model. Experiments may
-    # enable it with MEMORY_SOURCE_EVIDENCE_WEIGHT.
-    field_weights = {
+def _memory_search_field_weights():
+    return {
         "scene": 1.0,
         "user_action": 1.0,
+        "interaction_details": 1.2,
+        "person_observations": 1.1,
+        "temporal_facts": 1.3,
+        "object_observations": 1.2,
+        "source_time": 0.8,
         "activity": 1.0,
         "people": 1.0,
         "location": 1.0,
         "objects": 1.0,
         "environments": 1.0,
         "activity_events": 1.0,
-        "needs": 1.0,
-        "solutions": 1.0,
         "time_occasion": 0.7,
         "extra_notes": 0.6,
         "normalized": 0.5,
-        "source_evidence": float(os.environ.get("MEMORY_SOURCE_EVIDENCE_WEIGHT", "0.0")),
-    }
-    metadata = {
-        "id", "timestamp", "created_at", "updated_at", "last_used",
-        "access_count", "stale", "decay_type", "decay_rate", "expires_at",
-        "confidence", "highlighted", "feedback", "source_ids", "layer",
-        "source_provenance",
-        "canonicalization_history",
-        "multimodal",
-        "merged_into", "merged_sources", "merge_history", "merge_event",
-        "_merged_sources_records", "_group_highlighted",
+        "source_evidence": float(os.environ.get("MEMORY_SOURCE_EVIDENCE_WEIGHT", "0.25")),
+        "multimodal_entities": 0.8,
+        "merged_source_text": 0.6,
     }
 
-    def as_search_text(value):
-        if isinstance(value, dict):
-            return " ".join(as_search_text(item) for item in value.values())
-        if isinstance(value, (list, tuple, set)):
-            return " ".join(as_search_text(item) for item in value)
-        if value is None:
-            return ""
-        return str(value)
 
-    # Keep common semantic fields independent. Unknown content fields are
-    # searchable at a conservative weight for schema compatibility.
-    all_fields = set(field_weights)
+_MEMORY_SEARCH_METADATA = {
+    "id", "timestamp", "created_at", "updated_at", "last_used",
+    "access_count", "stale", "decay_type", "decay_rate", "expires_at",
+    "confidence", "highlighted", "feedback", "source_ids", "layer",
+    "source_provenance", "canonicalization_history", "entity_graph",
+    "needs", "solutions", "multimodal", "merged_into", "merged_sources",
+    "merge_history", "merge_event", "source_refresh_history",
+    "_merged_sources_records",
+    "_merged_search_text", "_group_highlighted",
+}
+
+
+def _as_memory_search_text(value):
+    if isinstance(value, dict):
+        return " ".join(_as_memory_search_text(item) for item in value.values())
+    if isinstance(value, (list, tuple, set)):
+        return " ".join(_as_memory_search_text(item) for item in value)
+    if value is None:
+        return ""
+    return str(value)
+
+
+def _build_memory_search_index(documents: list) -> dict:
+    """Build field-aware BM25 statistics once; callers own cache invalidation."""
+    active_documents = [doc for doc in documents
+                        if isinstance(doc, dict) and not doc.get("stale")
+                        and not doc.get("merged_into")]
+    field_names = set(_memory_search_field_weights()) | {"other"}
     field_counts = []
     field_lengths = []
     document_frequency = Counter()
-    for document in documents:
+
+    for document in active_documents:
         values = {}
         for key, value in document.items():
-            if key in metadata:
+            if key == "_merged_search_text":
+                if value:
+                    values["merged_source_text"] = _as_memory_search_text(value)
                 continue
-            field = key if key in field_weights else "other"
-            values[field] = (values.get(field, "") + " " + as_search_text(value)).strip()
+            if key in _MEMORY_SEARCH_METADATA:
+                continue
+            if key == "multimodal":
+                entities = value.get("entities") if isinstance(value, dict) else None
+                if entities:
+                    values["multimodal_entities"] = _as_memory_search_text(entities)
+                continue
+            field = key if key in field_names else "other"
+            values[field] = (values.get(field, "") + " " +
+                             _as_memory_search_text(value)).strip()
+
         counts = {
             field: Counter(_retrieval_tokens(values.get(field, "").lower()))
-            for field in all_fields | {"other"}
+            for field in field_names
         }
         lengths = {field: sum(counter.values()) for field, counter in counts.items()}
         field_counts.append(counts)
@@ -539,36 +855,68 @@ def _rank_memory_docs(query_text: str, documents: list) -> list:
             for term in counter:
                 document_frequency[(field, term)] += 1
 
-    live_count = len(documents)
-    average_lengths = {}
-    for field in all_fields | {"other"}:
+    averages = {}
+    for field in field_names:
         nonempty = [lengths[field] for lengths in field_lengths if lengths[field] > 0]
-        average_lengths[field] = sum(nonempty) / len(nonempty) if nonempty else 1.0
+        averages[field] = sum(nonempty) / len(nonempty) if nonempty else 1.0
 
+    postings = {}
+    for doc_index, counts in enumerate(field_counts):
+        for field, counter in counts.items():
+            for term, tf in counter.items():
+                postings.setdefault(term, {}).setdefault(field, []).append((doc_index, tf))
+
+    return {
+        "documents": active_documents,
+        "field_lengths": field_lengths,
+        "document_frequency": document_frequency,
+        "average_lengths": averages,
+        "postings": postings,
+        "live_count": len(active_documents),
+    }
+
+
+def _rank_memory_search_index(query_text: str, index_data: dict) -> list:
+    """Score a prebuilt BM25 index while preserving the established tie order."""
+    documents = index_data["documents"]
+    if not documents:
+        return []
+    query_terms = list(dict.fromkeys(_retrieval_tokens(str(query_text or "")[:1200])))
+    if not query_terms:
+        return []
+
+    field_weights = _memory_search_field_weights()
+    df = index_data["document_frequency"]
+    averages = index_data["average_lengths"]
+    lengths = index_data["field_lengths"]
+    scores = {}
     k1, b = 1.2, 0.75
-    ranked = []
-    for index, counts_by_field in enumerate(field_counts):
-        score = 0.0
-        for term in query_terms:
-            for field, counts in counts_by_field.items():
-                tf = counts.get(term, 0)
-                if not tf:
-                    continue
-                df = document_frequency[(field, term)]
-                idf = math.log(1.0 + (live_count - df + 0.5) / (df + 0.5))
-                average_length = average_lengths[field]
-                length = field_lengths[index][field]
+
+    for term in query_terms:
+        for field, rows in index_data["postings"].get(term, {}).items():
+            idf = math.log(1.0 + (index_data["live_count"] - df[(field, term)] + 0.5)
+                           / (df[(field, term)] + 0.5))
+            average_length = averages[field]
+            weight = field_weights.get(field, 0.75)
+            for doc_index, tf in rows:
+                length = lengths[doc_index][field]
                 norm_tf = (tf * (k1 + 1.0)) / (
                     tf + k1 * (1.0 - b + b * length / average_length)
                 )
-                score += field_weights.get(field, 0.75) * idf * norm_tf
-        if score > 0:
-            ranked.append((score, index, documents[index]))
+                scores[doc_index] = scores.get(doc_index, 0.0) + weight * idf * norm_tf
+
+    ranked = [(score, doc_index, documents[doc_index])
+              for doc_index, score in scores.items() if score > 0]
     ranked.sort(key=lambda item: (
         -item[0], not bool(item[2].get("highlighted") or
                            item[2].get("_group_highlighted")), item[1]
     ))
     return [(score, document) for score, _, document in ranked]
+
+
+def _rank_memory_docs(query_text: str, documents: list) -> list:
+    """Compatibility entry point for one-off BM25 queries."""
+    return _rank_memory_search_index(query_text, _build_memory_search_index(documents))
 
 def _contains_cjk(text: str) -> bool:
     """检测是否含中日韩字符（需先翻译为英文才能分词）。"""
@@ -782,7 +1130,12 @@ def _empty_moment() -> Dict:
         # Part 1
         "scene": "",          # external environment description
         "user_action": "",    # user's own behaviour / action
-        "source_evidence": "",  # speaker-labelled transcript facts supporting the event
+        "interaction_details": "",  # source-grounded who-did-what and event order
+        "person_observations": [],   # source-linked appearance and explicitly stated age
+        "temporal_facts": [],        # source-linked plans and object/person state changes
+        "object_observations": [],   # grounded appearance and location cues with frame provenance
+        "source_time": {},           # source-relative date/time, distinct from ingest time
+        "source_evidence": "",  # timestamped source-video speech; speaker is not inferred
         # Part 2
         "needs": [],          # [{"need": str, "confidence": float}]
         # Part 3
@@ -796,6 +1149,253 @@ def _empty_moment() -> Dict:
         "highlighted": False,
         "layer": 1
     }
+
+
+def _clean_source_fact_rows(rows, kind: str, limit: int) -> list:
+    """Validate compact, source-linked facts; collapse repeated person-frame descriptions."""
+    allowed = ({"entity", "appearance", "face_features", "apparent_age_range", "apparent_age_basis", "age", "age_basis", "frame_index",
+                "frame_time_s", "evidence", "confidence", "evidence_ref", "evidence_refs"}
+               if kind == "person" else
+               {"subject_type", "subject", "predicate", "value", "actor",
+                "affected_people", "from_location", "to_location", "from_state",
+                "to_state", "time_scope", "time_order", "frame_index",
+                "frame_time_s", "modality", "evidence", "status", "confidence",
+                "evidence_ref"})
+    output = []
+    seen_people = {}
+
+    def clean_ref(source_ref):
+        if not isinstance(source_ref, dict):
+            return None
+        ref = {}
+        segment = source_ref.get("source_segment_id")
+        if isinstance(segment, str) and segment.strip():
+            ref["source_segment_id"] = segment.strip()[:128]
+        modality = source_ref.get("modality")
+        if modality in {"visual", "speech"}:
+            ref["modality"] = modality
+        frame_index = source_ref.get("frame_index")
+        if isinstance(frame_index, int) and not isinstance(frame_index, bool) and frame_index > 0:
+            ref["frame_index"] = min(frame_index, 999)
+        for key in ("frame_time_s", "clip_start_s", "clip_end_s",
+                    "audio_start_s", "audio_end_s"):
+            try:
+                number = float(source_ref.get(key))
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(number) and number >= 0:
+                ref[key] = round(number, 3)
+        return ref or None
+
+    def add_refs(row, refs):
+        combined = list(row.get("evidence_refs") or [])
+        if not combined and isinstance(row.get("evidence_ref"), dict):
+            combined.append(row["evidence_ref"])
+        combined.extend(ref for ref in refs if ref)
+        unique = []
+        seen = set()
+        for ref in combined:
+            cleaned = clean_ref(ref)
+            if not cleaned:
+                continue
+            signature = (cleaned.get("source_segment_id"), cleaned.get("modality"),
+                         cleaned.get("frame_index"), cleaned.get("frame_time_s"),
+                         cleaned.get("audio_start_s"), cleaned.get("audio_end_s"))
+            if signature in seen:
+                continue
+            seen.add(signature)
+            unique.append(cleaned)
+            if len(unique) >= 16:
+                break
+        if unique:
+            row["evidence_ref"] = unique[0]
+            if len(unique) > 1:
+                row["evidence_refs"] = unique
+            else:
+                row.pop("evidence_refs", None)
+
+    # Apply the limit after deduplication so repeated frames cannot crowd out
+    # observations of other people in the same video.
+    for source in rows[:64] if isinstance(rows, list) else []:
+        if not isinstance(source, dict):
+            continue
+        row = {}
+        for key in allowed - {"evidence_ref", "evidence_refs"}:
+            value = source.get(key)
+            if key in {"frame_index", "time_order"}:
+                if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+                    row[key] = min(value, 999)
+            elif key == "frame_time_s":
+                try:
+                    number = float(value)
+                except (TypeError, ValueError):
+                    continue
+                if math.isfinite(number) and number >= 0:
+                    row[key] = round(number, 3)
+            elif key == "affected_people" and isinstance(value, list):
+                row[key] = list(dict.fromkeys(
+                    item.strip()[:120] for item in value
+                    if isinstance(item, str) and item.strip()))[:8]
+            elif isinstance(value, str) and value.strip():
+                row[key] = value.strip()[:500]
+        refs = []
+        supplied_refs = source.get("evidence_refs")
+        if isinstance(supplied_refs, list):
+            refs.extend(ref for ref in supplied_refs if isinstance(ref, dict))
+        singular_ref = source.get("evidence_ref")
+        if isinstance(singular_ref, dict):
+            refs.append(singular_ref)
+        if refs:
+            add_refs(row, refs)
+        elif row.get("frame_time_s") is not None or row.get("frame_index") is not None:
+            ref = {}
+            if row.get("frame_time_s") is not None:
+                ref["frame_time_s"] = row["frame_time_s"]
+            if row.get("frame_index") is not None:
+                ref["frame_index"] = row["frame_index"]
+            add_refs(row, [ref])
+        if kind == "person":
+            # Exact age is source-stated only; a separate broad visual band is explicitly marked as an estimate.
+            if row.get("age_basis") not in {"stated", "visible_text"}:
+                row.pop("age", None)
+            if row.get("age_basis") not in {"stated", "visible_text", "unknown"}:
+                row.pop("age_basis", None)
+            if (row.get("apparent_age_basis") != "visual_estimate"
+                    or row.get("apparent_age_range") not in {
+                        "child", "teenager", "18-29", "30-44", "45-59", "60-74", "75+"
+                    }):
+                row.pop("apparent_age_range", None)
+                row.pop("apparent_age_basis", None)
+        if row.get("confidence") not in {"high", "medium", "low"}:
+            row.pop("confidence", None)
+        if row.get("modality") not in {"visual", "speech"}:
+            row.pop("modality", None)
+        if row.get("status") not in {"observed", "stated_plan", "completed", "unclear"}:
+            row.pop("status", None)
+        if not (row.get("entity") or row.get("subject")):
+            continue
+        if kind == "person":
+            key = (
+                " ".join(str(row.get("entity") or "").split()).casefold(),
+                " ".join(str(row.get("appearance") or "").split()).casefold(),
+                " ".join(str(row.get("face_features") or "").split()).casefold(),
+                row.get("age_basis", ""),
+                row.get("age", "") if row.get("age_basis") in {"stated", "visible_text"} else "",
+            )
+            if key in seen_people:
+                add_refs(output[seen_people[key]], refs or ([row.get("evidence_ref")] if row.get("evidence_ref") else []))
+                rank = {"low": 0, "medium": 1, "high": 2}
+                old_conf, new_conf = output[seen_people[key]].get("confidence"), row.get("confidence")
+                if rank.get(new_conf, -1) > rank.get(old_conf, -1):
+                    output[seen_people[key]]["confidence"] = new_conf
+                continue
+            if len(output) >= limit:
+                continue
+            seen_people[key] = len(output)
+        elif len(output) >= limit:
+            continue
+        output.append(row)
+    return output
+
+
+def normalize_object_transition_facts(moment: Dict) -> Dict:
+    """Make an explicitly moved item the fact subject while preserving its actor."""
+    if not isinstance(moment, dict):
+        return moment
+    facts = moment.get("temporal_facts") or []
+    if not isinstance(facts, list):
+        return moment
+    objects = moment.get("objects")
+    if not isinstance(objects, list):
+        objects = []
+    human_terms = re.compile(
+        r"\b(?:person|people|man|woman|boy|girl|child|he|she|they)\b", re.I)
+    for fact in facts:
+        if not isinstance(fact, dict):
+            continue
+        predicate = str(fact.get("predicate") or "").casefold().strip()
+        if predicate not in {"move", "moved", "relocate", "relocated", "transfer", "transferred"}:
+            continue
+        value = str(fact.get("value") or "").strip()
+        if not value:
+            continue
+        current_subject = str(fact.get("subject") or "").strip()
+        original_type = str(fact.get("subject_type") or "").casefold()
+        actor = str(fact.get("actor") or "").strip()
+        if (original_type == "object" and actor
+                and re.match(r"^(?:from|to|toward|towards|into|out of)\s+", current_subject, re.I)):
+            # A place phrase produced by an older extractor is not an object. If
+            # the fact names a person actor, preserve the movement as that person's event.
+            fact["subject_type"] = "person"
+            fact["subject"] = actor
+            continue
+        if original_type == "object" and current_subject:
+            candidate = current_subject
+        else:
+            match = re.match(
+                r"^(?:moved|relocated|transferred|placed)\s+(?:(?:the|a|an)\s+)?(.+?)\s+(?:from|out of|off|onto|to)\b",
+                value, re.I)
+            if not match:
+                match = re.match(
+                    r"^(?:(?:the|a|an)\s+)?(.+?)\s+(?:from|out of|off|onto|to)\b",
+                    value, re.I)
+            candidate = match.group(1) if match else ""
+            candidate = re.sub(r"^(?:the|a|an)\s+", "", candidate.strip(), flags=re.I)
+        candidate = " ".join(candidate.split()).strip(" .,:;-")[:120]
+        if not candidate or human_terms.search(candidate):
+            continue
+        if not actor and original_type == "person":
+            actor = current_subject
+        if actor:
+            fact["actor"] = actor
+        fact["subject_type"] = "object"
+        fact["subject"] = candidate
+        if not any(str(item).casefold() == candidate.casefold() for item in objects):
+            objects.append(candidate)
+    if objects:
+        moment["objects"] = list(dict.fromkeys(
+            str(item).strip() for item in objects if str(item).strip()
+            and not re.match(r"^(?:from|to|toward|towards|into|out of)\s+", str(item).strip(), re.I)))[:40]
+    return moment
+
+
+def object_visual_observations(moment: Dict, limit: int = 16) -> list:
+    """Expose compact, source-linked object appearance facts from stored grounding."""
+    if not isinstance(moment, dict):
+        return []
+    saved = moment.get("object_observations")
+    if isinstance(saved, list) and saved:
+        return copy.deepcopy(saved[:max(0, int(limit))])
+    media = moment.get("multimodal") or {}
+    grounding = media.get("object_visuals") or {} if isinstance(media, dict) else {}
+    rows = []
+    fallback_segment = str((moment.get("source_provenance") or {}).get("source_segment_id") or "")
+    for item in grounding.get("items") or []:
+        if not isinstance(item, dict) or item.get("status") not in {"grounded", "visible_unlabeled"}:
+            continue
+        label = " ".join(str(item.get("object") or "").split())[:180]
+        appearance = " ".join(str(item.get("appearance") or "").split())[:500]
+        if not label and not appearance:
+            continue
+        refs = []
+        for ref in (item.get("frame_refs") or [])[:3]:
+            if not isinstance(ref, dict):
+                continue
+            entry = {"source_segment_id": str(ref.get("source_id") or fallback_segment)[:128],
+                     "modality": "visual"}
+            try:
+                at = float(ref.get("at_s"))
+                if math.isfinite(at) and at >= 0:
+                    entry["frame_time_s"] = round(at, 3)
+            except (TypeError, ValueError):
+                pass
+            if entry.get("source_segment_id") or entry.get("frame_time_s") is not None:
+                refs.append(entry)
+        rows.append({"object": label, "appearance": appearance,
+                     "status": item.get("status"), "evidence_refs": refs})
+        if len(rows) >= max(0, int(limit)):
+            break
+    return rows
 
 
 def _portable_video_id(value: Any) -> str:
@@ -834,6 +1434,15 @@ def _moment_entities(moment: Dict) -> List[Dict[str, str]]:
         ("environment", mm_entities.get("environments") or []),
     ]
     seen_by_type = {}
+    fields.append(("person", [row.get("entity") for row in moment.get("person_observations") or []
+                              if isinstance(row, dict)]))
+    kind_map = {"person": "person", "object": "object", "place": "location", "environment": "environment"}
+    for fact in moment.get("temporal_facts") or []:
+        if not isinstance(fact, dict):
+            continue
+        if fact.get("subject_type") in kind_map:
+            fields.append((kind_map[fact["subject_type"]], [fact.get("subject")]))
+        fields.append(("person", [fact.get("actor")] + (fact.get("affected_people") or [])))
     for entity_type, values in fields:
         if not isinstance(values, (list, tuple)):
             continue
@@ -858,7 +1467,8 @@ def _moment_entities(moment: Dict) -> List[Dict[str, str]]:
 
 def entity_graph_summary(layer7: Dict, limit: int = 8) -> Dict:
     """Build a compact, event-grounded entity graph view without storing duplicate indexes."""
-    moments = layer7.get("moments") or {}
+    moments = {key: value for key, value in (layer7.get("moments") or {}).items()
+               if isinstance(value, dict) and not value.get("stale") and not value.get("merged_into")}
     entity_keys = set()
     relation_count = 0
     for moment in moments.values():
@@ -878,6 +1488,27 @@ def entity_graph_summary(layer7: Dict, limit: int = 8) -> Dict:
         if provenance.get("source_video_id"):
             provenance["source_video_id"] = _portable_video_id(
                 provenance["source_video_id"])
+        media = moment.get("multimodal") or {}
+        visual_refs = media.get("visual_frames") or ([media["visual"]] if media.get("visual") else [])
+        audio_refs = media.get("audio_clips") or ([media["audio"]] if media.get("audio") else [])
+        def compact_refs(refs, keys):
+            return [{key: ref.get(key) for key in keys if ref.get(key) is not None}
+                    for ref in refs[:3] if isinstance(ref, dict)]
+        compact_media = {
+            "source_id": str(media.get("source_id") or provenance.get("source_segment_id") or ""),
+            "visual_frames": compact_refs(
+                visual_refs, ("asset", "bytes", "mime", "at_s", "source_id")),
+            "audio_clips": compact_refs(
+                audio_refs, ("asset", "bytes", "mime", "at_s", "duration_s", "source_id")),
+            "person_crops": compact_refs(
+                [ref for item in (media.get("person_visuals") or {}).get("items") or []
+                 for ref in item.get("frame_refs") or []],
+                ("asset", "bytes", "mime", "at_s", "source_id", "visual_role", "crop_bbox")),
+            "object_crops": compact_refs(
+                [ref for item in (media.get("object_visuals") or {}).get("items") or []
+                 for ref in item.get("frame_refs") or []],
+                ("asset", "bytes", "mime", "at_s", "source_id", "visual_role", "crop_bbox")),
+        }
         relations = []
         for entity in entities:
             predicate = {
@@ -897,8 +1528,13 @@ def entity_graph_summary(layer7: Dict, limit: int = 8) -> Dict:
         samples.append({
             "moment_id": moment.get("id"),
             "timestamp": moment.get("timestamp"),
+            "source_time": moment.get("source_time") or {},
             "event": str(moment.get("scene") or moment.get("activity") or "")[:200],
+            "action": str(moment.get("user_action") or "")[:240],
+            "interaction_details": str(moment.get("interaction_details") or "")[:360],
             "people": [row["name"] for row in entities if row["type"] == "person"],
+            "person_observations": list(moment.get("person_observations") or [])[:16],
+            "temporal_facts": list(moment.get("temporal_facts") or [])[:32],
             "activity": str(moment.get("activity") or ""),
             "location": str(moment.get("location") or ""),
             "objects": [row["name"] for row in entities if row["type"] == "object"],
@@ -906,6 +1542,7 @@ def entity_graph_summary(layer7: Dict, limit: int = 8) -> Dict:
             "entities": entities[:24],
             "relations": relations[:48],
             "source_provenance": provenance,
+            "multimodal": compact_media,
         })
     return {"entity_count": len(entity_keys), "relation_count": relation_count,
             "storage_mode": "derived_from_source_moments", "samples": samples}
@@ -961,16 +1598,21 @@ def _empty_db() -> Dict:
         "layer4": {
             "summary": "",
             "current_tasks": [],
+            "stated_plans": [],
             "life_trajectory": "",
             "last_updated": None,
-            "source_moment_count": 0
+            "source_moment_count": 0,
+            "source_moment_ids": [],
+            "source_link_coverage": "unknown"
         },
         "layer5": {
             "summary": "",
             "key_events": [],
             "long_term_patterns": "",
             "last_updated": None,
-            "source_moment_count": 0
+            "source_moment_count": 0,
+            "source_moment_ids": [],
+            "source_link_coverage": "unknown"
         },
         "layer6": {
             "summary": "",
@@ -985,7 +1627,9 @@ def _empty_db() -> Dict:
                 "motivations": []
             },
             "last_updated": None,
-            "source_moment_count": 0
+            "source_moment_count": 0,
+            "source_moment_ids": [],
+            "source_link_coverage": "unknown"
         },
 
         # --- classified archive ---
@@ -1035,6 +1679,7 @@ class PersonMemory:
         self.memory_dir.mkdir(exist_ok=True)
         self.memory_file = self.memory_dir / "memory.json"
         self.memory: Dict = self._load()
+        self._lexical_search_cache = None
         # A monotonic generation lets query check index freshness without
         # re-hashing the full archive on every retrieval.
         self.memory.setdefault("metadata", {}).setdefault("semantic_index_revision", 0)
@@ -1042,6 +1687,8 @@ class PersonMemory:
         # 可注入；None 时跳过翻译（非英文文本无法分词，检索走原文兜底降级）。
         self.translate_fn = translate_fn
         self._semantic_index_enabled = os.environ.get("MEMORY_SEMANTIC_RRF", "0").lower() in {"1", "true", "yes", "on"}
+        if self.memory_file.exists() and self._ensure_rich_entity_memory():
+            self._save()
         if self._semantic_index_enabled:
             from semantic_retrieval import schedule_sync
             revision = self.memory.get("metadata", {}).get("semantic_index_revision", 0)
@@ -1061,10 +1708,66 @@ class PersonMemory:
             # Migrate old layer6.profile (name/basic_info/preferences/habits) to
             # spec-skeleton fields (demographics/preferences/frequent_locations/behavior_patterns).
             data["layer6"]["profile"] = _migrate_profile(data["layer6"].get("profile", {}))
+            # Additive migration: legacy summaries have no auditable source mapping.
+            for layer_no in (4, 5, 6):
+                layer = data.setdefault(f"layer{layer_no}", {})
+                layer.setdefault("source_moment_ids", [])
+                layer.setdefault("source_link_coverage", "unknown")
+                layer.setdefault("source_moment_count", 0)
             # 清洗 layer7 索引污染（修复 G7 缺陷）
             _clean_layer7_indices(data.get("layer7", {}))
             return data
         return _empty_db()
+
+    def _ensure_rich_entity_memory(self) -> bool:
+        """One-time additive migration for entity indexes, event types and visual links."""
+        metadata = self.memory.setdefault("metadata", {})
+        if int(metadata.get("rich_entity_memory_version", 0) or 0) >= 1:
+            return False
+        changed = False
+        layer7 = self.memory.setdefault("layer7", {})
+        moments = layer7.setdefault("moments", {})
+        for moment_id, moment in moments.items():
+            if not isinstance(moment, dict):
+                continue
+            before = copy.deepcopy(moment)
+            _upgrade_legacy_person_labels(moment)
+            normalize_object_transition_facts(moment)
+            media = moment.get("multimodal")
+            if isinstance(media, dict):
+                entity_visuals = _build_entity_visuals(moment)
+                if entity_visuals.get("items") and media.get("entity_visuals") != entity_visuals:
+                    media["entity_visuals"] = entity_visuals
+            if moment != before:
+                changed = True
+            for layer_key in ("layer1", "layer2", "layer3"):
+                for index, window_moment in enumerate(self.memory.get(layer_key, [])):
+                    if window_moment.get("id") == moment_id and window_moment != moment:
+                        self.memory[layer_key][index] = moment
+                        changed = True
+        _clean_layer7_indices(layer7)
+        for index_key in LAYER7_INDICES:
+            index = layer7.setdefault(index_key, {})
+            for tag, ids in list(index.items()):
+                valid_ids = list(dict.fromkeys(mid for mid in ids if mid in moments))
+                if valid_ids != ids:
+                    changed = True
+                if valid_ids:
+                    index[tag] = valid_ids
+                else:
+                    index.pop(tag, None)
+        for moment_id, moment in moments.items():
+            if not isinstance(moment, dict) or moment.get("merged_into"):
+                continue
+            for index_key, tags in _moment_index_tags(moment).items():
+                index = layer7.setdefault(index_key, {})
+                for tag in tags:
+                    ids = index.setdefault(tag, [])
+                    if moment_id not in ids:
+                        ids.append(moment_id)
+                        changed = True
+        metadata["rich_entity_memory_version"] = 1
+        return True
 
     def clean_layer7_indices(self) -> Dict[str, List[str]]:
         """清洗 layer7 索引并落盘保存。"""
@@ -1128,6 +1831,10 @@ class PersonMemory:
             extra_notes: str = "",
             timestamp: str = None,
             source_evidence: str = "",
+            interaction_details: str = "",
+            person_observations: List[Dict] = None,
+            temporal_facts: List[Dict] = None,
+            source_time: Dict = None,
             multimodal: Dict = None,
             source_provenance: Dict = None) -> str:
         """
@@ -1142,10 +1849,33 @@ class PersonMemory:
         moment["timestamp"] = event_time.isoformat()
         moment["scene"] = scene
         moment["user_action"] = user_action
+        if interaction_details:
+            moment["interaction_details"] = str(interaction_details)[:4000]
+        if isinstance(person_observations, list):
+            moment["person_observations"] = _clean_source_fact_rows(
+                person_observations, "person", 16)
+        if isinstance(temporal_facts, list):
+            moment["temporal_facts"] = _clean_source_fact_rows(
+                temporal_facts, "fact", 32)
+        if isinstance(source_time, dict):
+            clean_time = {}
+            for key in ("absolute_date", "day_label", "time_of_day", "time_occasion", "basis", "source_segment_id"):
+                value = source_time.get(key)
+                if isinstance(value, str) and value.strip():
+                    clean_time[key] = value.strip()[:128]
+            for key in ("clip_start_s", "clip_end_s"):
+                try:
+                    value = float(source_time.get(key))
+                except (TypeError, ValueError):
+                    continue
+                if math.isfinite(value) and value >= 0:
+                    clean_time[key] = round(value, 3)
+            if clean_time:
+                moment["source_time"] = clean_time
         if source_evidence:
             moment["source_evidence"] = source_evidence
-        moment["needs"] = needs
-        moment["solutions"] = solutions
+        # Legacy arguments remain accepted for caller compatibility. Needs and
+        # proposed solutions belong to downstream reasoning, not stored facts.
         if location:
             moment["location"] = location
         if people:
@@ -1160,10 +1890,19 @@ class PersonMemory:
             moment["notes"] = extra_notes
         if isinstance(multimodal, dict) and multimodal.get("schema") == 1:
             moment["multimodal"] = multimodal
+        normalize_object_transition_facts(moment)
+        if isinstance(moment.get("multimodal"), dict):
+            entity_visuals = _build_entity_visuals(moment)
+            if entity_visuals.get("items"):
+                moment["multimodal"]["entity_visuals"] = entity_visuals
+        moment["object_observations"] = object_visual_observations(moment)
+        objects = moment.get("objects") or []
         if isinstance(source_provenance, dict):
             provenance = {}
             for key in ("source_video_id", "source_segment_id", "clip_start_s",
-                        "clip_end_s", "extraction_batch_id"):
+                        "clip_end_s", "source_video_sha256", "source_clip_sha256",
+                        "perception_prompt_version", "list_parser_version",
+                        "extraction_batch_id"):
                 value = source_provenance.get(key)
                 if value not in (None, ""):
                     provenance[key] = value
@@ -1180,6 +1919,7 @@ class PersonMemory:
         if self.translate_fn:
             normalized = {}
             for field, raw in (("scene", scene), ("user_action", user_action),
+                               ("interaction_details", interaction_details),
                                ("location", location), ("activity", activity),
                                ("notes", extra_notes), ("source_evidence", source_evidence)):
                 if raw and _contains_cjk(str(raw)):
@@ -1216,29 +1956,9 @@ class PersonMemory:
         self.memory["layer7"]["moments"][moment_id] = moment
 
         # ---- Layer 7 indices ----
-        event_day = event_time.date().isoformat()
-        self.memory["layer7"]["time_nodes"].setdefault(event_day, []).append(moment_id)
-
-        if people:
-            for p in people:
-                if _is_valid_person_tag(p):
-                    self.memory["layer7"]["people"].setdefault(p, []).append(moment_id)
-
-        if location and _is_valid_index_tag("locations", location):
-            self.memory["layer7"]["locations"].setdefault(location, []).append(moment_id)
-
-        if activity and _is_valid_index_tag("activity_events", activity):
-            self.memory["layer7"]["activity_events"].setdefault(activity, []).append(moment_id)
-
-        if environments:
-            for e in environments:
-                if _is_valid_index_tag("environments", e):
-                    self.memory["layer7"]["environments"].setdefault(e, []).append(moment_id)
-
-        if objects:
-            for o in objects:
-                if _is_valid_index_tag("objects", o):
-                    self.memory["layer7"]["objects"].setdefault(o, []).append(moment_id)
+        for index_key, tags in _moment_index_tags(moment).items():
+            for tag in tags:
+                self.memory["layer7"][index_key].setdefault(tag, []).append(moment_id)
 
         # ---- metadata ----
         self.memory["metadata"]["total_moments"] += 1
@@ -1438,12 +2158,20 @@ class PersonMemory:
         """Return active Layer 7 memories with their field-aware BM25 scores."""
         if top_k <= 0:
             return []
-        documents = [
-            self._retrieval_group_moment(moment)
-            for moment in self.memory["layer7"]["moments"].values()
-            if not moment.get("merged_into")
-        ]
-        lexical = _rank_memory_docs(query_text, documents)
+        revision = self.memory.get("metadata", {}).get("semantic_index_revision", 0)
+        cache = self._lexical_search_cache
+        if cache is None or cache.get("revision") != revision:
+            documents = [
+                self._retrieval_group_moment(moment)
+                for moment in self.memory["layer7"]["moments"].values()
+                if not moment.get("merged_into")
+            ]
+            cache = _build_memory_search_index(documents)
+            cache["revision"] = revision
+            cache["all_documents"] = documents
+            self._lexical_search_cache = cache
+        documents = cache["all_documents"]
+        lexical = _rank_memory_search_index(query_text, cache)
         if self._semantic_index_enabled:
             try:
                 from semantic_retrieval import PersistentSemanticIndex, loaded_encoder
@@ -1488,12 +2216,15 @@ class PersonMemory:
                 continue
             source_records.append({
                 key: copy.deepcopy(source.get(key))
-                for key in ("id", "timestamp", "scene", "user_action", "people",
+                for key in ("id", "timestamp", "scene", "user_action",
+                            "interaction_details", "person_observations",
+                            "temporal_facts", "object_observations", "source_time", "people",
                             "location", "activity", "objects", "environments",
-                            "needs", "solutions", "source_evidence", "multimodal",
-                            "highlighted")
+                            "source_evidence", "multimodal", "highlighted")
                 if source.get(key) is not None
             })
+        normalize_object_transition_facts(result)
+        result["object_observations"] = object_visual_observations(result)
         result["_merged_sources_records"] = source_records
         result["_merged_search_text"] = " ".join(
             json.dumps(row, ensure_ascii=False) for row in source_records
@@ -1504,35 +2235,124 @@ class PersonMemory:
         )
         return result
 
-    def query_hierarchical(self, query_text: str, top_k: int = 5) -> List[Dict]:
-        """Search L1→L5 in order, using BM25 within each layer and early stopping."""
+    def query_summary_layers(self, query_text: str, top_k: int = 3) -> List[Dict]:
+        """Search L4-L6 summaries and return explicit source lineage."""
         if top_k <= 0 or not _retrieval_tokens(str(query_text or "")[:1200]):
             return []
+        query_tokens = set(_retrieval_tokens(str(query_text or "")[:1200]))
+        documents, originals = [], {}
+
+        def active_profile_facts(node, path=""):
+            if isinstance(node, dict) and "value" in node:
+                if node.get("stale") or not node.get("value"):
+                    return []
+                return [f"{path}: {node['value']}" if path else str(node["value"])]
+            if isinstance(node, dict):
+                result = []
+                for key, value in node.items():
+                    result.extend(active_profile_facts(value, f"{path}.{key}" if path else key))
+                return result
+            if isinstance(node, list):
+                return [fact for value in node for fact in active_profile_facts(value, path)]
+            return []
+
+        for layer_no in (4, 5, 6):
+            layer = self.memory.get(f"layer{layer_no}", {})
+            if not isinstance(layer, dict):
+                continue
+            document = {key: value for key, value in layer.items() if key not in {
+                "source_moment_ids", "source_link_coverage", "source_moment_count",
+                "last_updated", "profile",
+            }}
+            profile_facts = active_profile_facts(layer.get("profile") or {}) if layer_no == 6 else []
+            matched_facts = [fact for fact in profile_facts
+                             if query_tokens & set(_retrieval_tokens(fact))]
+            if matched_facts:
+                document["profile_facts"] = matched_facts
+            document["id"] = f"layer{layer_no}_summary"
+            documents.append(document)
+            originals[document["id"]] = (layer_no, layer, matched_facts)
+
+        rows = []
+        for score, document in _rank_memory_docs(query_text, documents)[:top_k]:
+            layer_no, layer, matched_facts = originals[document["id"]]
+            summary = str(layer.get("summary") or "").strip()
+            if layer_no == 6 and matched_facts:
+                summary = (summary + "\n" if summary else "") + "相关稳定事实：" + "；".join(matched_facts[:12])
+            if not summary:
+                keys = ("current_tasks", "life_trajectory") if layer_no == 4 else ("key_events", "long_term_patterns")
+                summary = "；".join(str(value) for key in keys
+                                    for value in (layer.get(key) if isinstance(layer.get(key), list)
+                                                  else [layer.get(key)]) if value)
+            if not summary:
+                continue
+            source_ids = list(layer.get("source_moment_ids") or [])
+            rows.append({
+                "layer": layer_no, "score": round(score, 4), "summary": summary[:1600],
+                "source_moment_ids": source_ids[:40],
+                "source_moment_count": max(int(layer.get("source_moment_count") or 0), len(source_ids)),
+                "source_link_coverage": layer.get("source_link_coverage", "unknown"),
+            })
+        return rows
+
+    def query_hierarchical(self, query_text: str, top_k: int = 5) -> List[Dict]:
+        """Rank unique recent/archive episodes together; summaries supplement source records."""
+        query_text = str(query_text or "")[:1200]
+        if top_k <= 0 or not _retrieval_tokens(query_text):
+            return []
+
+        memberships = {}
+        window_only = {}
+        for layer_no in (1, 2, 3):
+            for moment in self._sorted_layer_moments(f"layer{layer_no}"):
+                moment_id = str(moment.get("id") or "")
+                if not moment_id or moment.get("merged_into"):
+                    continue
+                memberships.setdefault(moment_id, []).append(layer_no)
+                window_only.setdefault(moment_id, moment)
+
+        archive = self.memory.get("layer7", {}).get("moments", {})
+        for moment_id, moment in archive.items() if isinstance(archive, dict) else []:
+            if not isinstance(moment, dict) or moment.get("merged_into"):
+                continue
+            memberships.setdefault(str(moment_id), []).append(7)
+            window_only.setdefault(str(moment_id), self._retrieval_group_moment(moment))
+
+        # query_ranked preserves the optional BM25 + semantic-index fusion.
+        archive_rows = self.query_ranked(query_text, top_k=max(50, top_k * 10))
+        ranked_moments = []
+        ranked_ids = set()
+        for row in archive_rows:
+            moment = row.get("moment") or {}
+            moment_id = str(moment.get("id") or "")
+            if not moment_id or moment_id in ranked_ids:
+                continue
+            ranked_ids.add(moment_id)
+            ranked_moments.append((float(row.get("score") or 0), moment))
+
+        # Preserve any valid rolling-window row missing from the canonical archive.
+        orphan_docs = [moment for mid, moment in window_only.items()
+                       if mid not in archive and mid not in ranked_ids]
+        ranked_moments.extend(_rank_memory_docs(query_text, orphan_docs))
 
         results = []
-        seen_ids = set()
-        for layer_no in range(1, 6):
-            if layer_no <= 3:
-                layer_key = f"layer{layer_no}"
-                documents = self._sorted_layer_moments(layer_key)
-                for score, moment in _rank_memory_docs(query_text, documents):
-                    moment_id = moment.get("id")
-                    if moment_id and moment_id in seen_ids:
-                        continue
-                    if moment_id:
-                        seen_ids.add(moment_id)
-                    results.append({"layer": layer_no, "score": round(score, 4), "moment": moment})
-                    if len(results) >= top_k:
-                        break
-            else:
-                layer = self.memory.get(f"layer{layer_no}", {})
-                ranked = _rank_memory_docs(query_text, [layer])
-                if ranked:
-                    score, _ = ranked[0]
-                    moment = {"id": f"layer{layer_no}_summary", "layer": layer_no, **layer}
-                    results.append({"layer": layer_no, "score": round(score, 4), "moment": moment})
+        for score, moment in ranked_moments:
+            moment_id = str(moment.get("id") or "")
+            layers = sorted(set(memberships.get(moment_id, [])))
+            display_layer = next((number for number in (1, 2, 3) if number in layers), 7)
+            results.append({"layer": display_layer, "matched_layers": layers,
+                            "score": round(float(score), 6), "moment": moment})
             if len(results) >= top_k:
-                return results[:top_k]
+                break
+
+        if len(results) < top_k:
+            for row in self.query_summary_layers(query_text, top_k=top_k - len(results)):
+                moment = {"id": f"layer{row['layer']}_summary", "summary": row["summary"],
+                          "source_moment_ids": row["source_moment_ids"],
+                          "source_moment_count": row["source_moment_count"],
+                          "source_link_coverage": row["source_link_coverage"]}
+                results.append({"layer": row["layer"], "matched_layers": [row["layer"]],
+                                "score": row["score"], "moment": moment})
         return results[:top_k]
 
     def _sorted_layer_moments(self, layer_key: str) -> list:
@@ -1581,6 +2401,20 @@ class PersonMemory:
                 summary = self.memory.get(lkey, {}).get("summary")
                 if summary:
                     parts.append(f"[Layer {lnum}] {summary}")
+                if lnum == 4:
+                    plans = self.memory.get(lkey, {}).get("stated_plans") or []
+                    for plan in plans[:8] if isinstance(plans, list) else []:
+                        if not isinstance(plan, dict):
+                            continue
+                        source = str(plan.get("source_moment_id") or "")
+                        when = plan.get("source_time") or {}
+                        scope = plan.get("time_scope") or ""
+                        description = "; ".join(str(value) for value in (
+                            plan.get("actor"), plan.get("value"), scope,
+                            when.get("day_label"), when.get("time_of_day"), source)
+                            if value)
+                        if description:
+                            parts.append(f"[Layer 4 明确说出的计划（尚不代表已完成）] {description}")
 
         query_text = str(query_text or "")[:1200]
         query_tokens = set(self._query_tokens(
@@ -1594,7 +2428,7 @@ class PersonMemory:
                 continue
             moment = self._retrieval_group_moment(stored)
             searchable = json.dumps({key: value for key, value in moment.items()
-                                     if key not in {"source_provenance", "multimodal"}},
+                                     if key not in {"source_provenance", "multimodal", "needs", "solutions"}},
                                     ensure_ascii=False).lower()
             score = sum(1 for token in query_tokens if token in searchable)
             if score:
@@ -1629,14 +2463,28 @@ class PersonMemory:
                 feedback_text = "已标记为重点/重复记忆"
 
             line = f"[Layer7/{moment.get('id','')}] {moment.get('timestamp','')[:19]}"
+            source_time = moment.get("source_time") or {}
+            if source_time:
+                source_clock = " · ".join(str(value) for value in (
+                    source_time.get("day_label"), source_time.get("time_of_day")) if value)
+                if source_clock:
+                    line += f" | 来源时间: {source_clock}"
+            source_id = (moment.get("source_provenance") or {}).get("source_segment_id")
+            if source_id:
+                line += f" | 来源片段: {str(source_id)[:128]}"
             fields = [
                 ("场景", moment.get("scene")),
                 ("动作", moment.get("user_action")),
-                ("需求", values(moment.get("needs"))),
-                ("方案", values(moment.get("solutions"))),
+                ("人物交互与事件顺序", moment.get("interaction_details")),
                 ("人物", values(moment.get("people"))),
                 ("地点", moment.get("location")),
                 ("活动", moment.get("activity")),
+                ("物品", json.dumps(moment.get("objects") or [], ensure_ascii=False)),
+                ("物品观察", json.dumps(moment.get("object_observations") or [], ensure_ascii=False)),
+                ("环境", json.dumps(moment.get("environments") or [], ensure_ascii=False)),
+                ("人物观察", json.dumps(moment.get("person_observations") or [], ensure_ascii=False)),
+                ("时间事实", json.dumps(moment.get("temporal_facts") or [], ensure_ascii=False)),
+                ("来源时间", json.dumps(moment.get("source_time") or {}, ensure_ascii=False)),
                 ("反馈修正", feedback_text),
             ]
             if include_source_evidence and moment.get("source_evidence"):
@@ -1644,7 +2492,8 @@ class PersonMemory:
                 line += f" | Transcript evidence: {evidence[:1200]}"
             for label, value in fields:
                 if value:
-                    line += f" | {label}: {str(value).replace(chr(10), ' ').strip()[:180]}"
+                    limit = 3200 if label == "时间事实" else 1800 if label == "物品观察" else 1600 if label == "人物观察" else 500 if label in {"人物交互与事件顺序", "来源时间"} else 300 if label in {"环境", "物品"} else 180
+                    line += f" | {label}: {str(value).replace(chr(10), ' ').strip()[:limit]}"
             parts.append(line)
             for source in moment.get("_merged_sources_records", []):
                 source_line = f"  └ 合并来源 [{source.get('id','')}] {str(source.get('timestamp',''))[:19]}"
@@ -1686,6 +2535,21 @@ class PersonMemory:
                     if lkey == "layer6" and k == "profile":
                         print("⚠️  compress() 忽略 layer6.profile —— 画像请用 update_profile() 写入")
                         continue
+                    if k == "source_moment_ids":
+                        available = self.memory.get("layer7", {}).get("moments", {})
+                        valid_ids = list(dict.fromkeys(
+                            str(mid) for mid in (v if isinstance(v, list) else [])
+                            if str(mid) in available
+                        ))
+                        if lkey == "layer4":
+                            layer[k] = valid_ids
+                        else:
+                            layer[k] = list(dict.fromkeys(list(layer.get(k) or []) + valid_ids))
+                        continue
+                    if k == "source_link_coverage":
+                        if v in {"complete", "partial", "unknown"}:
+                            layer[k] = v
+                        continue
                     if isinstance(v, dict) and isinstance(layer.get(k), dict):
                         layer[k].update(v)
                     elif isinstance(v, list) and isinstance(layer.get(k), list):
@@ -1703,7 +2567,7 @@ class PersonMemory:
                         if v is not None and v != "":
                             layer[k] = v
                 layer["last_updated"] = _now_iso()
-                layer["source_moment_count"] = self.memory["metadata"]["total_moments"]
+                layer["source_moment_count"] = len(layer.get("source_moment_ids") or [])
 
         self.memory["metadata"]["last_consolidation"] = _now_iso()
         self._save()
@@ -2349,14 +3213,15 @@ class PersonMemory:
         return True
 
     def compact_multimodal_assets(self, budget_bytes: int = None) -> Dict:
-        """Keep episodic facts while reclaiming low-priority media assets."""
+        """Tier aged images and reclaim assets without removing text facts."""
         from multimodal_memory import MultimodalAssetStore
         result = MultimodalAssetStore(self.memory_dir).compact_to_budget(
             self.memory["layer7"]["moments"], budget_bytes=budget_bytes)
-        if result.get("evicted_moments"):
-            for mid, moment in self.memory["layer7"]["moments"].items():
-                if (moment.get("multimodal") or {}).get("evicted_at"):
-                    self._sync_window_moment(mid)
+        changed_ids = result.pop("_changed_moment_ids", [])
+        for mid in changed_ids:
+            if mid in self.memory["layer7"]["moments"]:
+                self._sync_window_moment(mid)
+        if changed_ids:
             self._save()
         return result
 
@@ -2396,61 +3261,44 @@ class PersonMemory:
                                   activity: str = None,
                                   query_text: str = None,
                                   top_k: int = 5) -> str:
-        """按文档优先级查询 L1→L5，再注入 L6 画像和命中的 L7 原始事实。"""
-        lines = ["=== MEMORY CONTEXT ==="]
+        """Return source-linked observed memories relevant to the current scene."""
         query_text = str(query_text or "")[:1200]
         top_k = max(0, int(top_k))
+        lines = ["=== MEMORY CONTEXT ==="]
         hits = self.query_hierarchical(query_text, top_k=top_k) if query_text.strip() else []
-        seen_ids = set()
 
-        def render_items(items):
-            if not isinstance(items, list):
-                return str(items or "")
-            values = []
-            for item in items:
-                if isinstance(item, dict):
-                    value = (item.get("need") or item.get("solution")
-                             or item.get("value") or item.get("action"))
-                else:
-                    value = item
-                if value:
-                    values.append(str(value))
-            return "；".join(values)
-
-        def add_moment(layer_no, moment):
-            if moment.get("id") in self.memory.get("layer7", {}).get("moments", {}):
+        def add_moment(layer_no, moment, matched_layers=None):
+            moment_id = str(moment.get("id") or "")
+            if moment_id in self.memory.get("layer7", {}).get("moments", {}):
                 moment = self._retrieval_group_moment(moment)
-            moment_id = moment.get("id")
-            if moment_id:
-                seen_ids.add(moment_id)
+            layers = matched_layers or [layer_no]
+            layer_label = ",".join(str(value) for value in layers)
             fields = [
-                ("场景", moment.get("scene")),
-                ("动作", moment.get("user_action")),
-                ("需求", render_items(moment.get("needs"))),
-                ("方案", render_items(moment.get("solutions"))),
-                ("人物", render_items(moment.get("people"))),
-                ("地点", moment.get("location")),
-                ("活动", moment.get("activity")),
+                ("场景", moment.get("scene")), ("动作", moment.get("user_action")),
+                ("人物", moment.get("people")), ("地点", moment.get("location")),
+                ("活动", moment.get("activity")), ("物品", moment.get("objects")),
+                ("环境", moment.get("environments")),
             ]
-            feedback = moment.get("feedback") or {}
-            corrections = feedback.get("corrections") or {}
-            feedback_text = "；".join(
-                f"{key}={value}" for key, value in corrections.items()
-            ) if isinstance(corrections, dict) else ""
-            if feedback.get("confirmed"):
-                feedback_text = (feedback_text + "；" if feedback_text else "") + "用户已确认"
-            if feedback_text:
-                fields.append(("Part4反馈", feedback_text))
-            line = f"[Layer {layer_no} · {moment.get('timestamp','')[:19]} {moment_id or ''}]"
+            line = f"[Layers {layer_label} · {str(moment.get('timestamp') or '')[:19]} {moment_id}]"
             for label, value in fields:
                 if value:
-                    line += f" | {label}: {str(value).replace(chr(10), ' ')[:180]}"
+                    line += f" | {label}: {str(value).replace(chr(10), ' ')[:240]}"
+            for label, value, limit in (
+                ("人物外观", moment.get("person_observations"), 1600),
+                ("事件与状态事实", moment.get("temporal_facts"), 3200),
+                ("物品观察", moment.get("object_observations") or object_visual_observations(moment), 1800),
+                ("来源时间", moment.get("source_time"), 500),
+            ):
+                if value:
+                    line += f" | {label}: {json.dumps(value, ensure_ascii=False)[:limit]}"
+            if moment.get("source_evidence"):
+                line += " | 语音来源: " + str(moment["source_evidence"]).replace(chr(10), " ")[:360]
             lines.append(line)
             for source in moment.get("_merged_sources_records", []):
-                source_line = f"[Merged source · {source.get('timestamp','')[:19]} {source.get('id','')}]"
-                for label, key in (("场景", "scene"), ("动作", "user_action"),
-                                   ("人物", "people"), ("地点", "location"),
-                                   ("活动", "activity")):
+                source_line = f"[合并来源 · {source.get('timestamp','')[:19]} {source.get('id','')}]"
+                for label, key in (("场景", "scene"), ("动作", "user_action"), ("人物", "people"),
+                                   ("地点", "location"), ("活动", "activity"),
+                                   ("物品", "objects"), ("环境", "environments")):
                     value = source.get(key)
                     if value:
                         source_line += f" | {label}: {str(value).replace(chr(10), ' ')[:180]}"
@@ -2460,56 +3308,33 @@ class PersonMemory:
 
         if hits:
             for hit in hits:
-                layer_no, moment = hit["layer"], hit["moment"]
-                if layer_no <= 3:
-                    add_moment(layer_no, moment)
-                elif moment.get("summary"):
-                    lines.append(f"[Layer {layer_no}] {moment['summary'][:1200]}")
+                layer_no = hit["layer"]
+                moment = hit["moment"]
+                if moment.get("summary"):
+                    ids = ", ".join(moment.get("source_moment_ids") or [])
+                    coverage = moment.get("source_link_coverage", "unknown")
+                    lines.append(f"[Layer {layer_no} summary · 来源覆盖 {coverage} · {ids}] {moment['summary'][:1200]}")
+                else:
+                    add_moment(layer_no, moment, hit.get("matched_layers"))
         elif not query_text and top_k:
-            # 没有查询语句时以最近窗口作短上下文；同一 moment 只注入一次。
+            seen = set()
             for layer_no in (1, 2, 3):
                 for moment in self._sorted_layer_moments(f"layer{layer_no}"):
-                    if moment.get("id") and moment["id"] in seen_ids:
+                    moment_id = str(moment.get("id") or "")
+                    if not moment_id or moment_id in seen:
                         continue
+                    seen.add(moment_id)
                     add_moment(layer_no, moment)
-                    if len(seen_ids) >= top_k:
+                    if len(seen) >= top_k:
                         break
-                if len(seen_ids) >= top_k:
+                if len(seen) >= top_k:
                     break
-            for layer_no in (4, 5):
-                summary = self.memory.get(f"layer{layer_no}", {}).get("summary")
-                if summary:
-                    lines.append(f"[Layer {layer_no}] {summary[:1200]}")
-
-        # L6 profile 的顺序采用文档所列频率、确定性、重要性和强度维度。
-        profile = self.memory["layer6"]["profile"]
-        profile_parts = []
-        for field in PROFILE_FIELDS:
-            field_attrs = []
-            if field in ("behavior_patterns", "frequent_locations"):
-                sort_key = "frequency"
-            elif field == "personality":
-                sort_key = "confidence"
-            elif field in ("preferences", "goals", "decisions", "motivations"):
-                sort_key = "rank_score"
-            else:
-                sort_key = "confidence"
-            _collect_attrs(profile.get(field), field_attrs, sort_key)
-            if field_attrs:
-                profile_parts.append(f"{field}:[{'; '.join(field_attrs)}]")
-        profile_summary = self.memory["layer6"].get("summary")
-        if profile_summary:
-            lines.append(f"[Layer 6 summary] {profile_summary[:1000]}")
-        if profile_parts:
-            lines.append(f"[Layer 6 profile] {' | '.join(profile_parts)}")
-
-        # L7 检索补全场景、动作、需求、方案及 Part4 反馈；同步链路不调用 LLM。
-        extra = self.retrieve(
-            people=people, location=location, activity=activity,
-            query_text=query_text, top_k=top_k, include_summaries=False,
-            exclude_ids=seen_ids)
-        if extra != "No relevant memory found.":
-            lines.append(extra)
+            for layer_no in (4, 5, 6):
+                layer = self.memory.get(f"layer{layer_no}", {})
+                if layer.get("summary"):
+                    ids = ", ".join(layer.get("source_moment_ids") or [])
+                    coverage = layer.get("source_link_coverage", "unknown")
+                    lines.append(f"[Layer {layer_no} summary · 来源覆盖 {coverage} · {ids}] {layer['summary'][:1000]}")
 
         return chr(10).join(lines) if len(lines) > 1 else "No previous memory found."
 
@@ -2538,17 +3363,40 @@ class PersonMemory:
 
     UPDATE_FIELDS = ("scene", "user_action", "needs", "solutions",
                      "people", "location", "activity", "notes", "source_evidence",
-                     "environments", "objects")
+                     "interaction_details", "person_observations", "temporal_facts",
+                     "source_time", "environments", "objects")
 
     def _validated_updates(self, updates: Dict) -> Dict:
         """按记忆 schema 筛选可更新字段和值类型。"""
         if not isinstance(updates, dict):
             return {}
-        string_fields = {"scene", "user_action", "location", "activity", "notes", "source_evidence"}
+        string_fields = {"scene", "user_action", "location", "activity", "notes",
+                         "source_evidence", "interaction_details"}
         list_fields = {"people", "environments", "objects", "needs", "solutions"}
         clean = {}
         for field, value in updates.items():
             if field not in self.UPDATE_FIELDS or value is None:
+                continue
+            if field == "person_observations" and isinstance(value, list):
+                clean[field] = _clean_source_fact_rows(value, "person", 16)
+                continue
+            if field == "temporal_facts" and isinstance(value, list):
+                clean[field] = _clean_source_fact_rows(value, "fact", 32)
+                continue
+            if field == "source_time" and isinstance(value, dict):
+                time_value = {}
+                for key in ("absolute_date", "day_label", "time_of_day", "time_occasion", "basis", "source_segment_id"):
+                    item = value.get(key)
+                    if isinstance(item, str) and item.strip():
+                        time_value[key] = item.strip()[:128]
+                for key in ("clip_start_s", "clip_end_s"):
+                    try:
+                        item = float(value.get(key))
+                    except (TypeError, ValueError):
+                        continue
+                    if math.isfinite(item) and item >= 0:
+                        time_value[key] = round(item, 3)
+                clean[field] = time_value
                 continue
             if field in string_fields:
                 if isinstance(value, str):
@@ -2581,34 +3429,23 @@ class PersonMemory:
         return changed
 
     def _sync_indices_for_moment(self, moment_id: str, moment: Dict,
-                                 old_people, old_location, old_activity,
+                                 old_people=None, old_location=None, old_activity=None,
                                  old_environments=None, old_objects=None):
-        """moment 的 people/location/activity/environments/objects 变更时联动 layer7 索引
-        （设计说明书 §4.2 update 语义：新键过校验，旧键清理空引用）。
-        """
-        def sync(key: str, old_val, new_val):
-            if old_val == new_val:
-                return
-            idx = self.memory["layer7"][key]
-            olds = [old_val] if isinstance(old_val, str) else (old_val or [])
-            for tag in olds:
-                if tag in idx and moment_id in idx[tag]:
-                    idx[tag].remove(moment_id)
-                    if not idx[tag]:
-                        del idx[tag]
-            news = [new_val] if isinstance(new_val, str) else (new_val or [])
-            for tag in news:
-                if not tag or not _is_valid_index_tag(key, tag):
-                    continue
-                idx.setdefault(tag, [])
-                if moment_id not in idx[tag]:
-                    idx[tag].append(moment_id)
-
-        sync("people", old_people, moment.get("people"))
-        sync("locations", old_location, moment.get("location"))
-        sync("activity_events", old_activity, moment.get("activity"))
-        sync("environments", old_environments, moment.get("environments"))
-        sync("objects", old_objects, moment.get("objects"))
+        """Reconcile every index tag for one moment after an edit or cache refresh."""
+        layer7 = self.memory.setdefault("layer7", {})
+        for index_key in LAYER7_INDICES:
+            index = layer7.setdefault(index_key, {})
+            for tag, ids in list(index.items()):
+                if moment_id in ids:
+                    ids[:] = [mid for mid in ids if mid != moment_id]
+                if not ids:
+                    index.pop(tag, None)
+        for index_key, tags in _moment_index_tags(moment).items():
+            index = layer7.setdefault(index_key, {})
+            for tag in tags:
+                ids = index.setdefault(tag, [])
+                if moment_id not in ids:
+                    ids.append(moment_id)
 
     def update(self, moment_id: str, updates: Dict) -> bool:
         """改正指定 moment 的 Part1-3 数据，并同步 Layer7 标签索引。"""
@@ -2629,9 +3466,16 @@ class PersonMemory:
                 changed_fields.append(field)
         if not changed_fields:
             return False
+        normalize_object_transition_facts(moment)
+        if isinstance(moment.get("multimodal"), dict):
+            entity_visuals = _build_entity_visuals(moment)
+            if entity_visuals.get("items"):
+                moment["multimodal"]["entity_visuals"] = entity_visuals
 
         # 清除可能过期的英文缓存；改写中文时再生成对应 normalized 值。
-        searchable_fields = {"scene", "user_action", "location", "activity", "notes", "source_evidence"}
+        searchable_fields = {"scene", "user_action", "interaction_details",
+                             "person_observations", "temporal_facts", "source_time",
+                             "location", "activity", "notes", "source_evidence"}
         if searchable_fields.intersection(changed_fields):
             normalized = dict(moment.get("normalized") or {})
             for field in searchable_fields.intersection(changed_fields):
@@ -2649,6 +3493,112 @@ class PersonMemory:
             else:
                 moment.pop("normalized", None)
 
+        self._sync_indices_for_moment(
+            moment_id, moment, old_people, old_location, old_activity,
+            old_environments, old_objects)
+        self._sync_window_moment(moment_id)
+        self._save()
+        return True
+
+    def refresh_source_moment(self, moment_id: str, updates: Dict,
+                              source_provenance: Dict,
+                              expected_segment_id: str) -> bool:
+        """Refresh model-extracted fields in place for the exact same source clip.
+
+        The caller must already have validated the current source video fingerprint.
+        User feedback corrections are protected, and every replaced value is retained
+        in a bounded audit history so cache upgrades never erase the prior extraction.
+        """
+        moment = self.memory.get("layer7", {}).get("moments", {}).get(moment_id)
+        if not isinstance(moment, dict) or not isinstance(source_provenance, dict):
+            return False
+        old_provenance = moment.get("source_provenance") or {}
+        expected = str(expected_segment_id or "")
+        if (not expected
+                or str(old_provenance.get("source_segment_id") or "") != expected
+                or str(source_provenance.get("source_segment_id") or "") != expected):
+            return False
+        for key in ("source_video_sha256", "source_clip_sha256"):
+            old_hash, new_hash = old_provenance.get(key), source_provenance.get(key)
+            if old_hash and new_hash and str(old_hash) != str(new_hash):
+                return False
+
+        clean = self._validated_updates(updates)
+        feedback = moment.get("feedback") or {}
+        corrections = feedback.get("corrections") if isinstance(feedback, dict) else {}
+        protected = {str(key).split(".", 1)[0].split("[", 1)[0]
+                     for key in corrections} if isinstance(corrections, dict) else set()
+        clean = {key: value for key, value in clean.items() if key not in protected}
+
+        old_people = moment.get("people") or []
+        old_location = moment.get("location")
+        old_activity = moment.get("activity")
+        old_environments = moment.get("environments") or []
+        old_objects = moment.get("objects") or []
+        previous_fields = {}
+        changed_fields = []
+        for field, value in clean.items():
+            if moment.get(field) != value:
+                previous_fields[field] = copy.deepcopy(moment.get(field))
+                moment[field] = value
+                changed_fields.append(field)
+
+        provenance_keys = (
+            "source_video_id", "source_segment_id", "clip_start_s", "clip_end_s",
+            "source_video_sha256", "source_clip_sha256", "perception_prompt_version",
+            "list_parser_version", "extraction_batch_id",
+        )
+        new_provenance = {
+            key: source_provenance[key] for key in provenance_keys
+            if source_provenance.get(key) not in (None, "")
+        }
+        if new_provenance.get("source_video_id"):
+            new_provenance["source_video_id"] = _portable_video_id(
+                new_provenance["source_video_id"])
+        provenance_changed = any(
+            old_provenance.get(key) != value for key, value in new_provenance.items())
+        if not changed_fields and not provenance_changed:
+            return False
+        normalize_object_transition_facts(moment)
+        if isinstance(moment.get("multimodal"), dict):
+            entity_visuals = _build_entity_visuals(moment)
+            if entity_visuals.get("items"):
+                moment["multimodal"]["entity_visuals"] = entity_visuals
+
+        searchable_fields = {"scene", "user_action", "interaction_details",
+                             "person_observations", "temporal_facts", "source_time",
+                             "location", "activity", "notes", "source_evidence"}
+        normalized = dict(moment.get("normalized") or {})
+        for field in searchable_fields.intersection(changed_fields):
+            normalized.pop(field, None)
+            value = moment.get(field)
+            if self.translate_fn and value and _contains_cjk(str(value)):
+                try:
+                    translated = self.translate_fn(str(value))
+                    if translated:
+                        normalized[field] = translated
+                except Exception:
+                    pass
+        if normalized:
+            moment["normalized"] = normalized
+        else:
+            moment.pop("normalized", None)
+
+        if provenance_changed:
+            moment["source_provenance"] = {**old_provenance, **new_provenance}
+            previous_fields["source_provenance"] = copy.deepcopy(old_provenance)
+            changed_fields.append("source_provenance")
+        history = moment.setdefault("source_refresh_history", [])
+        history.append({
+            "refreshed_at": _now_iso(),
+            "from_prompt_version": old_provenance.get("perception_prompt_version"),
+            "to_prompt_version": new_provenance.get("perception_prompt_version"),
+            "from_parser_version": old_provenance.get("list_parser_version"),
+            "to_parser_version": new_provenance.get("list_parser_version"),
+            "changed_fields": list(changed_fields),
+            "previous_fields": previous_fields,
+        })
+        moment["source_refresh_history"] = history[-8:]
         self._sync_indices_for_moment(
             moment_id, moment, old_people, old_location, old_activity,
             old_environments, old_objects)

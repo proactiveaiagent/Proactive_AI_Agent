@@ -113,10 +113,14 @@ class DaytimeProcessor:
                environments: List[str] = None,
                objects: List[str] = None,
                extra_notes: str = "",
-                timestamp: str = None,
-                source_evidence: str = "",
-                multimodal: Dict = None,
-                source_provenance: Dict = None) -> str:
+               timestamp: str = None,
+               source_evidence: str = "",
+               interaction_details: str = "",
+               person_observations: List[Dict] = None,
+               temporal_facts: List[Dict] = None,
+               source_time: Dict = None,
+               multimodal: Dict = None,
+               source_provenance: Dict = None) -> str:
         """
         实时写入一条记忆。
 
@@ -138,6 +142,10 @@ class DaytimeProcessor:
                 extra_notes=extra_notes,
                 timestamp=timestamp,
                 source_evidence=source_evidence,
+                interaction_details=interaction_details,
+                person_observations=person_observations,
+                temporal_facts=temporal_facts,
+                source_time=source_time,
                 multimodal=multimodal,
                 source_provenance=source_provenance,
             )
@@ -147,6 +155,7 @@ class DaytimeProcessor:
         if self.translate_fn:
             payload = {}
             for field, raw in (("scene", scene), ("user_action", user_action),
+                               ("interaction_details", interaction_details),
                                ("location", location), ("activity", activity),
                                ("notes", extra_notes),
                                ("source_evidence", source_evidence)):
@@ -163,7 +172,7 @@ class DaytimeProcessor:
     # ------------------------------------------------------------------
 
     def query(self, text: str, top_k: int = 5) -> List[Dict]:
-        """按 Layer1→5 逐层检索；同步链路不调用 LLM。"""
+        """统一排序短期窗口与 L7 全量归档；同步检索不调用 LLM。"""
         self.stats["queries"] += 1
         hits = self.mem.query_hierarchical(text, top_k=top_k)
         return [item["moment"] for item in hits]
@@ -177,8 +186,15 @@ class DaytimeProcessor:
         from memory_reasoner import MemoryReasoner
         return MemoryReasoner(self.mem).reason(situation, context=context)
 
+    def retrieve_relevant_memories(self, situation: str, context: Dict = None) -> Dict:
+        """Understand a scene and return source-linked historical memory candidates only."""
+        from memory_reasoner import MemoryReasoner
+        retrieval_context = dict(context or {})
+        retrieval_context["retrieval_only"] = True
+        return MemoryReasoner(self.mem).reason(situation, context=retrieval_context)
+
     def context(self, top_k: int = 5, query_text: str = None) -> List[Dict]:
-        """按 Layer1→5 优先级提供上下文；支持查询词相关性检索。"""
+        """提供近期上下文；带查询词时跨短期窗口与 L7 归档相关性检索。"""
         if top_k <= 0:
             return []
         if query_text:

@@ -65,6 +65,24 @@ def respond(prompt):
 
 
 def main():
+    plan_facts = NightlyProcessor._stated_plans([{
+        "id": "clip-plan-1",
+        "source_time": {"timestamp": "2026-10-17T10:00:00"},
+        "temporal_facts": [{
+            "subject_type": "person", "subject": "unidentified speaker",
+            "predicate": "stated_plan", "value": "I plan to visit tomorrow.",
+            "status": "stated_plan", "modality": "speech",
+            "evidence": "I plan to visit tomorrow.",
+            "evidence_ref": {"source_segment_id": "clip-plan-1", "modality": "speech"},
+        }],
+    }])
+    assert len(plan_facts) == 1, plan_facts
+    assert plan_facts[0]["value"] == "I plan to visit tomorrow."
+    assert plan_facts[0]["predicate"] == "stated_plan"
+    assert plan_facts[0]["status"] == "stated_plan"
+    assert plan_facts[0]["source_moment_id"] == "clip-plan-1"
+    assert plan_facts[0]["evidence_ref"]["modality"] == "speech"
+
     today = date.today().isoformat()
     yesterday = (date.today() - timedelta(days=1)).isoformat()
     with tempfile.TemporaryDirectory(prefix="nightly-memory-") as temp:

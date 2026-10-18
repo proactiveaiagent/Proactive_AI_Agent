@@ -17,11 +17,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "code"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from multimodal_memory import media_refs  # noqa: E402
+from multimodal_memory import MultimodalAssetStore, media_refs  # noqa: E402
 from qwen_perceive import QwenPerceiver  # noqa: E402
 
 DEFAULT_SOURCE = ROOT / "data/egolife/runs/multimodal_full_day_v8_20261007"
-DEFAULT_OUTPUT = ROOT / "data/egolife/runs/multimodal_full_day_v9_object_grounded_20261011"
+DEFAULT_OUTPUT = ROOT / "data/egolife/runs/multimodal_full_day_v10_object_crops_20261012"
 
 
 def atomic_write_json(path: Path, value: dict) -> None:
@@ -83,6 +83,7 @@ def main() -> int:
         shutil.copytree(source_assets, target_assets)
     progress_file = args.output_dir / "object_grounding_progress.jsonl"
     progress = read_progress(progress_file)
+    asset_store = MultimodalAssetStore(args.output_dir)
 
     db = json.loads(source_file.read_text(encoding="utf-8"))
     archive = db.get("layer7", {}).get("moments", {})
@@ -140,16 +141,40 @@ def main() -> int:
                     "status": "not_verified", "appearance": "", "frame_indices": [],
                 }
                 frame_indices = raw.get("frame_indices") or []
+                boxes = {}
+                for box in raw.get("frame_boxes") or []:
+                    try:
+                        box_index = int(box.get("frame_index"))
+                        bbox = box.get("bbox")
+                    except (AttributeError, TypeError, ValueError):
+                        continue
+                    if isinstance(bbox, list) and len(bbox) == 4:
+                        boxes[box_index] = bbox
+                frame_indices = list(dict.fromkeys([
+                    *[index for index in frame_indices if isinstance(index, int)],
+                    *boxes.keys(),
+                ]))
                 frame_links = []
-                for index in frame_indices[:2]:
+                for index in frame_indices[:1]:
                     if isinstance(index, int) and 1 <= index <= len(frames):
                         ref = frames[index - 1]
                         if ref.get("asset"):
-                            frame_links.append({
-                                "asset": ref["asset"],
+                            crop = None
+                            bbox = boxes.get(index)
+                            if bbox:
+                                crop_bytes = asset_store.crop_visual_candidate(
+                                    frames[index - 1].get("bytes"), bbox, 12_000)
+                                crop = asset_store._put("visual", crop_bytes, "webp", 12_000)
+                            frame_link = {
+                                "asset": crop.get("asset") if crop else ref["asset"],
                                 "at_s": ref.get("at_s"),
                                 "source_id": ref.get("source_id") or mm.get("source_id") or "",
-                            })
+                                "visual_role": "object_crop" if crop else "source_frame",
+                            }
+                            if crop:
+                                frame_link["source_asset"] = ref["asset"]
+                                frame_link["crop_bbox"] = [round(float(value), 5) for value in bbox]
+                            frame_links.append(frame_link)
                 status = str(raw.get("status") or "not_verified")
                 if status in {"grounded", "visible_unlabeled"} and not frame_links:
                     status = "not_verified"
@@ -166,7 +191,7 @@ def main() -> int:
                 "schema": 1,
                 "status": state,
                 "model": "Qwen3-VL",
-                "prompt_version": "object-visual-grounding-v2",
+                "prompt_version": "object-visual-grounding-v3-bbox",
                 "frame_count": len(frames),
                 "items": items,
             }
@@ -230,13 +255,19 @@ def main() -> int:
     item_counts = Counter()
     moments_with_items = 0
     grounded_with_frame = 0
+    objects_with_crops = 0
+    crop_refs = 0
     for moment in archive.values():
         items = (moment.get("multimodal") or {}).get("object_visuals", {}).get("items") or []
         moments_with_items += bool(items)
         for item in items:
             item_counts[str(item.get("status") or "not_verified")] += 1
-            if item.get("status") in {"grounded", "visible_unlabeled"} and item.get("frame_refs"):
+            refs = item.get("frame_refs") or []
+            if item.get("status") in {"grounded", "visible_unlabeled"} and refs:
                 grounded_with_frame += 1
+            if any(ref.get("visual_role") == "object_crop" for ref in refs):
+                objects_with_crops += 1
+                crop_refs += sum(ref.get("visual_role") == "object_crop" for ref in refs)
     report = {
         "source_run": str(args.input_dir),
         "output_run": str(args.output_dir),
@@ -249,6 +280,8 @@ def main() -> int:
                                     for moment in archive.values()),
         "object_status_counts": dict(item_counts),
         "objects_with_grounded_frame_refs": grounded_with_frame,
+        "objects_with_local_crops": objects_with_crops,
+        "object_crop_refs": crop_refs,
         "elapsed_s_this_run": round(time.perf_counter() - started, 1),
         "label": "Qwen self-reported visual grounding; not human-verified ground truth",
     }

@@ -19,12 +19,15 @@ viz_server.py — 7 层记忆模型可视化网站后端
 
 import hashlib
 import math
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
+import os
 import re
 import shutil
 import subprocess
 import sys
 import threading
+import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -33,31 +36,44 @@ from urllib.request import Request as URLRequest, urlopen
 
 ROOT = Path(__file__).resolve().parents[2]
 RUNS = ROOT / "data" / "egolife" / "runs"
+SESSION_RESUME_CHECKPOINT = RUNS / "interactive_mem" / "resume_after_restart.json"
+SESSION_INTEGRITY_VERSION = "video-only-perception-v1"
 VIZ_DIR = Path(__file__).resolve().parent / "viz"
 VIDEO_ROOT = (ROOT / "data" / "egolife").resolve()
+FEISHU_VIDEO_ROOT = (ROOT / "test_data" / "feishu_ar_agent_memory_retrieval_20261013").resolve()
 PREVIEW_ROOT = RUNS / "viz_video_cache"
 
 # 交互式步进执行会话（ThreadingHTTPServer 多线程，步骤执行需互斥：
 # 实时推理可能耗时数分钟，期间 state / 视频流照常服务，重复 step 返回 409）
 SESSION = None
+RESTORED_SESSION_ACTIVE = False
 STEP_LOCK = threading.Lock()
+ENTITY_READ_LOCK = threading.Lock()  # Queue concurrent read-only entity queries; writers still use STEP_LOCK.
 # Qwen 缓存预热任务状态
-PREWARM = {"running": False, "done": 0, "total": 0, "cache_hits": 0, "inferred": 0, "failed": 0, "error": None, "scenario": None}
+PREWARM = {"running": False, "done": 0, "total": 0, "cache_hits": 0, "inferred": 0,
+           "failed": 0, "failed_items": [], "current_id": None,
+           "current_status": None, "error": None, "scenario": None}
 PREVIEW_JOBS = {}
 PREVIEW_LOCK = threading.Lock()
+MEMORY_ASSET_CACHE = {}
+MEMORY_ASSET_CACHE_LOCK = threading.Lock()
 PREVIEW_SEMAPHORE = threading.BoundedSemaphore(2)
 ACTIVE_STEP_FORCE = False
+ACTIVE_STEP_RUNNING = False
+ACTIVE_STEP_PHASE = None
 ACTIVE_REASON = {"request_id": None, "event": None}
 REASON_LOCK = threading.Lock()
 
 try:
     from interactive_runner import InteractiveSession
     from qwen_perceive import QwenPerceiver
+    from prewarm_status import multimodal_prewarm_status
     import interactive_runner as ir
 except ImportError:      # 兼容从其他 cwd 启动
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from interactive_runner import InteractiveSession
     from qwen_perceive import QwenPerceiver
+    from prewarm_status import multimodal_prewarm_status
     import interactive_runner as ir
 
 SCENARIOS = {
@@ -74,6 +90,18 @@ SCENARIOS = {
         "memory": "long_term_memory.json",
     },
 }
+
+
+def save_session_checkpoint(state):
+    """Persist only idle states; atomic replacement prevents a partial resume file."""
+    if (state.get('step_progress') or {}).get('running'):
+        return
+    SESSION_RESUME_CHECKPOINT.parent.mkdir(parents=True, exist_ok=True)
+    temporary = SESSION_RESUME_CHECKPOINT.with_suffix('.tmp')
+    payload = dict(state)
+    payload["integrity_version"] = SESSION_INTEGRITY_VERSION
+    temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding='utf-8')
+    os.replace(temporary, SESSION_RESUME_CHECKPOINT)
 
 
 def load_json(path):
@@ -96,7 +124,16 @@ def _preview_clip(qs):
 
 def _preview_cache_path(source, start=None, end=None):
     stat = source.stat()
-    rel = source.relative_to(VIDEO_ROOT).as_posix()
+    source = source.resolve()
+    rel = None
+    for corpus, root in (("egolife", VIDEO_ROOT), ("feishu", FEISHU_VIDEO_ROOT)):
+        try:
+            rel = f"{corpus}/{source.relative_to(root).as_posix()}"
+            break
+        except ValueError:
+            continue
+    if rel is None:
+        raise ValueError("preview source is outside the configured video corpora")
     clip = "full" if start is None or end is None else f"{start:.3f}:{end:.3f}"
     key = hashlib.sha256(
         f"{rel}|{stat.st_size}|{stat.st_mtime_ns}|{clip}".encode("utf-8")
@@ -177,14 +214,16 @@ class Handler(BaseHTTPRequestHandler):
 
     @staticmethod
     def _safe_video(rel):
-        """校验相对路径在 data/egolife 下且为 mp4，返回绝对 Path 或 None。"""
-        try:
-            p = (VIDEO_ROOT / unquote(rel)).resolve()
-        except Exception:
-            return None
-        if p.suffix.lower() != ".mp4" or VIDEO_ROOT not in p.parents:
-            return None
-        return p if p.exists() else None
+        """Allow videos only under the EgoLife corpus or copied Feishu test corpus."""
+        decoded = unquote(rel)
+        for allowed_root in (VIDEO_ROOT, FEISHU_VIDEO_ROOT):
+            try:
+                p = (allowed_root / decoded).resolve()
+            except Exception:
+                continue
+            if p.suffix.lower() == ".mp4" and allowed_root in p.parents and p.is_file():
+                return p
+        return None
 
     def _preview_status(self):
         qs = parse_qs(urlparse(self.path).query)
@@ -268,7 +307,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-        global SESSION, ACTIVE_STEP_FORCE
+        global SESSION, ACTIVE_STEP_FORCE, ACTIVE_STEP_RUNNING, ACTIVE_STEP_PHASE, RESTORED_SESSION_ACTIVE
         url = urlparse(self.path)
         qs = parse_qs(url.query)
 
@@ -279,18 +318,48 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(404, {"error": "index.html not found"})
 
         if url.path == "/api/memory_asset":
-            if SESSION is None:
-                return self._send(404, {"error": "no interactive session"})
-            rel = (qs.get("p") or [""])[0]
-            root = SESSION.mem.memory_dir.resolve()
-            asset = (root / rel).resolve()
-            if not rel.startswith("assets/") or not asset.is_relative_to(root / "assets"):
+            rel = unquote((qs.get("p") or [""])[0])
+            if not rel.startswith("assets/"):
                 return self._send(400, {"error": "invalid asset path"})
-            if not asset.is_file():
+            asset = None
+            roots = []
+            if SESSION is not None:
+                roots.append(Path(SESSION.mem.memory_dir))
+            memory_root = RUNS / "interactive_mem"
+            roots.extend(memory_root / name for name in ("short_term", "long_term", "custom_test"))
+            # Tabs can retain media URLs after a session is archived. Search only
+            # the application's own archived memory folders so those thumbnails
+            # remain available after switching scenarios or restarting a session.
+            trash_root = memory_root / "_trash"
+            try:
+                roots.extend(sorted((p for p in trash_root.iterdir() if p.is_dir()), reverse=True))
+            except OSError:
+                pass
+            cache = globals().get("MEMORY_ASSET_CACHE", {})
+            cached = cache.get(rel)
+            if cached is not None and Path(cached).is_file():
+                asset = Path(cached)
+            if asset is None:
+                for root in roots:
+                    try:
+                        root = root.resolve()
+                        candidate = (root / rel).resolve()
+                        if candidate.is_relative_to(root / "assets") and candidate.is_file():
+                            asset = candidate
+                            break
+                    except (OSError, RuntimeError):
+                        continue
+            if asset is None:
                 return self._send(404, {"error": "memory asset missing"})
-            ctype = {".webp": "image/webp", ".ogg": "audio/ogg"}.get(asset.suffix)
+            ctype = {".webp": "image/webp"}.get(asset.suffix.lower())
             if not ctype:
                 return self._send(400, {"error": "invalid asset type"})
+            cache_lock = globals().get("MEMORY_ASSET_CACHE_LOCK")
+            if cache_lock is not None:
+                with cache_lock:
+                    cache[rel] = asset
+            else:
+                cache[rel] = asset
             return self._send_file(asset, ctype)
 
         if url.path == "/api/interactive/progress":
@@ -378,13 +447,20 @@ class Handler(BaseHTTPRequestHandler):
             })
 
         if url.path == "/api/archive_asset":
-            run_root = (RUNS / "multimodal_full_day_v9_object_grounded_20261011").resolve()
+            allowed_runs = {
+                "multimodal_full_day_v9_object_grounded_20261011",
+                "multimodal_full_day_v10_object_crops_20261012",
+            }
+            run_name = (qs.get("run") or ["multimodal_full_day_v9_object_grounded_20261011"])[0]
+            if run_name not in allowed_runs:
+                return self._send(400, {"error": "invalid archive run"})
+            run_root = (RUNS / run_name).resolve()
             rel = (qs.get("p") or [""])[0]
             asset = (run_root / rel).resolve()
             if (not rel.startswith("assets/") or
                     not asset.is_relative_to(run_root / "assets") or not asset.is_file()):
                 return self._send(404, {"error": "archive asset not found"})
-            ctype = {".webp": "image/webp", ".ogg": "audio/ogg"}.get(asset.suffix.lower())
+            ctype = {".webp": "image/webp"}.get(asset.suffix.lower())
             if not ctype:
                 return self._send(400, {"error": "invalid asset type"})
             return self._send_file(asset, ctype)
@@ -398,14 +474,14 @@ class Handler(BaseHTTPRequestHandler):
             if (grounding_report is not None and
                     progress_count >= int(grounding_report.get("moments_total") or 725)):
                 temporal_long = load_json(grounding_dir / "capacity_report.json") or temporal_long
-            if temporal_long is not None:
-                temporal_long["retrieval_latency"] = load_json(
-                    RUNS / "multimodal_decision_review_v40_20261007" / "retrieval_latency_report.json")
+            sample_dir = RUNS / "multimodal_aligned_v8_20261007"
             return self._send(200, {
                 "short_120": load_json(RUNS / "multimodal_baseline_v5_20260929" / "capacity_report.json"),
                 "long_725": load_json(RUNS / "multimodal_full_day_v5_20260929" / "capacity_report.json"),
-                "temporal_sample": load_json(RUNS / "multimodal_aligned_v8_20261007" / "capacity_report.json"),
+                "temporal_sample": load_json(sample_dir / "capacity_report.json"),
                 "temporal_long": temporal_long,
+                "all_people_capacity": load_json(sample_dir / "all_people_capacity_report.json"),
+                "indexed_retrieval": load_json(sample_dir / "all_people_index_retrieval_report.json"),
             })
 
         if url.path == "/api/decision-benchmark":
@@ -532,30 +608,50 @@ class Handler(BaseHTTPRequestHandler):
             # then require an exact normalized object label before attaching a frame.
             object_index_samples = {}
             if key == "long_term":
-                grounding_dir = RUNS / "multimodal_full_day_v9_object_grounded_20261011"
-                report = load_json(grounding_dir / "object_grounding_report.json")
-                progress_path = grounding_dir / "object_grounding_progress.jsonl"
-                progress_rows = []
-                if progress_path.is_file():
-                    with progress_path.open(encoding="utf-8") as handle:
-                        for line in handle:
-                            try:
-                                progress_rows.append(json.loads(line))
-                            except ValueError:
-                                continue
-                expected = int((report or {}).get("moments_total") or 725)
-                complete = report is not None and len(progress_rows) >= expected
-                grounded_db = load_json(grounding_dir / "memory.json") if complete else None
-                if grounded_db is None:
-                    grounded_db = load_json(
-                        RUNS / "multimodal_full_day_v8_20261007" / "memory.json")
-                    if grounded_db is not None:
-                        source_archive = ((grounded_db.get("layer7") or {}).get("moments") or {})
-                        for row in progress_rows:
+                v9_dir = RUNS / "multimodal_full_day_v9_object_grounded_20261011"
+                v10_dir = RUNS / "multimodal_full_day_v10_object_crops_20261012"
+                def progress_rows_for(directory):
+                    path = directory / "object_grounding_progress.jsonl"
+                    rows = []
+                    if path.is_file():
+                        with path.open(encoding="utf-8") as handle:
+                            for line in handle:
+                                try:
+                                    row = json.loads(line)
+                                    if row.get("id") and isinstance(row.get("object_visuals"), dict):
+                                        rows.append(row)
+                                except ValueError:
+                                    continue
+                    return rows
+                v9_rows = progress_rows_for(v9_dir)
+                v10_rows = progress_rows_for(v10_dir)
+                v9_report = load_json(v9_dir / "object_grounding_report.json")
+                v10_report = load_json(v10_dir / "object_grounding_report.json")
+                v9_expected = int((v9_report or {}).get("moments_total") or 725)
+                v10_expected = int((v10_report or {}).get("moments_total") or 725)
+                v9_complete = v9_report is not None and len(v9_rows) >= v9_expected
+                v10_complete = v10_report is not None and len(v10_rows) >= v10_expected
+                if v10_complete:
+                    grounded_db = load_json(v10_dir / "memory.json")
+                    base_run = v10_dir.name
+                elif v9_complete:
+                    grounded_db = load_json(v9_dir / "memory.json")
+                    base_run = v9_dir.name
+                else:
+                    grounded_db = load_json(RUNS / "multimodal_full_day_v8_20261007" / "memory.json")
+                    base_run = "multimodal_full_day_v8_20261007"
+                source_archive = ((grounded_db or {}).get("layer7") or {}).get("moments") or {}
+                source_run_by_id = {str(mid): base_run for mid in source_archive}
+                # While v10 is being rebuilt, keep v9 for not-yet-processed moments
+                # and overlay each completed v10 row as soon as its crop assets exist.
+                if not v10_complete:
+                    for rows, run_name in ((v9_rows, v9_dir.name), (v10_rows, v10_dir.name)):
+                        for row in rows:
                             source_moment = source_archive.get(str(row.get("id") or ""))
                             if source_moment is not None:
                                 source_moment.setdefault("multimodal", {})["object_visuals"] = row.get("object_visuals") or {}
-                grounded_archive = ((grounded_db or {}).get("layer7") or {}).get("moments") or {}
+                                source_run_by_id[str(row.get("id"))] = run_name
+                grounded_archive = source_archive
                 by_clock = {
                     str(item.get("timestamp") or "")[11:19]: item
                     for item in grounded_archive.values()
@@ -582,8 +678,12 @@ class Handler(BaseHTTPRequestHandler):
                             continue
                         copied = dict(item)
                         copied["object"] = label
+                        source_run = source_run_by_id.get(str(source.get("id") or ""), base_run)
                         copied["frame_refs"] = [
-                            {**ref, "url": "/api/archive_asset?p=" + quote(str(ref["asset"]))}
+                            {**ref,
+                             "url": "/api/archive_asset?run=" + quote(source_run) + "&p=" + quote(str(ref["asset"])),
+                             **({"source_url": "/api/archive_asset?run=" + quote(source_run) + "&p=" + quote(str(ref["source_asset"]))}
+                                if ref.get("source_asset") else {})}
                             for ref in item.get("frame_refs") or []
                             if ref.get("asset")
                         ]
@@ -593,7 +693,7 @@ class Handler(BaseHTTPRequestHandler):
                             "schema": 1, "status": "completed",
                             "model": grounding.get("model") or "Qwen3-VL",
                             "prompt_version": grounding.get("prompt_version"),
-                            "source_run": "multimodal_full_day_v9_object_grounded_20261011",
+                            "source_run": source_run,
                             "items": matched,
                         }
                 for tag, ids in (indices.get("objects") or {}).items():
@@ -633,6 +733,8 @@ class Handler(BaseHTTPRequestHandler):
                             sample = {
                                 key: moment.get(key)
                                 for key in ("id", "timestamp", "scene", "user_action",
+                                            "interaction_details", "person_observations",
+                                            "temporal_facts", "source_time",
                                             "people", "location", "activity",
                                             "environments", "objects", "notes",
                                             "source_provenance",
@@ -672,7 +774,7 @@ class Handler(BaseHTTPRequestHandler):
                 request_id = ACTIVE_REASON.get("request_id")
                 cancel_event = ACTIVE_REASON.get("event")
                 if not request_id or cancel_event is None:
-                    return self._send(409, {"error": "当前没有正在运行的语义建议"})
+                    return self._send(409, {"error": "当前没有正在运行的场景检索"})
                 cancel_event.set()
             try:
                 payload = json.dumps({"request_id": request_id}).encode("utf-8")
@@ -700,9 +802,11 @@ class Handler(BaseHTTPRequestHandler):
                 if not active:
                     return self._send(409, {"error": "当前会话还没有写入记忆，请先运行一个视频步骤"})
                 latest = max(active, key=lambda m: str(m.get("timestamp") or ""))
-                reason_context = {"source_moment_id": latest.get("id"), "proactive": True}
-            elif not situation:
-                return self._send(400, {"error": "请填写当前事件"})
+                reason_context = {"source_moment_id": latest.get("id"), "retrieval_only": True, "memory_modalities": "text"}
+            else:
+                reason_context = {"retrieval_only": True, "memory_modalities": "text"}
+                if not situation:
+                    return self._send(400, {"error": "请填写当前场景"})
             if not STEP_LOCK.acquire(blocking=False):
                 return self._send(409, {"error": "当前步骤正在运行，请完成后再分析"})
             request_id = uuid.uuid4().hex
@@ -715,15 +819,15 @@ class Handler(BaseHTTPRequestHandler):
                 ACTIVE_REASON["request_id"] = request_id
                 ACTIVE_REASON["event"] = cancel_event
             try:
-                result = SESSION.daytime.advise(situation, context=reason_context)
-                log_path = SESSION.mem.memory_dir / "reasoning_log.jsonl"
+                result = SESSION.daytime.retrieve_relevant_memories(situation, context=reason_context)
+                log_path = SESSION.mem.memory_dir / "scene_retrieval_log.jsonl"
                 with log_path.open("a", encoding="utf-8") as f:
                     f.write(json.dumps(result, ensure_ascii=False) + "\n")
                 return self._send(200, result)
             except Exception as exc:
                 if cancel_event.is_set() or exc.__class__.__name__ == "MemoryReasoningCancelled":
-                    return self._send(409, {"error": "主动建议已停止", "cancelled": True})
-                return self._send(503, {"error": f"语义推理未完成：{exc}"})
+                    return self._send(409, {"error": "场景检索已停止", "cancelled": True})
+                return self._send(503, {"error": f"场景检索未完成：{exc}"})
             finally:
                 with REASON_LOCK:
                     if ACTIVE_REASON.get("request_id") == request_id:
@@ -732,6 +836,11 @@ class Handler(BaseHTTPRequestHandler):
                 STEP_LOCK.release()
 
         if url.path == "/api/interactive/new":
+            reset_requested = (qs.get("reset") or ["0"])[0] in ("1", "true", "True")
+            if SESSION is not None and not reset_requested:
+                return self._send(200, SESSION.state())
+            if reset_requested:
+                RESTORED_SESSION_ACTIVE = False
             key = (qs.get("scenario") or ["short_term"])[0]
             participant = (qs.get("participant") or [""])[0] or None
             if participant == "all":
@@ -742,51 +851,293 @@ class Handler(BaseHTTPRequestHandler):
                                         "message": "有步骤正在执行（实时推理可能需要数分钟），请等它完成后再新建会话"})
             try:
                 try:
+                    resume_state = None
+                    if SESSION_RESUME_CHECKPOINT.is_file() and not reset_requested:
+                        try:
+                            fresh = True  # Saved sessions remain valid across overnight restarts.
+                            if fresh:
+                                candidate = load_json(SESSION_RESUME_CHECKPOINT)
+                                if isinstance(candidate, dict):
+                                    saved_progress = candidate.get("step_progress") or {}
+                                    if (candidate.get("integrity_version") == SESSION_INTEGRITY_VERSION
+                                            and candidate.get("scenario") in ir.SCENARIO_META
+                                            and not saved_progress.get("running")):
+                                        resume_state = candidate
+                                        key = str(candidate["scenario"])
+                                        participant = candidate.get("participant") or None
+                                        dataset = candidate.get("dataset_key") or "base"
+                                    else:
+                                        rejected = SESSION_RESUME_CHECKPOINT.with_name(
+                                            f"resume_rejected_pre_video_only_{time.time_ns()}.json"
+                                        )
+                                        shutil.copy2(SESSION_RESUME_CHECKPOINT, rejected)
+                                        SESSION_RESUME_CHECKPOINT.unlink()
+                        except (OSError, ValueError, TypeError, KeyError):
+                            resume_state = None
                     SESSION = InteractiveSession(
-                        key, participant=participant, dataset=dataset
+                        key, participant=participant, dataset=dataset,
+                        resume_state=resume_state,
                     )
+                    if resume_state is not None:
+                        RESTORED_SESSION_ACTIVE = True
+                        archived = SESSION_RESUME_CHECKPOINT.with_name(
+                            f"resume_restored_{time.time_ns()}.json"
+                        )
+                        shutil.copy2(SESSION_RESUME_CHECKPOINT, archived)
                 except Exception as e:
                     return self._send(500, {"error": f"创建会话失败: {e}"})
-                return self._send(200, SESSION.state())
+                state = SESSION.state()
+                save_session_checkpoint(state)
+                return self._send(200, state)
             finally:
                 STEP_LOCK.release()
+
+        if url.path == '/api/interactive/entities':
+            if SESSION is None:
+                return self._send(404, {'error': 'no session'})
+            from entity_records import EntityRecordIndex
+            if not ENTITY_READ_LOCK.acquire(timeout=15):
+                return self._send(503, {'error': '查询队列繁忙，请稍后重试'})
+            try:
+                if not STEP_LOCK.acquire(blocking=False):
+                    return self._send(409, {'error': '记忆正在写入，请稍后刷新'})
+                try:
+                    try:
+                        offset = max(0, int((qs.get('offset') or ['0'])[0]))
+                    except ValueError:
+                        return self._send(400, {'error': 'offset 必须是整数'})
+                    layer7 = SESSION.mem.memory.get('layer7') or {}
+                    moments = layer7.get('moments') or {}
+                    revision = (
+                        getattr(SESSION, 'extraction_batch_id', id(SESSION)),
+                        int(getattr(SESSION, 'pos', 0) or 0),
+                        len(getattr(SESSION, 'operation_log', []) or []),
+                        len(moments),
+                    )
+                    index = getattr(SESSION, '_entity_record_index', None)
+                    if (index is None or
+                            getattr(SESSION, '_entity_record_index_revision', None) != revision):
+                        index = EntityRecordIndex(layer7)
+                        SESSION._entity_record_index = index
+                        SESSION._entity_record_index_revision = revision
+                    result = index.query(kind=(qs.get('kind') or ['all'])[0],
+                                         query=(qs.get('q') or [''])[0], offset=offset)
+                    for item in result['items']:
+                        for event in item['events']:
+                            for ref in event['images']:
+                                if ref.get('asset'):
+                                    ref['url'] = '/api/memory_asset?p=' + quote(ref['asset'])
+                                if ref.get('source_asset'):
+                                    ref['source_url'] = '/api/memory_asset?p=' + quote(ref['source_asset'])
+                    return self._send(200, result)
+                finally:
+                    STEP_LOCK.release()
+            finally:
+                ENTITY_READ_LOCK.release()
+
+        if url.path == "/api/interactive/memory_record":
+            moment_id = (qs.get("id") or [""])[0].strip()
+            if not moment_id:
+                return self._send(400, {"error": "missing memory id"})
+
+            # Prefer the live session. When the page is displaying persisted memory
+            # after a web-server restart, SESSION can be empty; read the selected
+            # scenario's saved memory file instead of returning "no session".
+            if SESSION is not None:
+                if not STEP_LOCK.acquire(blocking=False):
+                    return self._send(409, {"error": "memory is being written"})
+                try:
+                    layer7 = SESSION.mem.memory.get("layer7") or {}
+                    record = (layer7.get("moments") or {}).get(moment_id)
+                    if isinstance(record, dict):
+                        return self._send(200, {
+                            "moment_id": moment_id,
+                            "scenario": SESSION.key,
+                            "record": record,
+                        })
+                finally:
+                    STEP_LOCK.release()
+
+            requested_scenario = (qs.get("scenario") or [getattr(SESSION, "key", "")])[0]
+            allowed_scenarios = ("short_term", "long_term", "custom_test")
+            scenarios = ([requested_scenario] if requested_scenario in allowed_scenarios
+                         else list(allowed_scenarios) if not requested_scenario else [])
+            for scenario in scenarios:
+                memory_path = RUNS / "interactive_mem" / scenario / "memory.json"
+                try:
+                    memory = load_json(memory_path)
+                except (OSError, ValueError, TypeError):
+                    continue
+                if not isinstance(memory, dict):
+                    continue
+                layer7 = memory.get("layer7") or {}
+                record = (layer7.get("moments") or {}).get(moment_id)
+                if isinstance(record, dict):
+                    return self._send(200, {
+                        "moment_id": moment_id,
+                        "scenario": scenario,
+                        "record": record,
+                    })
+            return self._send(404, {"error": "memory record not found"})
 
         if url.path == "/api/interactive/state":
             if SESSION is None:
                 return self._send(404, {"error": "no session"})
             return self._send(200, SESSION.state())
 
+        if url.path == "/api/interactive/retry_failed":
+            if SESSION is None:
+                return self._send(404, {"error": "no session"})
+            if not STEP_LOCK.acquire(blocking=False):
+                return self._send(409, {"error": "busy", "message": "当前步骤仍在运行"})
+            cancel_event = threading.Event()
+            retry_results = []
+            try:
+                if SESSION.pos < 1 or not SESSION.log:
+                    return self._send(409, {"error": "没有可重试的批量写入结果"})
+                last = SESSION.log[-1]
+                perception = last.get("perception") or {}
+                items = perception.get("items") or []
+                previous_step = SESSION.steps[SESSION.pos - 1]
+                if (last.get("kind") != "add_batch"
+                        or previous_step.get("kind") != "add_batch"
+                        or len(items) != len(previous_step.get("inputs") or [])):
+                    return self._send(409, {"error": "最近一步不是可核对的批量写入"})
+                failed = [index for index, info in enumerate(items)
+                          if isinstance(info, dict) and not info.get("moment_id")
+                          and not info.get("cancelled")]
+                if not failed:
+                    return self._send(409, {"error": "没有待重试的失败片段"})
+                inputs = previous_step.get("inputs") or []
+                moment_by_id = {str(moment.get("id") or ""): moment
+                                for moment in SESSION.moments}
+                retry_inputs = []
+                for index in failed:
+                    source_id = str(inputs[index].get("id") or "")
+                    moment = moment_by_id.get(source_id)
+                    if not moment:
+                        return self._send(409, {
+                            "error": f"无法定位失败片段：{source_id or index + 1}"
+                        })
+                    retry_inputs.append((index, source_id, moment))
+
+                ACTIVE_STEP_FORCE = True
+                with SESSION._cancel_lock:
+                    SESSION._active_step_cancel = cancel_event
+                    SESSION._active_step_force = True
+                    SESSION._active_step_no = SESSION.pos
+                    SESSION._active_step_title = "重试失败片段 · " + last.get("title", "批量写入")
+                SESSION._set_step_progress(
+                    running=True, stage="retry_failed", label="重试失败片段",
+                    step_index=SESSION.pos, step_total=len(SESSION.steps),
+                    item_index=0, item_total=len(retry_inputs), message="准备重试未写入的片段",
+                    output=None, completed=[], run_id=uuid.uuid4().hex,
+                )
+                for retry_index, (item_index, source_id, moment) in enumerate(retry_inputs, 1):
+                    progress = {
+                        "label": "重试失败片段", "item_index": retry_index,
+                        "item_total": len(retry_inputs),
+                    }
+                    SESSION._set_step_progress(
+                        **progress, stage="retry_failed",
+                        message=f"正在重新感知第 {retry_index}/{len(retry_inputs)} 个失败片段：{source_id}",
+                    )
+                    moment_id, info = SESSION._add_one(moment, force=True, progress=progress)
+                    info = dict(info or {})
+                    info.setdefault("dataset_id", source_id)
+                    items[item_index] = info
+                    retry_results.append({
+                        "dataset_id": source_id,
+                        "moment_id": moment_id,
+                        "error": info.get("error"),
+                        "cancelled": bool(info.get("cancelled")),
+                    })
+                    if info.get("cancelled") or cancel_event.is_set():
+                        break
+
+                perception["ok"] = sum(bool(info.get("moment_id"))
+                                       for info in items if isinstance(info, dict))
+                perception["cancelled"] = bool(cancel_event.is_set())
+                remaining = sum(not (isinstance(info, dict) and info.get("moment_id"))
+                                and not (isinstance(info, dict) and info.get("cancelled"))
+                                for info in items)
+                last["msg"] = (
+                    f"12:00 时段：Qwen 感知 {perception['ok']}/{perception.get('n', len(items))} 条并写入记忆"
+                    if not remaining else
+                    f"失败片段重试后仍有 {remaining} 条未写入，其他已完成内容保留"
+                )
+                snap = ir.rs.snapshot(SESSION.mem, last.get("title", "批量写入"),
+                                      action=last.get("kind", "add_batch"))
+                snap["full"] = SESSION._full_snapshot()
+                snap["layer7_active_moments"] = snap["full"]["layer7_active_total"]
+                snap["layer7_merged_moments"] = snap["full"]["layer7_merged_total"]
+                last["snapshot"] = snap
+                SESSION._set_step_progress(
+                    running=False, stage="done" if not remaining else "retry_failed_partial",
+                    message=last["msg"], output=None,
+                )
+                response = SESSION.state()
+                response["retry_results"] = retry_results
+                response["remaining_failed"] = remaining
+                return self._send(200, response)
+            except Exception as exc:
+                SESSION._set_step_progress(running=False, stage="error",
+                                           message=f"失败片段重试出错：{str(exc)[:240]}")
+                return self._send(500, {"error": f"失败片段重试出错：{exc}"})
+            finally:
+                ACTIVE_STEP_FORCE = False
+                with SESSION._cancel_lock:
+                    if SESSION._active_step_cancel is cancel_event:
+                        SESSION._active_step_cancel = None
+                        SESSION._active_step_force = False
+                    SESSION._active_step_no = None
+                    SESSION._active_step_title = None
+                STEP_LOCK.release()
+
         if url.path == "/api/interactive/cancel":
             if SESSION is None:
                 return self._send(404, {"error": "no session"})
-            progress = SESSION.step_progress or {}
-            advice_running = progress.get("stage") == "advising"
-            if not STEP_LOCK.locked() or not (ACTIVE_STEP_FORCE or advice_running):
+            with SESSION._cancel_lock:
+                progress = SESSION.step_progress or {}
+                has_step_event = SESSION._active_step_cancel is not None
+                step_running = bool(STEP_LOCK.locked() and (
+                    (progress.get("running") and has_step_event)
+                    or (ACTIVE_STEP_RUNNING and ACTIVE_STEP_PHASE == "starting")
+                ))
+            if not step_running:
                 return self._send(409, {
-                    "error": "当前没有可停止的推理或建议",
-                    "message": "请在实时推理或片段建议生成期间点击停止",
+                    "error": "当前没有正在运行的步骤",
+                    "message": "当前没有需要终止的运行步骤",
                 })
             result = SESSION.cancel_current()
             if not result.get("requested"):
                 return self._send(409, {
                     "error": "当前处理已结束或尚未开始",
-                    "message": "请在片段处理或建议生成期间点击停止",
+                    "message": "当前步骤已结束，请刷新进度后再操作",
                 })
+            progress = SESSION.step_progress or {}
+            SESSION._set_step_progress(
+                running=True, stage="cancelling",
+                message="已收到终止请求，正在停止当前处理并释放推理资源",
+                output=progress.get("output"),
+            )
             request_id = getattr(SESSION, "_active_reasoning_request_id", None)
             if request_id:
-                try:
-                    payload = json.dumps({"request_id": request_id}).encode("utf-8")
-                    req = URLRequest(
-                        "http://127.0.0.1:8000/cancel_inference",
-                        data=payload, headers={"Content-Type": "application/json"},
-                        method="POST",
-                    )
-                    with urlopen(req, timeout=3):
+                def cancel_reasoning(request_id=request_id):
+                    try:
+                        payload = json.dumps({"request_id": request_id}).encode("utf-8")
+                        req = URLRequest(
+                            "http://127.0.0.1:8000/cancel_inference",
+                            data=payload, headers={"Content-Type": "application/json"},
+                            method="POST",
+                        )
+                        with urlopen(req, timeout=3):
+                            pass
+                    except Exception:
                         pass
-                    result["model_cancel_sent"] = True
-                except Exception:
-                    # The step event still prevents any later suggestion from starting.
-                    result["model_cancel_sent"] = False
+                threading.Thread(target=cancel_reasoning, daemon=True,
+                                 name="cancel-active-reasoning").start()
+                result["reasoning_cancel_pending"] = True
             return self._send(200, result)
 
         if url.path == "/api/interactive/step":
@@ -800,6 +1151,8 @@ class Handler(BaseHTTPRequestHandler):
             if not STEP_LOCK.acquire(blocking=False):
                 return self._send(409, {"error": "busy",
                                         "message": "上一步仍在执行（实时推理可能需要数分钟），请稍候"})
+            ACTIVE_STEP_RUNNING = True
+            ACTIVE_STEP_PHASE = "starting"
             ACTIVE_STEP_FORCE = force
             try:
                 try:
@@ -807,25 +1160,36 @@ class Handler(BaseHTTPRequestHandler):
                                             continuous_kind=continuous_kind,
                                             use_cache=use_cache,
                                             progress_id=progress_id)
+                    ACTIVE_STEP_PHASE = "finishing"
                 except Exception as e:
                     return self._send(500, {"error": f"执行失败: {e}"})
                 st = SESSION.state()
                 st["last_result"] = msg
                 st["last_force"] = force
                 st["auto_paused"] = SESSION.auto_paused
+                save_session_checkpoint(st)
                 return self._send(200, st)
             finally:
                 ACTIVE_STEP_FORCE = False
+                ACTIVE_STEP_RUNNING = False
+                ACTIVE_STEP_PHASE = None
+                with SESSION._cancel_lock:
+                    SESSION._pending_cancel = False
                 STEP_LOCK.release()
 
         # Qwen 缓存预热（后台跑，前端轮询进度）
         if url.path == "/api/interactive/prewarm":
             key = (qs.get("scenario") or ["short_term"])[0]
+            external_status = multimodal_prewarm_status(ROOT)
+            if external_status and external_status.get("running"):
+                return self._send(200, {"started": False, **external_status})
             if PREWARM["running"]:
                 return self._send(200, {"started": False, **PREWARM})
 
             def work():
-                PREWARM.update(running=True, done=0, total=0, cache_hits=0, inferred=0, failed=0, error=None, scenario=key)
+                PREWARM.update(running=True, done=0, total=0, cache_hits=0,
+                               inferred=0, failed=0, failed_items=[], current_id=None,
+                               current_status="starting", error=None, scenario=key)
                 try:
                     dataset = (qs.get("dataset") or ["base"])[0]
                     participant = (qs.get("participant") or [""])[0] or None
@@ -840,33 +1204,54 @@ class Handler(BaseHTTPRequestHandler):
                         if key == "short_term":
                             src = (ir.SHORT_EXPANDED_FILE if dataset == "expanded"
                                    else ir.SHORT_FILE)
+                            ms = ir._load_jsonl(src)
+                            if participant:
+                                ms = [m for m in ms
+                                      if "_".join(str(m.get("id", "")).split("_")[1:3]) == participant]
+                        elif dataset.startswith("feishu:"):
+                            ms = ir.feishu_test_moments(dataset)
                         else:
                             participant = participant or "A1_JAKE"
                             src = ir.LONG_PERSON_DIR / f"{participant}.jsonl"
-                        ms = ir._load_jsonl(src)
-                        if key == "long_term":
-                            pass  # participant datasets contain only local English clips
-                        elif participant:
-                            ms = [m for m in ms
-                                  if "_".join(str(m.get("id", "")).split("_")[1:3]) == participant]
+                            ms = ir._load_jsonl(src)
                         p = ir.site_perceiver()
                     PREWARM["total"] = len(ms)
-                    for m in ms:
-                        try:
-                            result = p.perceive(m)
-                            if result.get("fields"):
-                                if result.get("source") == "cache":
+                    worker_count = max(1, min(4, len(getattr(p, "api_urls", []) or [p.api_url]),
+                                              len(ms) or 1))
+                    PREWARM["worker_count"] = worker_count
+                    with ThreadPoolExecutor(max_workers=worker_count,
+                                            thread_name_prefix="qwen-prewarm") as executor:
+                        futures = {executor.submit(p.perceive, moment): moment
+                                   for moment in ms}
+                        for future in as_completed(futures):
+                            moment = futures[future]
+                            moment_id = str(moment.get("id") or "")
+                            try:
+                                result = future.result()
+                                source = result.get("source")
+                                if result.get("fields") and source == "cache":
                                     PREWARM["cache_hits"] += 1
-                                elif result.get("source") == "qwen":
+                                elif result.get("fields") and source == "qwen":
                                     PREWARM["inferred"] += 1
                                 else:
                                     PREWARM["failed"] += 1
-                            else:
+                                    PREWARM["failed_items"].append({
+                                        "id": moment_id,
+                                        "source": str(source or ""),
+                                        "error": str(result.get("error") or result.get("message") or
+                                                     "perception returned no fields")[:500],
+                                    })
+                            except Exception as exc:
                                 PREWARM["failed"] += 1
-                        except Exception:
-                            PREWARM["failed"] += 1
-                        finally:
-                            PREWARM["done"] += 1
+                                PREWARM["failed_items"].append({
+                                    "id": moment_id, "source": "exception",
+                                    "error": str(exc)[:500],
+                                })
+                            finally:
+                                PREWARM["done"] += 1
+                                PREWARM["current_id"] = moment_id
+                                PREWARM["current_status"] = "processing"
+                    PREWARM.update(current_id=None, current_status="complete")
                 except Exception as e:
                     PREWARM["error"] = str(e)
                 finally:
@@ -876,6 +1261,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, {"started": True})
 
         if url.path == "/api/interactive/prewarm_status":
+            external_status = multimodal_prewarm_status(ROOT)
+            if external_status and (
+                    external_status.get("running") or not PREWARM["running"]):
+                return self._send(200, external_status)
             return self._send(200, dict(PREWARM))
 
         return self._send(404, {"error": "not found"})

@@ -32,3 +32,26 @@ scripts/legacy/
 data/
 # playwright 临时产物
 .playwright-cli/
+
+# Data and recovery snapshots stay outside Git
+experiments/**/data/
+remote_stage/**/*.tar.gz
+tmp/
+archive/
+backups/
+deploy_backups/
+test_data/
+*.before*
+*.bak*
+*.predeploy
+
+# Legacy root-level copies; active source lives under code/ and scripts/memory/
+/index.html
+/interactive_runner.py
+/memory.py
+/multimodal_memory.py
+/qwen_perceive.py
+/viz_server.py
+/todo.md
+*_before_*.py
+scripts/memory/wait_then_prewarm_v*.py

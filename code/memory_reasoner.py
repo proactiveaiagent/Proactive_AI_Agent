@@ -8,6 +8,8 @@ general knowledge. It does not execute any action.
 
 from __future__ import annotations
 
+from entity_records import memory_facts
+
 import copy
 import json
 import re
@@ -1095,6 +1097,7 @@ class MemoryReasoner:
             instruction_quotes.append(quote)
         return {
             "id": moment.get("id"), "time": moment.get("timestamp"),
+            **memory_facts(moment),
             "scene": str(moment.get("scene") or "")[:400],
             "action": str(moment.get("user_action") or "")[:700],
             "people": moment.get("people") or [],
@@ -1119,6 +1122,166 @@ class MemoryReasoner:
             ],
         }
 
+    @staticmethod
+    def _structured_scene_plan(situation: str, moment: dict, context: dict | None = None) -> dict:
+        """Build retrieval-only searches from already stored scene observations.
+
+        This deliberately performs no needs inference or advice generation. It
+        reorganizes source-backed fields so retrieval can search the archive
+        without a second model call for query planning.
+        """
+        moment = moment if isinstance(moment, dict) else {}
+        facts = memory_facts(moment)
+        temporal = [row for row in facts.get("temporal_facts") or [] if isinstance(row, dict)]
+        observations = [row for row in facts.get("person_observations") or [] if isinstance(row, dict)]
+
+        def items(value):
+            if isinstance(value, (list, tuple, set)):
+                return [str(item).strip() for item in value if str(item or "").strip()]
+            return [str(value).strip()] if str(value or "").strip() else []
+
+        def unique(values, limit=12):
+            result, seen = [], set()
+            for value in values:
+                text = " ".join(str(value or "").split()).strip()
+                key = text.casefold()
+                if text and key not in seen:
+                    seen.add(key)
+                    result.append(text[:180])
+                if len(result) >= limit:
+                    break
+            return result
+
+        people = items(moment.get("people"))
+        people += [str(row.get("entity") or "").strip() for row in observations]
+        locations = items(moment.get("location"))
+        activities = items(moment.get("activity"))
+        objects = items(moment.get("objects"))
+        environments = items(moment.get("environments"))
+        states, fact_search_parts, speech_search_parts, times = [], [], [], []
+        source_time = moment.get("source_time") if isinstance(moment.get("source_time"), dict) else {}
+        for key in ("timestamp", "clip_start_s", "clip_end_s", "time_scope", "recorded_at"):
+            value = source_time.get(key)
+            if value not in (None, ""):
+                times.append(str(value))
+        if moment.get("timestamp"):
+            times.insert(0, str(moment.get("timestamp")))
+
+        for row in temporal[:16]:
+            subject = str(row.get("subject") or "").strip()
+            subject_type = str(row.get("subject_type") or "").strip()
+            predicate = str(row.get("predicate") or "").strip()
+            value = str(row.get("value") or "").strip()
+            actor = str(row.get("actor") or "").strip()
+            affected = items(row.get("affected_people"))
+            from_location = str(row.get("from_location") or "").strip()
+            to_location = str(row.get("to_location") or "").strip()
+            from_state = str(row.get("from_state") or "").strip()
+            to_state = str(row.get("to_state") or "").strip()
+            time_scope = str(row.get("time_scope") or "").strip()
+            time_order = row.get("time_order")
+            if subject_type == "person" and subject:
+                people.append(subject)
+            elif subject_type == "object" and subject:
+                objects.append(subject)
+            elif subject_type == "place" and subject:
+                locations.append(subject)
+            elif subject_type == "environment" and subject:
+                environments.append(subject)
+            people.extend([actor, *affected])
+            locations.extend([from_location, to_location])
+            states.extend([from_state, to_state])
+            if predicate in {"state", "located_at", "moved", "occurred_at", "participated_in"} and value:
+                states.append(value)
+            if time_scope:
+                times.append(time_scope)
+            transition = ""
+            if from_location or to_location:
+                transition = f" {from_location} -> {to_location}".strip()
+            elif from_state or to_state:
+                transition = f" {from_state} -> {to_state}".strip()
+            components = [subject_type, subject, actor, predicate, value, transition,
+                          "affected " + ", ".join(affected) if affected else "",
+                          "time " + time_scope if time_scope else "",
+                          "order " + str(time_order) if time_order not in (None, "") else ""]
+            fact_text = " ".join(part for part in components if part).strip()
+            if fact_text:
+                fact_search_parts.append((predicate, fact_text))
+                if predicate.startswith("stated_"):
+                    speech_search_parts.append(fact_text)
+
+        people = unique(people, 8)
+        locations = unique(locations, 8)
+        activities = unique(activities, 8)
+        objects = unique(objects, 12)
+        environments = unique(environments, 8)
+        states = unique(states, 12)
+        times = unique(times, 8)
+        observation_search_parts = []
+        for row in observations[:4]:
+            entity = str(row.get("entity") or "").strip()
+            appearance = str(row.get("appearance") or "").strip()
+            age = str(row.get("age") or "").strip()
+            age_basis = str(row.get("age_basis") or "").strip()
+            details = [entity, appearance[:90]]
+            if age and age_basis in {"stated", "visible_text"}:
+                details.append("age " + age)
+            detail_text = " ".join(value for value in details if value).strip()
+            if detail_text:
+                observation_search_parts.append(detail_text)
+
+        # Generic visual labels are clip-local observations, not cross-video identities.
+        anonymous = re.compile(r"unidentified|unknown person|unnamed|camera wearer|speaker\s*\d|未知|匿名|未识别", re.I)
+        entities = unique(
+            [value for value in people if not anonymous.search(value)]
+            + locations + objects + activities, 10)
+
+        scene_query = str(situation or "").strip()
+        if not scene_query:
+            scene_query = " ".join([
+                str(moment.get("scene") or ""), str(moment.get("user_action") or ""),
+                str(moment.get("location") or ""), str(moment.get("activity") or ""),
+                " ".join(people), " ".join(objects), " ".join(environments),
+            ]).strip()
+        ranked_fact_parts = sorted(
+            fact_search_parts,
+            key=lambda item: (0 if item[0] in {"moved", "state", "located_at"}
+                              else 1 if item[0] in {"occurred_at", "participated_in"}
+                              else 2))
+        fact_query = "Historical event facts: " + "; ".join(
+            value[:88] for _, value in ranked_fact_parts[:2])
+        speech_parts = speech_search_parts[:3] + observation_search_parts[:2]
+        speech_query = "Person statements and appearance: " + "; ".join(
+            value[:72] for value in speech_parts[:3])
+        dimension_query = " ".join([
+            "People " + ", ".join(people[:3]),
+            "Place " + ", ".join(locations[:2]),
+            "Time " + ", ".join(times[:3]),
+            "Activity " + ", ".join(activities[:2]),
+            "Objects " + ", ".join(objects[:4]),
+            "States " + ", ".join(states[:3]),
+            "Environment " + ", ".join(environments[:2]),
+        ]).strip()
+        proposed_searches = []
+        for query in (scene_query, fact_query, speech_query, dimension_query):
+            query = " ".join(str(query or "").split()).strip()
+            if query and query not in proposed_searches:
+                proposed_searches.append(query[:180])
+
+        return {
+            "situation": scene_query[:1200],
+            "entities": entities,
+            "proposed_searches": proposed_searches[:4],
+            "searches": proposed_searches[:4],
+            "scene_dimensions": {
+                "people": people, "locations": locations, "activities": activities,
+                "objects": objects, "states": states, "time": times,
+                "environments": environments,
+            },
+            "actionable_cues": [],
+            "planner_method": "structured_source_fields",
+        }
+
     def reason(self, situation: str, context: dict | None = None) -> dict:
         self._audio_decode_cache.clear()
         self._asr_review_cache.clear()
@@ -1131,6 +1294,8 @@ class MemoryReasoner:
         self.media_mode = media_mode
         current_moment_id = str(context.pop("source_moment_id", "") or "")
         proactive = bool(context.pop("proactive", False))
+        retrieval_only = bool(context.pop("retrieval_only", False))
+        cached_scene_plan = context.pop("cached_scene_plan", None)
         request_id = str(context.pop("reasoning_request_id", "") or "")
         cancel_event = context.pop("cancellation_event", None)
         current_moment = None
@@ -1150,11 +1315,16 @@ class MemoryReasoner:
                     "Objects: " + ", ".join(map(str, current_summary.get("objects") or [])),
                     "Speech: " + str(current_summary.get("speech") or ""),
                 ]
-                situation = (
-                    "Proactively assess the latest observed event and suggest a useful, safe next step "
-                    "only when evidence supports one. If none is needed, say no reminder is needed. "
-                    + " ".join(part for part in observed if part.split(": ", 1)[-1].strip())
-                )[:1200]
+                observed_text = " ".join(
+                    part for part in observed if part.split(": ", 1)[-1].strip())
+                if retrieval_only:
+                    situation = ("当前视频场景：" + observed_text)[:1200]
+                else:
+                    situation = (
+                        "Proactively assess the latest observed event and suggest a useful, safe next step "
+                        "only when evidence supports one. If none is needed, say no reminder is needed. "
+                        + observed_text
+                    )[:1200]
         if not situation:
             raise ValueError("请提供当前事件")
         t0 = time.perf_counter()
@@ -1163,23 +1333,56 @@ class MemoryReasoner:
             current_observations, current_perception = self._perceive_media(
                 [current_moment], [situation], [], current_moment_id, request_id, cancel_event)
             context["current_observations"] = current_observations
-        planner = self._infer(
-            "You are the retrieval planner for a personal memory module. "
-            "Understand the CURRENT situation, including source-linked current visual/audio observations, not just its text or keywords. "
-            "Consider related people, places, health facts, prior events and local customs. "
-            "Translate retrieval queries to natural English, because stored memories are English. "
-            "Search only for facts that could change the next action. Do not invent speculative problems, medical concerns, preferences, or routines that the current event did not raise; use one direct query for the expressed intent and at most a few clearly relevant prior preferences. "
-            "Return ONLY JSON: {\"situation\":str,\"entities\":[str],"
-            "\"searches\":[str],\"decision_question\":str,"
-            "\"current_country\":str|null}. Set current_country only when the present country is explicit or clear; otherwise null. "
-            "Also return actionable_cues as a JSON array separately from search queries. Each cue has memory_id, speaker, quote, type (explicit_instruction or proposal), status (open/resolved/unclear), relevance (high/medium/low), and suggestion_zh. Use only verbatim quotes and memory IDs present in supplied records. Include explicit keep/discard instructions only when they affect this same task. Include another speaker proposal only when it is a concrete next-step question/request relevant to the current activity and not shown completed or declined. Mark accepted/completed/declined cues resolved; generic discussion is not a cue. suggestion_zh must be attributed and optional, never claim the wearer accepted it. Return an empty cue array if none qualifies. "
-            "Return at most 3 searches, and use an empty list when no prior fact could change the next action. Every search must be anchored to a person, event, action, place, symptom, or stated preference explicitly present in the situation. Never add hypothetical allergies, plumbing, maintenance, temperature, schedules, or other concerns not raised by the situation. Do not recommend an action yet.\n"
-            f"Current situation: {situation}\nCurrent context: "
-            + json.dumps(context, ensure_ascii=False),
-            request_id=request_id, cancel_event=cancel_event,
-        )
-        proposed_searches = self._strings(planner.get("searches"), 4)
-        searches, filtered_searches = self._memory_searches(proposed_searches, 3)
+        if retrieval_only:
+            planner_prompt = (
+                "You are the scene-understanding and query-planning component of a personal memory retrieval system. "
+                "Understand the whole current scene from its text and any source-linked visual/audio observations. "
+                "Extract only observable entities and scene dimensions: people, place, activity/event, objects, "
+                "object state, time, and relationships. Translate retrieval queries to natural English because "
+                "stored memories are English. Create a small set of complementary searches that can retrieve "
+                "related historical episodes and facts across the memory archive, including useful location and "
+                "object context. Do not infer what the user needs, recommend actions, issue reminders, diagnose, "
+                "or make emergency decisions. Do not invent scene details. Return ONLY JSON: "
+                "{\"situation\":str,\"entities\":[str],\"searches\":[str],"
+                "\"scene_dimensions\":{\"people\":[str],\"locations\":[str],\"activities\":[str],"
+                "\"objects\":[str],\"states\":[str],\"time\":[str]}}. Return up to 5 searches; "
+                "use the whole scene, not isolated keyword overlap.\n"
+            )
+        else:
+            planner_prompt = (
+                "You are the retrieval planner for a personal memory module. "
+                "Understand the CURRENT situation, including source-linked current visual/audio observations, not just its text or keywords. "
+                "Consider related people, places, health facts, prior events and local customs. "
+                "Translate retrieval queries to natural English, because stored memories are English. "
+                "Search only for facts that could change the next action. Do not invent speculative problems, medical concerns, preferences, or routines that the current event did not raise; use one direct query for the expressed intent and at most a few clearly relevant prior preferences. "
+                "Return ONLY JSON: {\"situation\":str,\"entities\":[str],"
+                "\"searches\":[str],\"decision_question\":str,"
+                "\"current_country\":str|null}. Set current_country only when the present country is explicit or clear; otherwise null. "
+                "Also return actionable_cues as a JSON array separately from search queries. Each cue has memory_id, speaker, quote, type (explicit_instruction or proposal), status (open/resolved/unclear), relevance (high/medium/low), and suggestion_zh. Use only verbatim quotes and memory IDs present in supplied records. Include explicit keep/discard instructions only when they affect this same task. Include another speaker proposal only when it is a concrete next-step question/request relevant to the current activity and not shown completed or declined. Mark accepted/completed/declined cues resolved; generic discussion is not a cue. suggestion_zh must be attributed and optional, never claim the wearer accepted it. Return an empty cue array if none qualifies. "
+                "Return at most 3 searches, and use an empty list when no prior fact could change the next action. Every search must be anchored to a person, event, action, place, symptom, or stated preference explicitly present in the situation. Never add hypothetical allergies, plumbing, maintenance, temperature, schedules, or other concerns not raised by the situation. Do not recommend an action yet.\n"
+            )
+        planner_cache_used = bool(retrieval_only and isinstance(cached_scene_plan, dict))
+        planner_started = time.perf_counter()
+        if planner_cache_used:
+            _check_cancelled(cancel_event)
+            planner = dict(cached_scene_plan)
+        elif retrieval_only:
+            _check_cancelled(cancel_event)
+            planner = self._structured_scene_plan(situation, current_moment, context)
+        else:
+            planner = self._infer(
+                planner_prompt + f"Current situation: {situation}\nCurrent context: "
+                + json.dumps(context, ensure_ascii=False),
+                request_id=request_id, cancel_event=cancel_event,
+            )
+        planner_elapsed_ms = round((time.perf_counter() - planner_started) * 1000)
+        planner_method = str(planner.get("planner_method") or
+                             ("cached_scene_plan" if planner_cache_used else
+                              "model_inference"))
+        proposed_searches = self._strings(
+            planner.get("proposed_searches") or planner.get("searches"), 5)
+        searches, filtered_searches = self._memory_searches(
+            proposed_searches, 4 if retrieval_only else 3)
         planner = dict(planner)
         planner["proposed_searches"] = proposed_searches
         planner["searches"] = searches or [situation]
@@ -1190,12 +1393,16 @@ class MemoryReasoner:
         seen: set[str] = {current_moment_id} if current_moment_id else set()
         first_details: dict[str, dict] = {}
         first = [current_moment] if current_moment else []
+        recall_started = time.perf_counter()
         recalled = self._recall(searches, entities, seen, limit=9,
                                 priority_details=first_details)
+        recall_elapsed_ms = round((time.perf_counter() - recall_started) * 1000)
         first.extend(recalled)
         first = first[:9]
+        media_started = time.perf_counter()
         media_first, links_first = self._media_neighbors(first, {m["id"] for m in first})
         first.extend(media_first)
+        media_link_elapsed_ms = round((time.perf_counter() - media_started) * 1000)
         for row in first:
             seen.add(row["id"])
         evidence = first[:]
@@ -1244,6 +1451,37 @@ class MemoryReasoner:
         rounds = [{"queries": searches, "candidate_ids": [m["id"] for m in first],
                    "media_links": links_first,
                    "candidate_details": self._priority_rows(first, first_details, links_first)}]
+        if retrieval_only:
+            retrieved = [moment for moment in first
+                         if str(moment.get("id") or "") != current_moment_id]
+            summary_started = time.perf_counter()
+            summary_layers = []
+            if hasattr(self.memory, "query_summary_layers"):
+                summary_layers = self.memory.query_summary_layers(" ".join(searches), top_k=3)
+            summary_search_elapsed_ms = round((time.perf_counter() - summary_started) * 1000)
+            return {
+                "mode": "memory_retrieval",
+                "situation": situation,
+                "scene_understanding": planner.get("scene_dimensions") or {},
+                "search_plan": planner,
+                "retrieval_rounds": rounds,
+                "current_scene_memory": self._compact(current_moment) if current_moment else None,
+                "candidates": [self._compact(moment) for moment in retrieved],
+                "summary_layers": summary_layers,
+                "multimodal_inference": current_perception,
+                "source_moment_id": current_moment_id or None,
+                "scene_plan_cache_used": planner_cache_used,
+                "scene_plan_method": planner_method,
+                "scene_plan_elapsed_ms": planner_elapsed_ms,
+                "stage_timings_ms": {
+                    "scene_plan": planner_elapsed_ms,
+                    "memory_recall": recall_elapsed_ms,
+                    "multimodal_linking": media_link_elapsed_ms,
+                    "summary_search": summary_search_elapsed_ms,
+                },
+                "model_calls": 0,
+                "elapsed_ms": round((time.perf_counter() - t0) * 1000),
+            }
         summaries = {
             layer: str(self.memory.memory.get(layer, {}).get("summary") or "")[:700]
             for layer in ("layer4", "layer5")

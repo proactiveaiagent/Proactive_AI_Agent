@@ -26,7 +26,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "code"))
 from memory import PersonMemory, LAYER7_INDICES      # noqa: E402
-from qwen_perceive import extract_english_transcript  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 TESTSET = ROOT / "data" / "egolife" / "testset"
@@ -142,21 +141,10 @@ def snapshot(mem, label, action=""):
     }
 
 def add_moment(mem, m):
-    """把一条 EgoLife moment 写入记忆模型。"""
-    gt = m.get("ground_truth", {})
-    loc = gt.get("location_gt") or []
-    return mem.add(
-        scene=m.get("scene", ""),
-        user_action=m.get("user_action", ""),
-        needs=[],
-        solutions=[],
-        people=m.get("people") or gt.get("people_gt") or None,
-        location=loc[0] if loc else None,
-        activity=gt.get("activity_gt") or None,
-        environments=gt.get("environments_gt") or None,
-        objects=gt.get("objects_gt") or None,
-        extra_notes=(m.get("transcript") or "")[:200],
-        source_evidence=extract_english_transcript(m.get("transcript") or ""),
+    """Reject the retired annotation-backed writer instead of faking memory."""
+    raise RuntimeError(
+        "The legacy snapshot writer is disabled because it writes benchmark labels "
+        "as if they were video perception. Use the interactive video-only pipeline."
     )
 
 
@@ -165,6 +153,10 @@ def add_moment(mem, m):
 # ---------------------------------------------------------------------------
 
 def run_short_term():
+    raise RuntimeError(
+        "Legacy snapshot generation is disabled: it used benchmark labels as memory. "
+        "Replay clips through the interactive video-only pipeline instead."
+    )
     print("=== 短期记忆场景（不连续视频片段）===")
     moments = [json.loads(l) for l in open(SHORT_FILE, encoding="utf-8") if l.strip()]
     plan = json.load(open(SHORT_PLAN, encoding="utf-8"))
@@ -256,28 +248,8 @@ def run_short_term():
 # ---------------------------------------------------------------------------
 
 def build_sort_analysis(moments, id_map):
-    """用 ground-truth 聚合出归类结果（替代 LLM 归类）。"""
-    analysis = defaultdict(lambda: defaultdict(list))
-    for m in moments:
-        mid = id_map.get(m["id"])
-        if not mid:
-            continue
-        gt = m.get("ground_truth", {})
-        for p in gt.get("people_gt", []):
-            analysis["people"][p].append(mid)
-        for loc in gt.get("location_gt", []):
-            analysis["locations"][loc].append(mid)
-        for env in gt.get("environments_gt", []):
-            analysis["environments"][env].append(mid)
-        for obj in gt.get("objects_gt", []):
-            analysis["objects"][obj].append(mid)
-        act = gt.get("activity_gt")
-        if act:
-            analysis["activity_events"][act].append(mid)
-        t = gt.get("time_gt")
-        if t:
-            analysis["time_nodes"][t].append(mid)
-    return {k: dict(v) for k, v in analysis.items()}
+    """The old helper encoded reference answers as model output; fail closed."""
+    raise RuntimeError("Annotation-derived index generation is disabled.")
 
 
 def build_canonical_map(mem):
@@ -303,39 +275,15 @@ def build_canonical_map(mem):
 
 
 def build_compress_summary(moments, participant):
-    """用统计结果生成 layer4/5 摘要（替代 LLM 摘要）。"""
-    locations = Counter()
-    activities = Counter()
-    people = Counter()
-    for m in moments:
-        gt = m.get("ground_truth", {})
-        for loc in gt.get("location_gt", []):
-            locations[loc] += 1
-        act = gt.get("activity_gt")
-        if act:
-            activities[act] += 1
-        for p in gt.get("people_gt", []):
-            people[p] += 1
-
-    top_loc = "、".join(f"{k}({v})" for k, v in locations.most_common(3))
-    top_act = "、".join(f"{k}({v})" for k, v in activities.most_common(3))
-    top_people = "、".join(f"{k}({v})" for k, v in people.most_common(3))
-
-    return {
-        "layer4": {
-            "summary": f"{participant} 当天共 {len(moments)} 个片段。"
-                       f"主要地点：{top_loc or '未识别'}；主要活动：{top_act or '未识别'}。",
-            "current_tasks": [a for a, _ in activities.most_common(3)],
-        },
-        "layer5": {
-            "summary": f"{participant} 的长期模式：常去 {top_loc or '未知'}，"
-                       f"常做 {top_act or '未知'}。",
-            "key_events": [f"{a} ×{c}" for a, c in activities.most_common(5)],
-        },
-    }
+    """The old helper encoded reference answers as memory summaries; fail closed."""
+    raise RuntimeError("Annotation-derived summaries are disabled.")
 
 
 def run_long_term():
+    raise RuntimeError(
+        "Legacy snapshot generation is disabled: it used benchmark labels as memory. "
+        "Replay clips through the interactive video-only pipeline instead."
+    )
     print("\n=== 长期记忆场景（完整一天）===")
     moments = [json.loads(l) for l in open(LONG_FILE, encoding="utf-8") if l.strip()]
     meta = json.load(open(LONG_META, encoding="utf-8"))

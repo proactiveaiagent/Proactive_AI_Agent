@@ -92,17 +92,54 @@ class NightlyProcessor:
     def _brief(item):
         out = {"id": item.get("id", ""), "timestamp": item.get("timestamp", "")}
         for key, limit in (("scene", 500), ("user_action", 500),
+                           ("interaction_details", 1200),
                            ("location", 200), ("activity", 200),
                            ("notes", 500), ("extra_notes", 500)):
             if item.get(key):
                 out[key] = str(item[key])[:limit]
-        for key in ("people", "environments", "objects", "needs", "solutions"):
+        if item.get("source_time"):
+            out["source_time"] = item["source_time"]
+        for key, limit in (("person_observations", 8), ("temporal_facts", 16)):
+            if item.get(key):
+                out[key] = item[key][:limit] if isinstance(item[key], list) else item[key]
+        # Keep timestamped ASR in the consolidation input so explicit spoken
+        # plans remain available to Layer 4/5. It is unattributed: never infer
+        # which visible person spoke from transcript text alone.
+        if item.get("source_evidence"):
+            out["source_evidence"] = str(item["source_evidence"])[:4000]
+        # Roll up observed entities, not downstream inference outputs.
+        for key in ("people", "environments", "objects"):
             if item.get(key):
                 val = item[key]
                 out[key] = val[:12] if isinstance(val, list) else val
         out["confirmed"] = bool((item.get("feedback") or {}).get("confirmed"))
         out["highlighted"] = bool(item.get("highlighted"))
         return out
+
+    @staticmethod
+    def _stated_plans(moments):
+        """Carry explicitly stated plans into L4 without converting them to advice."""
+        plans, seen = [], set()
+        for moment in moments:
+            source_time = moment.get("source_time") or {}
+            for fact in moment.get("temporal_facts") or []:
+                if (not isinstance(fact, dict)
+                        or str(fact.get("predicate") or "").casefold() not in {"plan", "stated_plan"}
+                        or fact.get("status") != "stated_plan"):
+                    continue
+                plan = {
+                    key: fact[key] for key in (
+                        "subject_type", "subject", "predicate", "status", "value", "actor",
+                        "time_scope", "time_order", "modality", "evidence", "confidence",
+                        "evidence_ref") if fact.get(key) not in (None, "")
+                }
+                plan["source_moment_id"] = str(moment.get("id") or "")
+                plan["source_time"] = source_time
+                signature = json.dumps(plan, ensure_ascii=False, sort_keys=True)
+                if signature not in seen:
+                    seen.add(signature)
+                    plans.append(plan)
+        return plans[:80]
 
     def _chunks(self, moments):
         chunks, current, size = [], [], 2
@@ -159,6 +196,13 @@ class NightlyProcessor:
         prompt = f"""TASK: NIGHTLY_CHUNK_SUMMARY
 Summarize this chronological slice of memories for {day}. Use only observations
 provided; distinguish repeated patterns from one-off events; preserve uncertainty.
+Keep explicit person appearance/age evidence separate from identity, preserve
+plans as plans, and retain object state/location changes with their before/after
+details and event order. source_evidence is timestamped automatic speech
+transcription from the source video; speakers are not identified, and ASR may be
+wrong. Do not attribute speech to a visible person. Preserve only explicit plans
+and never turn a plan into a completed action or guess missing ages, dates,
+identities, or locations.
 Return JSON only:
 {{"summary":"short factual summary","key_events":["..."],"patterns":["..."],"profile_evidence":"evidence for stable profile extraction"}}
 Slice {i}/{total}:
@@ -207,9 +251,12 @@ Slice {i}/{total}:
                  "profile": old.get("layer6", {}).get("profile", {})}
         tags = {k: sorted(v)[:80] for k, v in sort_data.items() if k in _COMBINABLE}
         prompt = f"""TASK: NIGHTLY_ROLLUP
-Update recent and long-term memory using {day}'s summaries. Keep supported
-prior long-term patterns. Layer 4 is the recent daily view; Layer 5 retains
-durable events and patterns. Profile is extracted separately.
+Update recent and long-term factual memory using {day}'s summaries. Keep
+supported prior long-term facts. Layer 4 is the recent daily view; Layer 5
+retains durable events and patterns. Profile is extracted separately.
+Exclude downstream recommendations, inferred needs/solutions, diagnoses,
+reminders, and suggested actions. A current task may be retained only when a
+person explicitly stated it in the source memory; do not create tasks.
 Return one valid JSON object only; do not add markdown or repeat source data.
 Keep the response concise to avoid truncation:
 - layer4.summary: at most 100 words; current_tasks: at most 5 short items;
@@ -236,25 +283,38 @@ Today's tags: {json.dumps(tags, ensure_ascii=False, separators=(',', ':'))}
         data = self._json(raw)
         if not isinstance(data.get("layer4"), dict) or not isinstance(data.get("layer5"), dict):
             raise ValueError("Rollup must contain layer4 and layer5 objects")
+        for key in ("layer4", "layer5"):
+            if not str((data.get(key) or {}).get("summary") or "").strip():
+                raise ValueError(f"Rollup has no {key} summary; refusing to replace layer lineage")
         return data, cache_hit
 
     @staticmethod
-    def _compress_payload(data):
+    def _compress_payload(data, source_moment_ids, coverage, moments=None):
         l4, l5 = data.get("layer4") or {}, data.get("layer5") or {}
+        source_moment_ids = list(dict.fromkeys(str(x) for x in source_moment_ids if x))
         return {
             "layer4": {
                 "summary": str(l4.get("summary") or ""),
                 "current_tasks": l4.get("current_tasks")
                     if isinstance(l4.get("current_tasks"), list) else [],
+                "stated_plans": NightlyProcessor._stated_plans(moments or []),
                 "life_trajectory": str(l4.get("life_trajectory") or ""),
+                "source_moment_ids": source_moment_ids,
+                "source_link_coverage": "complete",
             },
             "layer5": {
                 "summary": str(l5.get("summary") or ""),
                 "key_events": l5.get("key_events")
                     if isinstance(l5.get("key_events"), list) else [],
                 "long_term_patterns": str(l5.get("long_term_patterns") or ""),
+                "source_moment_ids": source_moment_ids,
+                "source_link_coverage": coverage["layer5"],
             },
-            "layer6": {"summary": str(data.get("layer6_summary") or "")},
+            "layer6": {
+                "summary": str(data.get("layer6_summary") or ""),
+                "source_moment_ids": source_moment_ids,
+                "source_link_coverage": coverage["layer6"],
+            },
         }
 
     def _combine_map(self, raw, sort_data):
@@ -376,7 +436,32 @@ Today's tags: {json.dumps(tags, ensure_ascii=False, separators=(',', ':'))}
             # and update_profile also recomputes confidence decay / stale flags.
             self.memory.combine(combine)
             report("apply", "写入整理结果", 2, 4, "压缩近期与长期摘要")
-            self.memory.compress(self._compress_payload(rollup))
+            source_moment_ids = [str(item.get("id")) for item in moments if item.get("id")]
+            def has_content(value):
+                if isinstance(value, dict):
+                    if "value" in value:
+                        return bool(value.get("value"))
+                    return any(has_content(item) for item in value.values())
+                if isinstance(value, (list, tuple)):
+                    return any(has_content(item) for item in value)
+                return bool(value)
+
+            previous_l5 = self.memory.memory.get("layer5", {})
+            previous_l6 = self.memory.memory.get("layer6", {})
+            has_previous_l5 = any(has_content(previous_l5.get(key))
+                                   for key in ("summary", "key_events", "long_term_patterns"))
+            has_previous_l6 = (has_content(previous_l6.get("summary"))
+                               or has_content(previous_l6.get("profile")))
+            coverage = {
+                "layer5": ("complete" if not has_previous_l5
+                           or previous_l5.get("source_link_coverage") == "complete"
+                           else "partial"),
+                "layer6": ("complete" if not has_previous_l6
+                           or previous_l6.get("source_link_coverage") == "complete"
+                           else "partial"),
+            }
+            self.memory.compress(self._compress_payload(
+                rollup, source_moment_ids, coverage, moments=moments))
             report("apply", "写入整理结果", 3, 4, "更新长期画像")
             self.memory.update_profile(
                 profile, moment_id=f"nightly:{day}",
@@ -384,9 +469,9 @@ Today's tags: {json.dumps(tags, ensure_ascii=False, separators=(',', ':'))}
 
             completed = self.memory.memory["metadata"].setdefault(
                 "nightly_processed_days", {})
-            # combine() may canonicalize source tags. Store the post-apply
-            # digest so the next invocation recognizes those deterministic
-            # outputs instead of repeating a day.
+            # combine() may canonicalize source tags and mark duplicates as
+            # highlighted. Store the post-apply digest so the next invocation
+            # recognizes those deterministic outputs instead of repeating a day.
             processed_source = [self._brief(item) for item in self._moments(day)]
             digest = hashlib.sha256(json.dumps(
                 processed_source, ensure_ascii=False, sort_keys=True

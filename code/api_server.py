@@ -32,7 +32,7 @@ from transformers import (
 from PIL import Image
 import uvicorn
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+os.environ.setdefault("CUDA_VISIBLE_DEVICES", "0")
 
 # ---------------------------------------------------------------------------
 # Global state

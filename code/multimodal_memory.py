@@ -1,8 +1,8 @@
-"""Compact, content-addressed visual and audio evidence for episodic memory.
+"""Compact, content-addressed visual evidence for episodic memory.
 
 The seven-layer JSON keeps descriptions and references. Selected WebP frames
-and short Opus snippets live once in an asset directory shared by moments.
-Source video is never copied into memory storage.
+live once in an asset directory shared by moments. Source video is never
+copied into memory storage; spoken content is retained only as text.
 """
 
 from __future__ import annotations
@@ -14,16 +14,14 @@ import math
 import os
 import re
 import subprocess
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 
 IMAGE_LIMIT = 12_000
-AUDIO_LIMIT = 6_000
 TEMPORAL_IMAGE_LIMIT = 6_000
-TEMPORAL_AUDIO_BUDGET = 12_000
-CAPTURE_VERSION = "temporal-v3-speech"
+CAPTURE_VERSION = "temporal-v7-context-entity-crops-2026-10-19"
 
 
 def media_refs(media: dict, kind: str) -> list[dict]:
@@ -40,6 +38,25 @@ def media_refs(media: dict, kind: str) -> list[dict]:
             result.append(ref)
             seen.add(key)
     return result
+
+
+def strip_audio_assets(node: Any) -> bool:
+    """Remove legacy raw-audio references while preserving all text memory."""
+    changed = False
+    if isinstance(node, dict):
+        media = node.get("multimodal")
+        if isinstance(media, dict):
+            for key in ("audio", "audio_clips", "audio_segments", "audio_coverage_s",
+                        "audio_coverage_ratio", "audio_sampling"):
+                if key in media:
+                    media.pop(key, None)
+                    changed = True
+        for value in node.values():
+            changed = strip_audio_assets(value) or changed
+    elif isinstance(node, list):
+        for value in node:
+            changed = strip_audio_assets(value) or changed
+    return changed
 
 
 def _run_ffmpeg(args: list[str], input_bytes: bytes | None = None) -> bytes:
@@ -60,41 +77,6 @@ def _visual_hash(data: bytes) -> str:
         for col in range(8):
             bits = (bits << 1) | int(pixels[row * 9 + col] > pixels[row * 9 + col + 1])
     return f"{bits:016x}"
-
-
-def _audio_signature(data: bytes) -> list[int]:
-    """Sixteen broad spectral bands; a compact comparison cue, not ASR."""
-    import numpy as np
-
-    pcm = _run_ffmpeg(["-i", "pipe:0", "-ac", "1", "-ar", "8000",
-                       "-f", "f32le", "pipe:1"], input_bytes=data)
-    samples = np.frombuffer(pcm, dtype="<f4")
-    if len(samples) < 2048:
-        return []
-    bands = np.zeros(16, dtype=np.float64)
-    count = 0
-    edges = np.linspace(1, 513, 17, dtype=int)
-    for offset in range(0, len(samples) - 2048, 1024):
-        power = np.abs(np.fft.rfft(samples[offset:offset + 2048] * np.hanning(2048)))
-        bands += np.array([power[a:b].mean() for a, b in zip(
-            edges[:-1], edges[1:])])
-        count += 1
-    if not count or not bands.max():
-        return []
-    bands = np.log1p(bands / count)
-    bands /= max(float(np.linalg.norm(bands)), 1e-9)
-    return [int(round(float(x) * 127)) for x in bands]
-
-
-def _speaker_names(transcript: str) -> list[str]:
-    names = []
-    for line in transcript.splitlines():
-        match = re.match(r"\s*([A-Za-z][A-Za-z -]{0,29}):", line)
-        if match:
-            name = match.group(1).strip()
-            if name not in names:
-                names.append(name)
-    return names[:12]
 
 
 def _portable_video_id(value: Any) -> str:
@@ -125,7 +107,8 @@ class MultimodalAssetStore:
         self.non_asset_reserve = int(os.environ.get("MEMORY_NON_ASSET_RESERVE_BYTES", "2000000000"))
         self._bytes_cached: int | None = None
 
-    def _put(self, kind: str, data: bytes, suffix: str, limit: int) -> dict | None:
+    def _put(self, kind: str, data: bytes, suffix: str, limit: int,
+             allow_over_budget: bool = False) -> dict | None:
         if not data or len(data) > limit:
             return None
         digest = hashlib.sha256(data).hexdigest()[:24]
@@ -136,7 +119,7 @@ class MultimodalAssetStore:
             memory_file = self.root / "memory.json"
             text_bytes = memory_file.stat().st_size if memory_file.is_file() else 0
             effective_budget = min(self.asset_budget, max(0, self.total_budget - self.non_asset_reserve - text_bytes))
-            if self.size_bytes() + len(data) > effective_budget:
+            if self.size_bytes() + len(data) > effective_budget and not allow_over_budget:
                 return None
             tmp = target.with_name(target.name + f".{os.getpid()}.tmp")
             tmp.write_bytes(data)
@@ -206,12 +189,63 @@ class MultimodalAssetStore:
                     return encoded
         return None
 
+    @staticmethod
+    def crop_visual_candidate(data: bytes, bbox: list | tuple,
+                              limit: int = 12_000) -> bytes | None:
+        """Create a padded, normalized-bbox crop for one grounded object."""
+        try:
+            from PIL import Image, ImageOps
+            values = [float(value) for value in bbox]
+            if len(values) != 4 or not all(math.isfinite(value) for value in values):
+                return None
+            x1, y1, x2, y2 = [min(1.0, max(0.0, value)) for value in values]
+            if x2 - x1 < 0.015 or y2 - y1 < 0.015:
+                return None
+            source = ImageOps.exif_transpose(
+                Image.open(io.BytesIO(data))).convert("RGB")
+            width, height = source.size
+            left, top = x1 * width, y1 * height
+            right, bottom = x2 * width, y2 * height
+            box_w, box_h = right - left, bottom - top
+            pad_x = max(box_w * 0.22, width * 0.025)
+            pad_y = max(box_h * 0.22, height * 0.025)
+            left, right = max(0, left - pad_x), min(width, right + pad_x)
+            top, bottom = max(0, top - pad_y), min(height, bottom + pad_y)
+            # Preserve enough surrounding context for small objects such as glasses.
+            min_w, min_h = min(width, max(64, round(width * 0.14))), min(height, max(64, round(height * 0.14)))
+            if right - left < min_w:
+                center = (left + right) / 2
+                left, right = max(0, center - min_w / 2), min(width, center + min_w / 2)
+                if right - left < min_w:
+                    left = max(0, right - min_w)
+            if bottom - top < min_h:
+                center = (top + bottom) / 2
+                top, bottom = max(0, center - min_h / 2), min(height, center + min_h / 2)
+                if bottom - top < min_h:
+                    top = max(0, bottom - min_h)
+            crop = source.crop((round(left), round(top), round(right), round(bottom)))
+            for target_width in (512, 448, 384, 320, 256):
+                if crop.width > target_width:
+                    target_height = max(2, round(crop.height * target_width / crop.width))
+                    candidate = crop.resize((target_width, target_height), Image.Resampling.LANCZOS)
+                else:
+                    candidate = crop
+                for quality in (82, 74, 66, 58, 50, 42, 34):
+                    output = io.BytesIO()
+                    candidate.save(output, format="WEBP", quality=quality, method=6)
+                    encoded = output.getvalue()
+                    if len(encoded) <= limit:
+                        return encoded
+        except Exception:
+            return None
+        return None
+
     def capture(self, video: str | Path, start_s: float, end_s: float | None,
-                transcript: str = "", source_id: str = "",
+                source_id: str = "",
                 fields: dict | None = None,
                 recent_media: list[dict] | None = None,
                 source_provenance: dict | None = None) -> dict[str, Any]:
-        """Retain three ordered instants and bounded speech excerpts.
+        """Retain three ordered visual instants for the memory record.
 
         The structured Qwen scene/action/entities remain in the parent moment.
         Missing media only removes that modality; it never erases text memory.
@@ -231,10 +265,9 @@ class MultimodalAssetStore:
                 "environments": fields.get("environments") or [],
                 "activity": fields.get("activity") or "",
                 "location": fields.get("location") or "",
-                "speakers": _speaker_names(transcript),
+                "speakers": [],
             },
         }
-        result["audio_language_hint"] = "zh" if re.search(r"[\u3400-\u9fff]", transcript) else None
         if isinstance(source_provenance, dict):
             saved_provenance = {
                 key: source_provenance[key]
@@ -254,7 +287,8 @@ class MultimodalAssetStore:
             probe = subprocess.run([
                 "ffprobe", "-v", "error", "-show_entries", "format=duration",
                 "-of", "json", str(path)], capture_output=True, timeout=10, check=True)
-            duration = float(json.loads(probe.stdout)["format"]["duration"])
+            probe_data = json.loads(probe.stdout)
+            duration = float(probe_data["format"]["duration"])
             end = min(end, duration)
             result["source_duration_s"] = round(duration, 3)
         except (OSError, ValueError, KeyError, subprocess.SubprocessError):
@@ -275,7 +309,7 @@ class MultimodalAssetStore:
             start, (start + last_time) / 2, last_time)))
         frames = []
         for sample_time in times:
-            for width, quality in ((288, 42), (224, 32), (176, 25)):
+            for width, quality in ((384, 58), (320, 48), (288, 42), (224, 32), (176, 25)):
                 image = _run_ffmpeg([
                     "-ss", f"{sample_time:.3f}", "-i", str(path), "-frames:v", "1",
                     "-vf", f"scale={width}:-2", "-c:v", "libwebp",
@@ -294,49 +328,141 @@ class MultimodalAssetStore:
                     frames.append(saved)
                     break
         if frames:
+            for frame in frames:
+                frame["quality_tier"] = "recent"
+            result["visual_quality_tier"] = "recent"
             result["visual_frames"] = frames
             result["visual"] = dict(frames[len(frames) // 2])
 
-        # Up to ten seconds of speech. For long clips, sample start/middle/end
-        # so a short instruction in the middle is not systematically omitted.
-        # The three windows are deliberately bounded and their coverage is saved.
-        if end - start <= 10:
-            spans = [(start, min(end - start, 10.0))]
-        else:
-            window = min(10.0 / 3.0, (end - start) / 3.0)
-            midpoint = (start + end) / 2.0
-            spans = [
-                (start, window),
-                (max(start, midpoint - window / 2.0), window),
-                (max(start, end - window), window),
-            ]
-        clips, audio_bytes = [], 0
-        for audio_start, audio_duration in (spans if transcript.strip() else []):
-            audio = _run_ffmpeg([
-                "-ss", f"{audio_start:.3f}", "-i", str(path), "-t", f"{audio_duration:.3f}",
-                "-vn", "-ac", "1", "-ar", "16000", "-af", "loudnorm=I=-23:TP=-2:LRA=7", "-c:a", "libopus",
-                "-b:a", "6k", "-vbr", "off", "-f", "ogg", "pipe:1",
-            ])
-            saved = self._put("audio", audio, "ogg", TEMPORAL_AUDIO_BUDGET - audio_bytes)
-            if saved:
-                try:
-                    signature = _audio_signature(audio)
-                except Exception:
-                    signature = []
-                saved.update({"mime": "audio/ogg", "signature": signature,
-                              "at_s": round(audio_start, 3),
-                              "duration_s": round(audio_duration, 3),
-                              "source_id": str(source_id)})
-                clips.append(saved)
-                audio_bytes += len(audio)
-        if clips:
-            result["audio_clips"] = clips
-            result["audio"] = dict(clips[0])
-        result["audio_coverage_s"] = round(sum(x["duration_s"] for x in clips), 3)
-        result["audio_coverage_ratio"] = round(result["audio_coverage_s"] / (end - start), 4)
-        result["audio_sampling"] = "whole_event" if end - start <= 10 else "three_point_start_middle_end"
-        result["capture_status"] = "captured" if frames or clips else "no_decodable_media"
+        result["capture_status"] = "captured" if frames else "no_decodable_media"
         return result
+
+    def capture_context_entities(self, frames: list[dict], fields: dict | None = None,
+                                 source_id: str = "", clip_start_s: float = 0.0) -> dict[str, Any]:
+        """Attach compact source-frame crops to scene, place, environment, activity, and event memories."""
+        fields = fields if isinstance(fields, dict) else {}
+        frames = [frame for frame in (frames or [])
+                  if isinstance(frame, dict) and isinstance(frame.get("bytes"), bytes)]
+        output = {"schema": 1, "status": "completed" if frames else "no_visual_evidence",
+                  "method": "source-grounded padded context crops", "assets": [], "items": []}
+        if not frames:
+            return output
+
+        mid = len(frames) // 2
+        action_facts = []
+        static_predicates = {"appearance", "appeared", "located_at", "occurred_at",
+                             "state", "present", "visible", "environment"}
+        for fact in fields.get("temporal_facts") or []:
+            if not isinstance(fact, dict):
+                continue
+            predicate = str(fact.get("predicate") or "").casefold()
+            if predicate not in static_predicates:
+                action_facts.append(fact)
+
+        def nearest_frame(fact=None):
+            if not isinstance(fact, dict):
+                return mid
+            ref = fact.get("evidence_ref") if isinstance(fact.get("evidence_ref"), dict) else {}
+            value = fact.get("frame_time_s", ref.get("frame_time_s"))
+            try:
+                target = float(value)
+                start = float(clip_start_s or 0)
+                # Candidate timestamps are source-video seconds. Qwen evidence can
+                # be relative to a clip, so accept either representation.
+                if target < start - 0.05:
+                    target += start
+                return min(range(len(frames)),
+                           key=lambda index: abs(float(frames[index].get("at_s") or 0) - target))
+            except (TypeError, ValueError):
+                pass
+            try:
+                frame_index = int(fact.get("frame_index"))
+            except (TypeError, ValueError):
+                return mid
+            if frame_index < 1:
+                return mid
+            return max(0, min(len(frames) - 1,
+                              round((frame_index - 1) * (len(frames) - 1) / 5)))
+
+        specs = []
+        scene = str(fields.get("scene") or "").strip()
+        location = str(fields.get("location") or "").strip()
+        activity = str(fields.get("activity") or "").strip()
+        if scene:
+            specs.append(("scene", "当前片段", scene, [mid]))
+        if location:
+            specs.append(("location", location[:180], location, [mid]))
+        for environment in fields.get("environments") or []:
+            value = str(environment or "").strip()
+            if value:
+                specs.append(("environment", value[:180], value, [mid]))
+        if activity:
+            event_frames = list(dict.fromkeys(nearest_frame(fact) for fact in action_facts))
+            specs.append(("activity", activity[:180], activity, (event_frames or [mid])[:2]))
+        for fact in action_facts[:16]:
+            subject = str(fact.get("subject") or "").strip()
+            predicate = str(fact.get("predicate") or "").strip()
+            value = str(fact.get("value") or "").strip()
+            if not (subject or value):
+                continue
+            title = " · ".join(part for part in (subject, predicate) if part)[:180]
+            specs.append(("event", title or "可见事件", value or title,
+                          [nearest_frame(fact)]))
+
+        refs_by_frame = {}
+        for entity_type, entity, description, indices in specs:
+            asset_indices = []
+            for index in indices:
+                if index not in refs_by_frame:
+                    frame = frames[index]
+                    bbox = [0.025, 0.025, 0.975, 0.975]
+                    crop_bytes = self.crop_visual_candidate(frame["bytes"], bbox, 12_000)
+                    crop_ref = self._put("visual", crop_bytes, "webp", 12_000) if crop_bytes else None
+                    source_bytes = self.fit_visual_candidate(frame["bytes"], 6_000)
+                    source_ref = self._put("visual", source_bytes, "webp", 6_000) if source_bytes else None
+                    if source_ref:
+                        source_ref.update({"mime": "image/webp",
+                                           "at_s": frame.get("at_s"),
+                                           "source_id": frame.get("source_id") or source_id,
+                                           "quality_tier": "recent"})
+                    if crop_ref and crop_ref.get("asset"):
+                        asset = {
+                            "asset": crop_ref["asset"], "bytes": int(crop_ref.get("bytes") or 0),
+                            "at_s": frame.get("at_s"), "source_id": frame.get("source_id") or source_id,
+                            "quality_tier": "recent", "visual_role": "context_crop",
+                            "crop_bbox": bbox,
+                        }
+                        if source_ref and source_ref.get("asset"):
+                            asset["source_asset"] = source_ref["asset"]
+                    elif source_ref and source_ref.get("asset"):
+                        asset = {
+                            "asset": source_ref["asset"], "bytes": int(source_ref.get("bytes") or 0),
+                            "at_s": frame.get("at_s"), "source_id": frame.get("source_id") or source_id,
+                            "quality_tier": "recent", "visual_role": "source_frame",
+                        }
+                    else:
+                        asset = None
+                    if asset:
+                        # Share the same persisted crop among cards anchored to the same frame.
+                        key = (asset["asset"], asset.get("at_s"))
+                        existing = next((i for i, row in enumerate(output["assets"])
+                                         if (row.get("asset"), row.get("at_s")) == key), None)
+                        if existing is None:
+                            output["assets"].append(asset)
+                            existing = len(output["assets"]) - 1
+                        refs_by_frame[index] = existing
+                    else:
+                        refs_by_frame[index] = None
+                asset_index = refs_by_frame[index]
+                if asset_index is not None and asset_index not in asset_indices:
+                    asset_indices.append(asset_index)
+            output["items"].append({
+                "entity_type": entity_type, "entity": entity,
+                "description": description[:1000],
+                "status": "grounded" if asset_indices else "no_visual_evidence",
+                "asset_indices": asset_indices,
+            })
+        return output
 
     def size_bytes(self) -> int:
         if self._bytes_cached is None:
@@ -348,9 +474,34 @@ class MultimodalAssetStore:
         """Remove only owned assets no longer referenced by any stored moment."""
         referenced = set()
         for moment in moments.values():
+            media = moment.get("multimodal") or {}
             for kind in ("visual", "audio"):
-                for ref in media_refs(moment.get("multimodal") or {}, kind):
+                for ref in media_refs(media, kind):
                     referenced.add(ref["asset"])
+            for item in (media.get("object_visuals") or {}).get("items") or []:
+                for ref in item.get("frame_refs") or []:
+                    if ref.get("asset"):
+                        referenced.add(ref["asset"])
+                    if ref.get("source_asset"):
+                        referenced.add(ref["source_asset"])
+            for item in (media.get("person_visuals") or {}).get("items") or []:
+                for ref in item.get("frame_refs") or []:
+                    if ref.get("asset"):
+                        referenced.add(ref["asset"])
+                    if ref.get("source_asset"):
+                        referenced.add(ref["source_asset"])
+            entity_visuals = media.get("entity_visuals") or {}
+            for ref in entity_visuals.get("assets") or []:
+                if ref.get("asset"):
+                    referenced.add(ref["asset"])
+                if ref.get("source_asset"):
+                    referenced.add(ref["source_asset"])
+            for item in entity_visuals.get("items") or []:
+                for ref in item.get("frame_refs") or []:
+                    if ref.get("asset"):
+                        referenced.add(ref["asset"])
+                    if ref.get("source_asset"):
+                        referenced.add(ref["source_asset"])
         removed = []
         for kind in ("visual", "audio"):
             folder = self.asset_root / kind
@@ -363,21 +514,182 @@ class MultimodalAssetStore:
                     path.unlink()
         return removed
 
+    @staticmethod
+    def _compress_archive_visual(data: bytes, max_bytes: int = 3000) -> bytes | None:
+        """Downsample an aged visual while keeping a small source image available."""
+        try:
+            from PIL import Image, ImageOps
+            source = ImageOps.exif_transpose(Image.open(io.BytesIO(data))).convert("RGB")
+        except Exception:
+            return None
+        for width in (224, 176, 144):
+            target_width = min(width, source.width)
+            target_height = max(2, round(source.height * target_width / source.width))
+            image = source.resize((target_width, target_height), Image.Resampling.LANCZOS)
+            for quality in (36, 30, 24, 18):
+                output = io.BytesIO()
+                image.save(output, format="WEBP", quality=quality, method=6)
+                encoded = output.getvalue()
+                if len(encoded) <= max_bytes and len(encoded) < len(data):
+                    return encoded
+        return None
+
+    def _demote_aged_visuals(self, moments: dict, recent_days: int = 30,
+                             protected_recent: int = 20) -> dict:
+        """Keep recent images clearer and retain smaller source images for older memories."""
+        now = datetime.now()
+        cutoff = now.date() - timedelta(days=max(1, int(recent_days)))
+        ordered = sorted(moments.values(), key=lambda m: str(m.get("timestamp") or ""))
+        newest_ids = {str(m.get("id") or "") for m in ordered[-max(0, int(protected_recent)):]} if protected_recent else set()
+        old_ids = set()
+        protected_ids = set(newest_ids)
+        for moment in ordered:
+            mid = str(moment.get("id") or "")
+            if moment.get("highlighted"):
+                protected_ids.add(mid)
+            value = str(moment.get("timestamp") or "").strip()
+            try:
+                timestamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                if timestamp.tzinfo:
+                    timestamp = timestamp.astimezone().replace(tzinfo=None)
+            except (TypeError, ValueError):
+                protected_ids.add(mid)
+                continue
+            if timestamp.date() <= cutoff and mid not in protected_ids:
+                old_ids.add(mid)
+            else:
+                protected_ids.add(mid)
+
+        def visual_references(moment):
+            mm = moment.get("multimodal") or {}
+            refs = []
+            refs.extend((ref, "asset") for ref in media_refs(mm, "visual"))
+            objects = mm.get("object_visuals") or {}
+            for item in objects.get("items") or []:
+                if not isinstance(item, dict):
+                    continue
+                for ref in item.get("frame_refs") or []:
+                    if isinstance(ref, dict):
+                        refs.append((ref, "asset"))
+                        if ref.get("source_asset"):
+                            refs.append((ref, "source_asset"))
+            people = mm.get("person_visuals") or {}
+            for item in people.get("items") or []:
+                if not isinstance(item, dict):
+                    continue
+                for ref in item.get("frame_refs") or []:
+                    if isinstance(ref, dict):
+                        refs.append((ref, "asset"))
+                        if ref.get("source_asset"):
+                            refs.append((ref, "source_asset"))
+            entity_visuals = mm.get("entity_visuals") or {}
+            for ref in entity_visuals.get("assets") or []:
+                if isinstance(ref, dict):
+                    refs.append((ref, "asset"))
+                    if ref.get("source_asset"):
+                        refs.append((ref, "source_asset"))
+            for item in entity_visuals.get("items") or []:
+                if not isinstance(item, dict):
+                    continue
+                for ref in item.get("frame_refs") or []:
+                    if isinstance(ref, dict):
+                        refs.append((ref, "asset"))
+                        if ref.get("source_asset"):
+                            refs.append((ref, "source_asset"))
+            return refs
+
+        protected_assets = set()
+        for moment in ordered:
+            mid = str(moment.get("id") or "")
+            if mid not in old_ids:
+                for ref, field in visual_references(moment):
+                    asset = ref.get(field)
+                    if asset:
+                        protected_assets.add(str(asset))
+
+        refs_by_asset = {}
+        for moment in ordered:
+            mid = str(moment.get("id") or "")
+            if mid not in old_ids:
+                continue
+            mm = moment.get("multimodal") or {}
+            if mm.get("visual_quality_tier") == "archive":
+                continue
+            for ref, field in visual_references(moment):
+                asset = str(ref.get(field) or "")
+                if (not asset or asset in protected_assets
+                        or ref.get("quality_tier") == "archive"):
+                    continue
+                refs_by_asset.setdefault(asset, []).append((mid, ref, field))
+
+        changed_moments = set()
+        demoted_assets = 0
+        removed_assets = 0
+        for asset, ref_rows in refs_by_asset.items():
+            absolute = (self.root / asset).resolve()
+            if self.root not in absolute.parents or not absolute.is_file():
+                continue
+            try:
+                original = absolute.read_bytes()
+            except OSError:
+                continue
+            encoded = self._compress_archive_visual(original)
+            if not encoded:
+                continue
+            saved = self._put("visual", encoded, "webp", len(encoded), allow_over_budget=True)
+            if not saved or saved.get("asset") == asset:
+                continue
+            for mid, ref, field in ref_rows:
+                ref[field] = saved["asset"]
+                if field == "asset":
+                    ref["bytes"] = saved["bytes"]
+                ref["quality_tier"] = "archive"
+                changed_moments.add(mid)
+            demoted_assets += 1
+            # Bound transient duplicate files if compaction starts near its budget.
+            if demoted_assets % 100 == 0:
+                removed_assets += len(self.release_unreferenced(moments))
+
+        demoted_at = now.isoformat(timespec="seconds")
+        for mid in changed_moments:
+            moment = moments.get(mid) or {}
+            mm = moment.get("multimodal") or {}
+            tiers = [ref.get("quality_tier") for ref, _field in visual_references(moment)]
+            mm["visual_quality_tier"] = "archive" if tiers and all(tier == "archive" for tier in tiers) else "mixed"
+            mm["visual_quality_updated_at"] = demoted_at
+            moment["multimodal"] = mm
+            moments[mid] = moment
+        if changed_moments:
+            removed_assets += len(self.release_unreferenced(moments))
+        return {
+            "demoted_moments": len(changed_moments),
+            "demoted_assets": demoted_assets,
+            "removed_assets": removed_assets,
+            "updated_at": demoted_at if changed_moments else None,
+            "_changed_moment_ids": sorted(changed_moments),
+        }
+
     def compact_to_budget(self, moments: dict, budget_bytes: int | None = None,
                           protected_recent: int = 20) -> dict:
-        """Evict old low-priority media when over budget; retain text facts.
-
-        Highlighted and the newest window remain protected. Shared assets are
-        only removed once their last moment reference has been retired.
-        """
+        """Tier old images before evicting; keep structured facts and source links."""
         memory_file = self.root / "memory.json"
         text_bytes = memory_file.stat().st_size if memory_file.is_file() else 0
         effective_budget = min(self.asset_budget, max(0, self.total_budget - self.non_asset_reserve - text_bytes))
         budget = effective_budget if budget_bytes is None else min(effective_budget, max(0, budget_bytes))
-        before = self.size_bytes()
-        if before <= budget:
-            return {"before_bytes": before, "after_bytes": before,
-                    "evicted_moments": 0, "removed_assets": 0}
+        original_before = self.size_bytes()
+        recent_days = int(os.environ.get("MEMORY_RECENT_MEDIA_DAYS", "30"))
+        demotion = self._demote_aged_visuals(
+            moments, recent_days=recent_days, protected_recent=protected_recent)
+        before_eviction = self.size_bytes()
+        changed_ids = list(demotion.pop("_changed_moment_ids", []))
+        if before_eviction <= budget:
+            return {
+                "before_bytes": original_before, "after_bytes": before_eviction,
+                "evicted_moments": 0, "removed_assets": demotion["removed_assets"],
+                "demoted_moments": demotion["demoted_moments"],
+                "demoted_assets": demotion["demoted_assets"],
+                "target_met": True, "_changed_moment_ids": changed_ids,
+            }
         ordered = sorted(moments.values(), key=lambda m: str(m.get("timestamp") or ""))
         protected_count = max(0, int(protected_recent))
         protected_ids = {m.get("id") for m in ordered[-protected_count:]} if protected_count else set()
@@ -387,7 +699,7 @@ class MultimodalAssetStore:
             int(m.get("access_count") or 0), str(m.get("last_used") or ""),
             str(m.get("timestamp") or "")))
         evicted = 0
-        removed_assets = 0
+        removed_assets = demotion["removed_assets"]
         for moment in candidates:
             mm = moment.get("multimodal") or {}
             if not (mm.get("visual") or mm.get("audio")):
@@ -396,14 +708,23 @@ class MultimodalAssetStore:
             mm.pop("visual", None)
             mm.pop("audio_clips", None)
             mm.pop("visual_frames", None)
+            mm.pop("object_visuals", None)
+            mm.pop("person_visuals", None)
             mm["evicted_at"] = datetime.now().isoformat()
             evicted += 1
+            changed_ids.append(str(moment.get("id") or ""))
             removed_assets += len(self.release_unreferenced(moments))
             if self.size_bytes() <= budget:
                 break
-        return {"before_bytes": before, "after_bytes": self.size_bytes(),
-                "evicted_moments": evicted, "removed_assets": removed_assets,
-                "target_met": self.size_bytes() <= budget}
+        after = self.size_bytes()
+        return {
+            "before_bytes": original_before, "after_bytes": after,
+            "evicted_moments": evicted, "removed_assets": removed_assets,
+            "demoted_moments": demotion["demoted_moments"],
+            "demoted_assets": demotion["demoted_assets"],
+            "target_met": after <= budget,
+            "_changed_moment_ids": sorted(set(changed_ids)),
+        }
 
 
 def compare_multimodal(left: dict, right: dict) -> dict[str, Any]:
@@ -451,27 +772,6 @@ def compare_multimodal(left: dict, right: dict) -> dict[str, Any]:
         scores["visual"] = round(visual, 4)
         evidence["visual"] = visual_evidence
 
-    def audio_value(ref):
-        signature = ref.get("signature")
-        if not isinstance(signature, list) or len(signature) != 16:
-            return None
-        try:
-            return [float(value) for value in signature]
-        except (TypeError, ValueError):
-            return None
-
-    def audio_similarity(x, y):
-        dot = sum(i * j for i, j in zip(x, y))
-        norm = math.sqrt(sum(i * i for i in x) * sum(j * j for j in y))
-        return max(0.0, dot / norm) if norm else None
-
-    audio, audio_evidence = best_pair(
-        media_refs(a, "audio"), media_refs(b, "audio"),
-        audio_value, audio_similarity)
-    if audio is not None:
-        scores["audio"] = round(audio, 4)
-        evidence["audio"] = audio_evidence
-
     e1, e2 = a.get("entities") or {}, b.get("entities") or {}
     tags1 = {str(v).casefold() for key in ("people", "objects", "environments", "speakers")
              for v in (e1.get(key) or [])}
@@ -484,7 +784,7 @@ def compare_multimodal(left: dict, right: dict) -> dict[str, Any]:
             tags.add(str(e["location"]).casefold())
     if tags1 and tags2:
         scores["entities"] = round(len(tags1 & tags2) / len(tags1 | tags2), 4)
-    weights = {"visual": 0.5, "audio": 0.25, "entities": 0.25}
+    weights = {"visual": 0.67, "entities": 0.33}
     total = sum(weights[key] for key in scores)
     return {
         "score": round(sum(scores[key] * weights[key] for key in scores) / total, 4)
