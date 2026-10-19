@@ -9,13 +9,13 @@ from pathlib import Path
 # Stable fingerprint of the object-grounding implementation used by the
 # existing cache rows. Perception prompt edits must not invalidate grounding.
 # Bump this when ground_objects' prompt or result schema changes.
-GROUNDING_IMPLEMENTATION_FINGERPRINT = "c0c0ce05dbc9c4c0ea22296af6e5d59b28073190d54a5e2216cca35f06d9b411"
+GROUNDING_IMPLEMENTATION_FINGERPRINT = "opencv-hog-clip-vit-l14-grid-v1-20261019"
 
 def _json(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 def _usable_completed_payload(payload):
-    """A response with unresolved candidates is not a reusable crop cache hit."""
+    """Accept reliable matches and cached low-confidence outcomes for exact inputs."""
     if not isinstance(payload, dict) or payload.get("status") != "completed":
         return False
     items = payload.get("items")
@@ -27,7 +27,7 @@ def _usable_completed_payload(payload):
         status = str(item.get("status") or "")
         if status == "not_verified":
             return False
-        if status not in {"grounded", "visible_unlabeled", "not_visible"}:
+        if status not in {"grounded", "visible_unlabeled", "not_visible", "uncertain"}:
             return False
         if status in {"grounded", "visible_unlabeled"} and not (
                 item.get("frame_indices") or item.get("frame_boxes") or item.get("frame_refs")):

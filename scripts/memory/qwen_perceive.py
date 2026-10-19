@@ -1473,12 +1473,24 @@ def _drop_unverified_person_references(fields: dict) -> tuple[dict, list[dict]]:
 
 
 _VISIBLE_ACTION_CUE_RE = re.compile(
-    r"\b(?:approach(?:es|ed|ing)?|enter(?:s|ed|ing)?|exit(?:s|ed|ing)?|emerg(?:e|es|ed|ing)|walk(?:s|ed|ing)?|run(?:s|ning)?|sit(?:s|ting)?|stand(?:s|ing)?|turn(?:s|ed|ing)?|reach(?:es|ed|ing)?|pick(?:s|ed)? up|put(?:s|ting)?|place(?:s|d|ing)?|hand(?:s|ed|ing)? over|give(?:s|gave|n)?|receive(?:s|d|ing)?|hold(?:s|ing)?|use(?:s|d|ing)?|open(?:s|ed|ing)?|clos(?:e|es|ed|ing)|mov(?:e|es|ed|ing)|carry(?:ies|ied|ing)?|write(?:s|wrote|ing)?|eras(?:e|es|ed|ing)|smil(?:e|es|ed|ing)|laugh(?:s|ed|ing)?|rais(?:e|es|ed|ing)|lower(?:s|ed|ing)?|lift(?:s|ed|ing)?|bend(?:s|ing)?|kneel(?:s|ed|ing)?|lie(?:s|d)?|eats?|drinks?|wash(?:es|ed|ing)?|clean(?:s|ed|ing)?|rinse(?:s|d|ing)?|interact(?:s|ed|ing)?|pass(?:es|ed|ing)?|transfer(?:s|red|ring)?|tap(?:s|ped|ping)?|point(?:s|ed|ing)?|touch(?:es|ed|ing)?|hug(?:s|ged|ging)?|nod(?:s|ded|ding)?|clap(?:s|ped|ping)?|adjust(?:s|ed|ing)?|grab(?:s|bed|bing)?|step(?:s|ped|ping)?|wait(?:s|ed|ing)?|wave(?:s|d|ing)?|read(?:s|ing)?|show(?:s|ed|ing)?|inspect(?:s|ed|ing)?|examine(?:s|d|ing)?|check(?:s|ed|ing)?|pull(?:s|ed|ing)?|push(?:es|ed|ing)?|drop(?:s|ped|ping)?|set(?:s|ting)? down|put(?:s|ting)? away|remove(?:s|d|ing)?|pack(?:s|ed|ing)?|unpack(?:s|ed|ing)?|cook(?:s|ed|ing)?|cut(?:s|ting)?|serve(?:s|d|ing)?|drive(?:s|d|ing)?|ride(?:s|d|ing)?|board(?:s|ed|ing)?|arrive(?:s|d|ing)?|depart(?:s|ed|ing)?|changes? expression|changed posture|bends? forward|looks? (?:up|down|around))\b", re.I
+    r"\b(?:approach(?:es|ed|ing)?|enter(?:s|ed|ing)?|exit(?:s|ed|ing)?|emerg(?:e|es|ed|ing)|walk(?:s|ed|ing)?|run(?:s|ning)?|sit(?:s|ting)?|stand(?:s|ing)?|turn(?:s|ed|ing)?|reach(?:es|ed|ing)?|pick(?:s|ed)? up|put(?:s|ting)?|place(?:s|d|ing)?|hand(?:s|ed|ing)? over|give(?:s|gave|n)?|receive(?:s|d|ing)?|hold(?:s|ing)?|use(?:s|d|ing)?|open(?:s|ed|ing)?|clos(?:e|es|ed|ing)|mov(?:e|es|ed|ing)|carry(?:ies|ied|ing)?|write(?:s|wrote|ing)?|eras(?:e|es|ed|ing)|smil(?:e|es|ed|ing)|laugh(?:s|ed|ing)?|rais(?:e|es|ed|ing)|lower(?:s|ed|ing)?|lift(?:s|ed|ing)?|bend(?:s|ing)?|kneel(?:s|ed|ing)?|lie(?:s|d)?|eats?|drinks?|wash(?:es|ed|ing)?|clean(?:s|ed|ing)?|rinse(?:s|d|ing)?|interact(?:s|ed|ing)?|pass(?:es|ed|ing)?|transfer(?:s|red|ring)?|tap(?:s|ped|ping)?|point(?:s|ed|ing)?|touch(?:es|ed|ing)?|hug(?:s|ged|ging)?|nod(?:s|ded|ding)?|clap(?:s|ped|ping)?|adjust(?:s|ed|ing)?|grab(?:s|bed|bing)?|step(?:s|ped|ping)?|wait(?:s|ed|ing)?|wave(?:s|d|ing)?|read(?:s|ing)?|show(?:s|ed|ing)?|inspect(?:s|ed|ing)?|examine(?:s|d|ing)?|check(?:s|ed|ing)?|pull(?:s|ed|ing)?|push(?:es|ed|ing)?|drop(?:s|ped|ping)?|set(?:s|ting)? down|put(?:s|ting)? away|remove(?:s|d|ing)?|pack(?:s|ed|ing)?|unpack(?:s|ed|ing)?|cook(?:s|ed|ing)?|cut(?:s|ting)?|serve(?:s|d|ing)?|drive(?:s|d|ing)?|ride(?:s|d|ing)?|board(?:s|ed|ing)?|arrive(?:s|d|ing)?|depart(?:s|ed|ing)?|ascend(?:s|ed|ing)?|descend(?:s|ed|ing)?|proceed(?:s|ed|ing)?|changes? expression|changed posture|bends? forward|look(?:s|ed|ing)? (?:up|down|around))\b", re.I
 )
 
 
+_IRREGULAR_ACTION_CUES = {
+    "emerged": "emerge", "emerges": "emerge", "stood": "stand",
+    "sat": "sit", "ran": "run", "held": "hold", "gave": "give",
+    "wrote": "write", "ate": "eat", "drank": "drink", "bent": "bend",
+    "knelt": "kneel", "lay": "lie", "rode": "ride", "drove": "drive",
+}
+
 def _canonical_action_cue(value: str) -> str:
     token = str(value or "").casefold().strip()
+    if token in _IRREGULAR_ACTION_CUES:
+        return _IRREGULAR_ACTION_CUES[token]
+    compound_look = re.fullmatch(r"(?:looks?|looked|looking)\s+(up|down|around)", token)
+    if compound_look:
+        return "look " + compound_look.group(1)
     if token in {"picks up", "pick up", "picked up"}:
         return "pick up"
     if token in {"hands over", "handed over", "handing over"}:
@@ -1508,43 +1520,54 @@ def _canonical_action_cue(value: str) -> str:
     return token
 
 def _temporal_fact_coverage_error(fields: dict) -> str:
-    """Require most narrated actions to survive as distinct retrievable facts."""
+    """Require distinct narrated actions to be represented by matching facts."""
     if not isinstance(fields, dict):
         return ""
     narratives = [
         str(fields.get(key) or "")
         for key in ("scene", "user_action", "interaction_details", "activity")
     ]
-    # Validate against the richest single narrative field. This catches a detailed
-    # Interaction Details field even when Scene is present but overly terse, without
-    # double-counting the same action repeated across several summary fields.
+    # Use the richest single narrative field so duplicated summaries do not
+    # inflate the target, while retaining distinct action types such as open/close.
     cue_sets = [
-        [_canonical_action_cue(match.group(0))
-         for match in _VISIBLE_ACTION_CUE_RE.finditer(narrative)]
+        {_canonical_action_cue(match.group(0))
+         for match in _VISIBLE_ACTION_CUE_RE.finditer(narrative)}
         for narrative in narratives
     ]
-    cues = max(cue_sets, key=len, default=[])
+    cues = max(cue_sets, key=len, default=set())
     if not cues:
         return ""
     facts = [row for row in fields.get("temporal_facts") or [] if isinstance(row, dict)]
-    action_facts = [row for row in facts if str(row.get("predicate") or "").casefold()
-                    not in {"appearance", "appeared", "located_at", "occurred_at",
-                            "present", "visible", "environment"}]
-    # Count distinct facts, so repeating the same subject/predicate/value cannot
-    # stand in for missing actions. Require 75% of narrated action cues (up to eight
-    # facts); an unsupported cue still must be removed from the scene summary.
-    distinct = set()
+    excluded = {"appearance", "appeared", "located_at", "occurred_at",
+                "present", "visible", "environment"}
+    action_facts = [row for row in facts
+                    if str(row.get("predicate") or "").casefold() not in excluded]
+
+    supported_cues = set()
+    distinct_facts = set()
     for row in action_facts:
         key = tuple(" ".join(str(row.get(field) or "").casefold().split())
                     for field in ("subject", "predicate", "value"))
         if all(key):
-            distinct.add(key)
+            distinct_facts.add(key)
+        # A fact counts toward coverage only when its predicate or value carries
+        # the corresponding action. An unrelated object/location fact cannot
+        # hide an omitted open, close, handoff, or other event in the summary.
+        fact_text = " ".join(str(row.get(field) or "")
+                             for field in ("predicate", "value", "action"))
+        for match in _VISIBLE_ACTION_CUE_RE.finditer(fact_text):
+            supported_cues.add(_canonical_action_cue(match.group(0)))
+
+    matched = cues & supported_cues
     required = max(1, min(8, (3 * len(cues) + 3) // 4))
-    if len(distinct) < required:
+    if len(matched) < required:
+        missing = sorted(cues - supported_cues)
+        detail = ", ".join(missing[:8])
         return (
-            f"The scene contains {len(cues)} action/state cues but only "
-            f"{len(distinct)} distinct atomic event facts; add separately grounded facts "
-            "for missing actions or remove unsupported narrative claims."
+            f"The scene contains {len(cues)} distinct action/state cues but only "
+            f"{len(matched)} are represented by matching atomic facts "
+            f"({len(distinct_facts)} distinct fact rows). Add source-grounded facts "
+            f"for missing cues [{detail}], or remove unsupported claims from the narrative."
         )
     return ""
 
@@ -3243,365 +3266,20 @@ class QwenPerceiver:
         return out
 
     def ground_objects(self, objects, frames, cancel_event=None, progress_callback=None):
-        """Ground stored object labels in the retained keyframes without guessing."""
-        candidates = []
-        for value in objects or []:
-            label = str(value or "").strip()
-            if label and label.casefold() not in {x.casefold() for x in candidates}:
-                candidates.append(label[:100])
-            if len(candidates) >= 12:
-                break
-        if not candidates:
-            return {"schema": 1, "status": "not_needed", "model": "Qwen3-VL", "items": []}
-        if not frames:
-            return {
-                "schema": 1, "status": "no_frames", "model": "Qwen3-VL",
-                "items": [{"object": label, "status": "not_verified",
-                           "appearance": "", "frame_refs": []} for label in candidates],
-            }
-
-        def emit(stage, message):
-            if progress_callback:
-                try:
-                    progress_callback({"stage": stage, "message": message})
-                except Exception:
-                    pass
-
-        if cancel_event is not None and cancel_event.is_set():
-            return {"schema": 1, "status": "cancelled", "model": "Qwen3-VL", "items": []}
-        max_frames = min(7, len(frames))
-        source_map = [
-            {"image": i + 1, "time_s": round(float(frame.get("at_s") or 0), 2)}
-            for i, frame in enumerate(frames[:max_frames])
-        ]
-        prompt = (
-            "Inspect only the attached image pixels. Do not use event context, filenames, transcripts, "
-            "or assumptions. For every candidate object below, return exactly one row in ONLY JSON: "
-            '{"objects":[{"object":"exact candidate label","visible":true,'
-            '"appearance":"brief visible color, shape, material, or position","frames":[1],'
-            '"frame_boxes":[{"frame":1,"bbox":[0.20,0.30,0.48,0.62]}]}]}. '
-            "Use the exact candidate label. Set visible=false, appearance empty, frames=[], frame_boxes=[] "
-            "if no sampled frame clearly shows that object. Include only frames where that specific object "
-            "is actually visible; never attach every frame to every object. For each visible frame, give one "
-            "approximate tight bounding box around the whole object, with a small margin. bbox is normalized "
-            "to the attached image dimensions as [x_min,y_min,x_max,y_max], each coordinate from 0 to 1, "
-            "origin at the image top-left; do not return pixel coordinates. The crop should isolate the item "
-            "while retaining a little surrounding context. If the item is too small or ambiguous to locate, "
-            "omit its box but do not invent coordinates. Describe only properties supported by pixels; do not "
-            "guess brand, identity, purpose, or hidden details. If visible in several frames, choose only "
-            "the single clearest frame for the object. Return at most one frame number and one bounding box "
-            "per object; do not reuse coordinates from one image for another. "
-            "Frame-to-time map: " + json.dumps(source_map, ensure_ascii=False) +
-            ". Candidate labels: " + json.dumps(candidates, ensure_ascii=False)
-        )
-        request_id = uuid.uuid4().hex
-        api_url = self.next_api_url()
-        emit("object_visual_grounding", "正在逐件核对物品与关键帧")
-        self._activate_request(request_id, api_url)
+        """Locate objects with the local CPU HOG/CLIP cropper; never call Qwen."""
         try:
-            response = _post_with_inference_cancel(
-                api_url + "/analyze_video",
-                files=[("images", (f"object_frame_{i + 1}.webp",
-                                   frame["bytes"], frame.get("mime") or "image/webp"))
-                       for i, frame in enumerate(frames[:max_frames])],
-                data={"prompt": prompt, "request_id": request_id},
-                timeout=900,
-            )
-            if cancel_event is not None and cancel_event.is_set():
-                return {"schema": 1, "status": "cancelled", "model": "Qwen3-VL", "items": []}
-            if response.status_code == 409:
-                return {"schema": 1, "status": "cancelled", "model": "Qwen3-VL", "items": []}
-            if response.status_code != 200:
-                raise ValueError(
-                    f"visual grounding HTTP {response.status_code}: {response.text[:600]}"
-                )
-            raw = str((response.json() or {}).get("analysis") or "").strip()
-            # Redact unsupported writing while keeping usable visual boxes; a
-            # language-only issue must not force the same crop to be re-inferred forever.
-            if _contains_cjk(raw):
-                raw = _sanitize_cjk_spans(raw)
-            payload = None
-            try:
-                payload = json.loads(raw)
-            except (TypeError, ValueError):
-                decoder = json.JSONDecoder()
-                for position, char in enumerate(raw):
-                    if char not in "{[":
-                        continue
-                    try:
-                        candidate, _ = decoder.raw_decode(raw[position:])
-                    except (TypeError, ValueError):
-                        continue
-                    if isinstance(candidate, list):
-                        payload = {"objects": candidate}
-                        break
-                    if isinstance(candidate, dict) and any(
-                            isinstance(candidate.get(key), list)
-                            for key in ("objects", "items", "detections", "results")):
-                        payload = candidate
-                        break
-            if isinstance(payload, list):
-                payload = {"objects": payload}
-            if isinstance(payload, dict) and not isinstance(payload.get("objects"), list):
-                for key in ("items", "detections", "results"):
-                    if isinstance(payload.get(key), list):
-                        payload = {"objects": payload[key]}
-                        break
-            if (isinstance(payload, dict) and not isinstance(payload.get("objects"), list)
-                    and isinstance(payload.get("object"), str)):
-                payload = {"objects": [payload]}
-            if not isinstance(payload, dict):
-                raise ValueError("visual grounding response was not JSON")
-            rows = payload.get("objects")
-            rows = rows if isinstance(rows, list) else []
-            by_label = {label.casefold(): label for label in candidates}
-            def match_candidate_label(reported):
-                raw_label = str(reported or "").strip()
-                exact = by_label.get(raw_label.casefold())
-                if exact:
-                    return exact
-                normalized = re.sub(r"[^a-z0-9]+", " ", raw_label.casefold()).strip()
-                tokens = set(normalized.split())
-                if not normalized:
-                    return None
-                matches = []
-                for candidate in candidates:
-                    candidate_norm = re.sub(r"[^a-z0-9]+", " ", candidate.casefold()).strip()
-                    candidate_tokens = set(candidate_norm.split())
-                    if (normalized in candidate_norm or candidate_norm in normalized
-                            or (len(tokens) >= 2 and tokens.issubset(candidate_tokens))
-                            or (len(tokens) == 1 and tokens == candidate_tokens)):
-                        matches.append(candidate)
-                return matches[0] if len(matches) == 1 else None
-            parsed = {}
-            for row in rows:
-                if not isinstance(row, dict):
-                    continue
-                label = match_candidate_label(row.get("object"))
-                if not label:
-                    continue
-                indices = []
-                for index in row.get("frames") or []:
-                    if isinstance(index, int) and not isinstance(index, bool) and 1 <= index <= max_frames:
-                        if index not in indices:
-                            indices.append(index)
-                frame_boxes = []
-                raw_boxes = row.get("frame_boxes") or row.get("boxes") or []
-                if isinstance(raw_boxes, list):
-                    for box_row in raw_boxes:
-                        if not isinstance(box_row, dict):
-                            continue
-                        index = box_row.get("frame", box_row.get("frame_index"))
-                        bbox = box_row.get("bbox") or box_row.get("box")
-                        if isinstance(bbox, dict):
-                            bbox = [bbox.get(key) for key in ("x1", "y1", "x2", "y2")]
-                        try:
-                            coords = [float(value) for value in bbox]
-                        except (TypeError, ValueError):
-                            continue
-                        if (not isinstance(index, int) or isinstance(index, bool)
-                                or not 1 <= index <= max_frames or len(coords) != 4
-                                or not all(math.isfinite(value) and 0 <= value <= 1 for value in coords)
-                                or coords[2] - coords[0] < 0.015
-                                or coords[3] - coords[1] < 0.015):
-                            continue
-                        if index not in indices:
-                            indices.append(index)
-                        frame_boxes.append({
-                            "frame_index": index,
-                            "bbox": [round(value, 5) for value in coords],
-                        })
-                if not frame_boxes and len(indices) == 1:
-                    bbox = row.get("bbox")
-                    if isinstance(bbox, dict):
-                        bbox = [bbox.get(key) for key in ("x1", "y1", "x2", "y2")]
-                    try:
-                        coords = [float(value) for value in bbox]
-                    except (TypeError, ValueError):
-                        coords = []
-                    if (len(coords) == 4 and all(math.isfinite(value) and 0 <= value <= 1 for value in coords)
-                            and coords[2] - coords[0] >= 0.015 and coords[3] - coords[1] >= 0.015):
-                        frame_boxes.append({
-                            "frame_index": indices[0],
-                            "bbox": [round(value, 5) for value in coords],
-                        })
-                indices = sorted(set(indices))[:1]
-                frame_boxes = [box for box in frame_boxes if box["frame_index"] in indices][:1]
-                visible = row.get("visible") is True and bool(indices)
-                appearance = str(row.get("appearance") or "").strip()
-                if re.fullmatch(r"unreadable text", appearance, re.I):
-                    appearance = ""
-                explicit_not_visible = row.get("visible") is False
-                if not visible:
-                    appearance = ""
-                    indices = []
-                    frame_boxes = []
-                parsed[label.casefold()] = {
-                    "object": label,
-                    "status": ("grounded" if appearance else "visible_unlabeled" if visible
-                               else "not_visible" if explicit_not_visible else "not_verified"),
-                    "appearance": appearance[:240],
-                    "frame_indices": indices[:2],
-                    "frame_boxes": frame_boxes,
-                }
-            items = [parsed.get(label.casefold(), {
-                "object": label, "status": "not_verified", "appearance": "",
-                "frame_indices": [], "frame_boxes": [],
-            }) for label in candidates]
-            return {"schema": 2, "status": "completed", "model": "Qwen3-VL",
-                    "prompt_version": "object-visual-grounding-v4-bbox-verified-labels", "items": items}
-        except Exception as exc:
-            return {
-                "schema": 1, "status": "unavailable", "model": "Qwen3-VL",
-                "message": str(exc)[:240],
-                "items": [{"object": label, "status": "not_verified",
-                           "appearance": "", "frame_refs": []} for label in candidates],
-            }
-        finally:
-            self._finish_request(request_id)
+            from clip_crop_grounding import ground_objects
+        except ImportError:
+            from scripts.memory.clip_crop_grounding import ground_objects
+        return ground_objects(objects, frames, cancel_event, progress_callback)
 
     def ground_people(self, people, frames, cancel_event=None, progress_callback=None):
-        """Locate clip-local people in sampled frames and return crop boxes only."""
-        candidates, seen = [], set()
-        for value in people or []:
-            row = value if isinstance(value, dict) else {"entity": value}
-            label = str(row.get("entity") or row.get("person") or "").strip()
-            if not label or label.casefold() in seen:
-                continue
-            seen.add(label.casefold())
-            candidates.append({"person": label[:100],
-                               "appearance": str(row.get("appearance") or "")[:220]})
-            if len(candidates) >= 8:
-                break
-        if not candidates:
-            return {"schema": 1, "status": "not_needed", "model": "Qwen3-VL", "items": []}
-        if not frames:
-            return {"schema": 1, "status": "no_frames", "model": "Qwen3-VL",
-                    "items": [{"person": row["person"], "status": "not_verified",
-                               "appearance": "", "frame_refs": []} for row in candidates]}
-
-        def emit(stage, message):
-            if progress_callback:
-                try:
-                    progress_callback({"stage": stage, "message": message})
-                except Exception:
-                    pass
-
-        if cancel_event is not None and cancel_event.is_set():
-            return {"schema": 1, "status": "cancelled", "model": "Qwen3-VL", "items": []}
-        max_frames = min(7, len(frames))
-        source_map = [{"image": i + 1, "time_s": round(float(frame.get("at_s") or 0), 2)}
-                      for i, frame in enumerate(frames[:max_frames])]
-        prompt = (
-            "Inspect only the attached image pixels. Match each candidate to a visibly distinct "
-            "person using the optional clothing/appearance hint, not an assumed identity. Return "
-            "ONLY JSON in this schema: {\"people\":[{\"person\":\"exact candidate label\","
-            "\"visible\":true,\"frames\":[1],\"frame_boxes\":[{\"frame\":1,"
-            "\"bbox\":[0.20,0.10,0.48,0.90]}]}]}. Use each exact candidate label once. "
-            "A person is visible only when the pixels clearly support the match. Return only the "
-            "single clearest frame per person. For a full-body person, give a normalized tight box "
-            "around the visible body with a small margin. For a candidate whose label starts with 'camera wearer', "
-            "a clearly visible hand, forearm, or foot is sufficient: box only that visible body part "
-            "and set coverage='partial'. For other candidates set coverage='full' when the visible "
-            "person is grounded. Coordinates are [x_min,y_min,x_max,y_max] from 0 to 1, origin top-left. "
-            "Do not invent a box or reuse coordinates between frames. If the candidate is occluded, too small, "
-            "or ambiguous, set visible=false and use empty frames and frame_boxes. If the person is "
-            "visible=false and use empty frames and frame_boxes. Do not infer age, identity, "
-            "relationships, or any attribute beyond the pixels. Hints: "
-            + json.dumps(candidates, ensure_ascii=False)
-            + ". Frame-to-time map: " + json.dumps(source_map, ensure_ascii=False)
-        )
-        request_id = uuid.uuid4().hex
-        emit("person_visual_grounding", "正在定位人物画面并生成局部裁剪")
-        with self._active_request_lock:
-            self._active_request_id = request_id
+        """Locate people with local HOG/CLIP proposals; never call Qwen."""
         try:
-            response = _post_with_inference_cancel(
-                self.api_url + "/analyze_video",
-                files=[("images", (f"person_frame_{i + 1}.webp", frame["bytes"],
-                                    frame.get("mime") or "image/webp"))
-                       for i, frame in enumerate(frames[:max_frames])],
-                data={"prompt": prompt, "request_id": request_id}, timeout=900,
-            )
-            if cancel_event is not None and cancel_event.is_set() or response.status_code == 409:
-                return {"schema": 1, "status": "cancelled", "model": "Qwen3-VL", "items": []}
-            response.raise_for_status()
-            raw = str((response.json() or {}).get("analysis") or "").strip()
-            if _contains_cjk(raw):
-                raise ValueError("person visual grounding response was not English")
-            payload = None
-            try:
-                payload = json.loads(raw)
-            except (TypeError, ValueError):
-                decoder = json.JSONDecoder()
-                for position, char in enumerate(raw):
-                    if char != "{":
-                        continue
-                    try:
-                        candidate, _ = decoder.raw_decode(raw[position:])
-                    except (TypeError, ValueError):
-                        continue
-                    if isinstance(candidate, dict) and isinstance(candidate.get("people"), list):
-                        payload = candidate
-                        break
-            if not isinstance(payload, dict):
-                raise ValueError("person visual grounding response was not JSON")
-            by_label = {row["person"].casefold(): row["person"] for row in candidates}
-            parsed = {}
-            for row in payload.get("people") or []:
-                if not isinstance(row, dict):
-                    continue
-                label = by_label.get(str(row.get("person") or "").strip().casefold())
-                if not label:
-                    continue
-                boxes = []
-                raw_boxes = row.get("frame_boxes") or []
-                if isinstance(raw_boxes, list):
-                    for box_row in raw_boxes:
-                        if not isinstance(box_row, dict):
-                            continue
-                        index = box_row.get("frame", box_row.get("frame_index"))
-                        bbox = box_row.get("bbox") or box_row.get("box")
-                        try:
-                            coords = [float(part) for part in bbox]
-                        except (TypeError, ValueError):
-                            continue
-                        if (not isinstance(index, int) or isinstance(index, bool)
-                                or not 1 <= index <= max_frames or len(coords) != 4
-                                or not all(math.isfinite(part) and 0 <= part <= 1 for part in coords)
-                                or coords[2] - coords[0] < 0.025
-                                or coords[3] - coords[1] < 0.06):
-                            continue
-                        boxes.append({"frame_index": index,
-                                      "bbox": [round(part, 5) for part in coords]})
-                boxes.sort(key=lambda item: item["frame_index"])
-                box = boxes[0] if boxes else None
-                visible = row.get("visible") is True and box is not None
-                coverage = "partial" if label.casefold().startswith("camera wearer") and row.get("coverage") == "partial" else "full"
-                parsed[label.casefold()] = {
-                    "person": label,
-                    "status": "grounded" if visible else "not_verified",
-                    "coverage": coverage if visible else "unknown",
-                    "appearance": next((item["appearance"] for item in candidates
-                                         if item["person"] == label), "") if visible else "",
-                    "frame_indices": [box["frame_index"]] if visible else [],
-                    "frame_boxes": [box] if visible else [],
-                }
-            items = [parsed.get(row["person"].casefold(), {
-                "person": row["person"], "status": "not_verified", "appearance": "",
-                "frame_indices": [], "frame_boxes": [],
-            }) for row in candidates]
-            return {"schema": 1, "status": "completed", "model": "Qwen3-VL",
-                    "prompt_version": "person-visual-grounding-v2-partial-body-box", "items": items}
-        except Exception as exc:
-            return {"schema": 1, "status": "unavailable", "model": "Qwen3-VL",
-                    "message": str(exc)[:240],
-                    "items": [{"person": row["person"], "status": "not_verified",
-                               "appearance": "", "frame_refs": []} for row in candidates]}
-        finally:
-            with self._active_request_lock:
-                if self._active_request_id == request_id:
-                    self._active_request_id = None
+            from clip_crop_grounding import ground_people
+        except ImportError:
+            from scripts.memory.clip_crop_grounding import ground_people
+        return ground_people(people, frames, cancel_event, progress_callback)
 
     def prewarm(self, moments, force: bool = False):
         """批量预热缓存，返回 (成功数, 失败数)。"""

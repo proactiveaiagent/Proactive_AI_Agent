@@ -1605,7 +1605,7 @@ class InteractiveSession(PostWriteRetrievalMixin):
                 item = items.get(normalize(label))
                 if not item:
                     return True
-                if item.get("status") == "not_visible":
+                if item.get("status") in {"not_visible", "uncertain"}:
                     continue
                 if item.get("status") in {"unavailable", "not_verified", "error"}:
                     return True
@@ -1636,7 +1636,7 @@ class InteractiveSession(PostWriteRetrievalMixin):
 
         def unavailable(labels, label_key, exc):
             message = str(exc)[:500]
-            return {"schema": 1, "status": "unavailable", "model": "Qwen3-VL",
+            return {"schema": 1, "status": "unavailable", "model": "local-crop-grounder",
                     "message": message,
                     "items": [{label_key: str(label), "status": "unavailable",
                                "appearance": "", "error": message,
@@ -1729,13 +1729,13 @@ class InteractiveSession(PostWriteRetrievalMixin):
                 item.pop("frame_boxes", None)
                 if refs:
                     item["status"] = "grounded"
-                elif item.get("status") != "not_visible":
-                    item["status"] = "not_verified"
-                    item["error"] = "模型未提供可用边界框，等待重试"
+                elif item.get("status") not in {"not_visible", "uncertain"}:
+                    item["status"] = "uncertain"
+                    item["error"] = "本地裁剪器未找到达到置信阈值的边界框；已保留来源画面"
             result["crop_schema"] = 1
-            result["crop_method"] = ("Qwen3-VL normalized whole-person box with padded WebP crop"
+            result["crop_method"] = ("OpenCV HOG and local CLIP-ranked person region with padded WebP crop"
                                      if kind == "person" else
-                                     "Qwen3-VL normalized object box with padded WebP crop")
+                                     "OpenCV HOG and local CLIP-ranked object region with padded WebP crop")
             return result
 
         object_labels = [
@@ -2496,12 +2496,12 @@ class InteractiveSession(PostWriteRetrievalMixin):
                             ref.get("visual_role") == "object_crop" for ref in frame_refs)
                         item.pop("frame_boxes", None)
                         if item.get("status") in {"grounded", "visible_unlabeled"} and not item["frame_refs"]:
-                            item["status"] = "not_verified"
-                            item["error"] = "模型未提供可用边界框，等待重试"
+                            item["status"] = "uncertain"
+                            item["error"] = "本地裁剪器未能保存可靠局部框；已保留来源画面"
                     for item in grounding.get("items") or []:
                         item["appearance"] = _remove_visual_age_guess(item.get("appearance"))
                     grounding["crop_schema"] = 1
-                    grounding["crop_method"] = "Qwen3-VL normalized object box with padded WebP crop"
+                    grounding["crop_method"] = "OpenCV HOG and local CLIP-ranked object region with padded WebP crop"
                     multimodal["object_visuals"] = grounding
                     record_duration("object_crop_generation_and_asset_write_ms", object_crop_started)
                     record_duration("object_grounding_pipeline_wall_ms", object_pipeline_started)
@@ -2633,12 +2633,12 @@ class InteractiveSession(PostWriteRetrievalMixin):
                         item["frame_refs"] = frame_refs
                         item["crop_count"] = len(frame_refs)
                         item.pop("frame_boxes", None)
-                        if not frame_refs and person_grounding.get("status") != "unavailable":
-                            item["status"] = "not_verified"
-                            item["error"] = "模型未提供可用边界框，等待重试"
+                        if not frame_refs and item.get("status") not in {"uncertain", "not_visible"}:
+                            item["status"] = "uncertain"
+                            item["error"] = "本地裁剪器未找到达到置信阈值的边界框；已保留来源画面"
                     person_grounding["crop_schema"] = 1
                     person_grounding["crop_method"] = (
-                        "Qwen3-VL normalized whole-person box with padded WebP crop")
+                        "OpenCV HOG and local CLIP-ranked person region with padded WebP crop")
                     multimodal["person_visuals"] = person_grounding
                     record_duration("person_crop_generation_and_asset_write_ms", person_crop_started)
                     record_duration("person_grounding_pipeline_wall_ms", person_pipeline_started)

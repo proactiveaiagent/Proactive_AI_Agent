@@ -232,12 +232,7 @@ td{padding:6px 10px;border-top:1px solid var(--border)}
 .memory-added-id{padding:2px 8px;border-radius:999px;background:#e9f7f1;color:#087a55;font-size:12px;font-weight:700}
 .memory-added-summary{color:#34415c;line-height:1.65}
 .memory-added-context{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}
-.memory-raw-json{margin-top:12px;border:1px solid #dfe6f1;border-radius:10px;background:#f8faff;overflow:hidden}
-.memory-raw-json>summary{padding:10px 12px;cursor:pointer;color:#405582;font-weight:700;list-style:none}
-.memory-raw-json>summary::-webkit-details-marker{display:none}
-.memory-raw-json>summary::before{content:'+';display:inline-block;width:20px;color:#5965d8}
-.memory-raw-json[open]>summary::before{content:'-'}
-.memory-raw-json-content{display:block;max-height:min(65vh,560px);overflow:auto;margin:0 10px 10px;padding:8px 0;border:1px solid #333;border-radius:8px;background:#1e1e1e;color:#d4d4d4;font:12px/1.65 "Cascadia Code",Consolas,"SFMono-Regular",monospace;white-space:pre;tab-size:2;scrollbar-color:#5a5a5a #1e1e1e}
+.memory-raw-json-content{max-height:min(65vh,560px)}
 .memory-json-line{display:grid;grid-template-columns:3.4em minmax(0,1fr);column-gap:14px;min-height:1.65em;white-space:pre-wrap;overflow-wrap:anywhere}
 .memory-json-line-no{box-sizing:border-box;padding-right:10px;border-right:1px solid #383838;color:#858585;text-align:right;user-select:none;align-self:stretch}.memory-json-line-code{min-width:0;white-space:pre-wrap;overflow-wrap:anywhere}
 .memory-json-key{color:#9cdcfe}
@@ -1946,10 +1941,11 @@ function renderVisualEvidenceCards(items,evidenceContext,kind,grounding){
     const refs=(item.frame_refs||[]).filter(ref=>ref&&ref.url);
     const cropRole=kind==='person'?'person_crop':kind==='object'?'object_crop':'context_crop';
     const crops=refs.filter(ref=>ref.visual_role===cropRole);
+    const localCropper=/clip-grid|opencv-hog/i.test(String((grounding&&grounding.model)||'')+' '+String((grounding&&grounding.crop_method)||''));
     const unavailable=grounding&&grounding.status==='unavailable'&&!crops.length;
-    const status=crops.length?'':unavailable?'视觉服务不可用 · 局部画面待重试':refs.length
+    const status=crops.length?'':unavailable?(localCropper?'本地裁剪未完成 · 来源画面仍保留':'视觉服务不可用 · 局部画面待重试'):refs.length
       ?(kind==='object'?'':kind==='person'?'尚无可靠人物裁剪 · 点击卡片核对来源画面':'尚无局部场景画面 · 点击卡片查看来源')
-      :item.status==='no_visual_evidence'?'暂无画面证据':item.status==='not_verified'?'模型未能可靠定位 · 待重试':'未生成局部画面';
+      :item.status==='no_visual_evidence'?'暂无画面证据':item.status==='uncertain'?'未找到可靠局部框 · 来源画面仍保留':item.status==='not_verified'?'未能可靠定位 · 待复核':'未生成局部画面';
     const title=(labels[kind]||'实体')+' · '+String(item.entity||'未命名');
     const description=String(item.description||'');
     const cardAttrs=renderEvidenceCardOpenAttrs(refs,evidenceContext,title,description||title);
@@ -1957,9 +1953,10 @@ function renderVisualEvidenceCards(items,evidenceContext,kind,grounding){
   }).join('');
   const groupTitle=kind==='person'?'人物对应画面':kind==='object'?'物品对应画面':'地点、环境与活动画面';
   const errorText=String((grounding&&grounding.message)||'');
-  const errorHint=/connection refused|errno 111/i.test(errorText)?'Qwen视觉服务连接被拒绝':/timed? ?out|timeout/i.test(errorText)?'Qwen视觉服务请求超时':'Qwen视觉服务暂不可用';
+  const localCropper=/clip-grid|opencv-hog|local-crop-grounder/i.test(String((grounding&&grounding.model)||'')+' '+String((grounding&&grounding.crop_method)||''));
+  const errorHint=localCropper?'本地裁剪定位暂不可用':/connection refused|errno 111/i.test(errorText)?'Qwen视觉服务连接被拒绝':/timed? ?out|timeout/i.test(errorText)?'Qwen视觉服务请求超时':'Qwen视觉服务暂不可用';
   const note=grounding&&grounding.status==='unavailable'
-    ?'<small class="object-index-note" title="'+esc(errorText)+'">'+errorHint+'，局部裁剪待生成；服务恢复后重跑该片段会自动补齐。</small>':'';
+    ?'<small class="object-index-note" title="'+esc(errorText)+'">'+errorHint+'；来源画面已保留，定位模块恢复后可重试。</small>':'';
   return '<div class="object-visual-list"><b>'+groupTitle+'</b>'+cards+note+'</div>';
 }
 function renderObjectVisualEvidence(media,evidenceContext){
@@ -3639,7 +3636,7 @@ function renderMemoryAddition(log){
   const structured=renderPersonObservations(moment.person_observations,moment);
   const structuredCount=Array.isArray(moment.person_observations)?moment.person_observations.length:0;
   const structuredPanel=structured?'<section class="memory-supplement memory-person-primary"><div class="memory-supplement-title">人物画像 · '+structuredCount+' 人</div><div class="memory-supplement-body">'+structured+'</div></section>':'';
-  const rawStoredPanel='<details class="memory-raw-json" data-moment-id="'+esc(moment.id||p.moment_id)+'" ontoggle="loadStoredMemoryRecord(this)"><summary>\u67e5\u770b\u8bb0\u5fc6\u5b9e\u9645\u5b58\u50a8\u683c\u5f0f (JSON)</summary><pre class="memory-raw-json-content">\u5c55\u5f00\u540e\u8bfb\u53d6\u5f53\u524d\u8bb0\u5fc6\u5e93\u4e2d\u7684\u539f\u59cb\u8bb0\u5f55</pre></details>';
+  const rawStoredPanel='<details class="memory-qwen-raw" data-moment-id="'+esc(moment.id||p.moment_id)+'" ontoggle="loadStoredMemoryRecord(this)"><summary>\u67e5\u770b\u8bb0\u5fc6\u5b9e\u9645\u5b58\u50a8\u683c\u5f0f (JSON)</summary><pre class="prec-raw memory-raw-json-content">\u5c55\u5f00\u540e\u8bfb\u53d6\u5f53\u524d\u8bb0\u5fc6\u5e93\u4e2d\u7684\u539f\u59cb\u8bb0\u5f55</pre></details>';
   const media=renderMultimodalEvidence(moment,moment);
   const details=media?'<details><summary>查看画面与来源</summary>'+media+'</details>':'';
   const qwenPerceptionPanel=renderQwenPerceptionOutput(p);
@@ -3648,8 +3645,8 @@ function renderMemoryAddition(log){
     structuredPanel+
     (tags.length?'<div class="memory-added-context">'+tags.join('')+'</div>':'')+
     (summary.length?'<div class="memory-added-summary">'+summary.map((text,index)=>'<div><b>'+(['场景','场景背景'][index]||'记忆内容')+'：</b>'+esc(text)+'</div>').join('')+'</div>':'')+
-    rawStoredPanel+
-    details+'</article>';
+    details+
+    rawStoredPanel+'</article>';
   if(qwenBox)qwenBox.innerHTML=qwenPerceptionPanel;
 }
 

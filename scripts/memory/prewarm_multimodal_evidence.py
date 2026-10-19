@@ -610,7 +610,8 @@ def resolve_cached_perception(perceiver: QwenPerceiver, moment: dict, entry: dic
 def run(limit: int | None = None, dry_run: bool = False,
         all_profiles: bool = False, short_half: bool = False,
         custom_all: bool = False, long_participants: list[str] | None = None,
-        short_first: int | None = None, short_all: bool = False) -> dict:
+        short_first: int | None = None, short_all: bool = False,
+        crop_only: bool = False) -> dict:
     scoped = short_half or short_first is not None or short_all or custom_all or bool(long_participants)
     if all_profiles and scoped:
         raise ValueError("--all-profiles cannot be combined with focused profile selections")
@@ -636,6 +637,99 @@ def run(limit: int | None = None, dry_run: bool = False,
         "person_grounding_hit": 0, "person_grounding_new": 0,
         "person_grounding_failed": 0, "person_grounding_not_needed": 0,
     }
+
+    if crop_only:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        crop_totals = {"clips": len(moments), "object_hit": 0, "object_new": 0,
+                       "object_failed": 0, "object_not_needed": 0,
+                       "person_hit": 0, "person_new": 0,
+                       "person_failed": 0, "person_not_needed": 0,
+                       "source_mismatch_or_no_fields": 0}
+
+        def crop_one(moment):
+            mid = str(moment.get("id") or "")
+            entry = perceiver.cache.get(mid) or {}
+            fields = entry.get("fields") or {}
+            if not fields or not _source_fingerprint_matches(entry, moment):
+                return {"source_mismatch_or_no_fields": 1}
+            video = video_path_of(moment)
+            if not video:
+                return {"object_failed": 1, "person_failed": 1, "id": mid,
+                        "error": "source video unavailable"}
+            start, end = clip_range(moment)
+            frames = media.sample_visual_candidates(video, start, end,
+                                                    source_id=mid, count=7)
+            if not frames:
+                return {"object_failed": 1, "person_failed": 1, "id": mid,
+                        "error": "no sampled visual frames"}
+            result = {}
+            labels = [str(value).strip() for value in fields.get("objects") or []
+                      if str(value).strip()][:12]
+            if labels:
+                source_key = grounding_cache.source_key(mid, video, start, end, labels)
+                cached = grounding_cache.get_source(source_key)[0]
+                key = grounding_cache.key(mid, labels, frames)
+                if cached is None:
+                    cached = grounding_cache.get(key)[0]
+                if cached is None:
+                    cached = perceiver.ground_objects(labels, frames)
+                    if grounding_cache.put(key, cached):
+                        grounding_cache.put_source(source_key, cached)
+                        result["object_new"] = 1
+                    else:
+                        result["object_failed"] = 1
+                        result["error"] = str(cached.get("message") or cached.get("status"))
+                else:
+                    grounding_cache.put_source(source_key, cached)
+                    result["object_hit"] = 1
+            else:
+                result["object_not_needed"] = 1
+            people = [row for row in fields.get("person_observations") or []
+                      if isinstance(row, dict) and str(row.get("entity") or "").strip()][:8]
+            if people:
+                person_labels = ["person-crop-v1: " + str(row.get("entity") or "").strip()
+                                 + " | " + str(row.get("appearance") or "").strip()
+                                 for row in people]
+                key = grounding_cache.key(mid, person_labels, frames)
+                cached = grounding_cache.get(key)[0]
+                if cached is None:
+                    cached = perceiver.ground_people(people, frames)
+                    if grounding_cache.put(key, cached):
+                        result["person_new"] = 1
+                    else:
+                        result["person_failed"] = 1
+                        result["error"] = str(cached.get("message") or cached.get("status"))
+                else:
+                    result["person_hit"] = 1
+            else:
+                result["person_not_needed"] = 1
+            result["id"] = mid
+            return result
+
+        worker_count = 4
+        with ThreadPoolExecutor(max_workers=worker_count,
+                                thread_name_prefix="crop-only-warm") as pool:
+            futures = [pool.submit(crop_one, moment) for moment in moments]
+            for completed, future in enumerate(as_completed(futures), 1):
+                try:
+                    result = future.result()
+                except Exception as exc:
+                    result = {"object_failed": 1, "person_failed": 1,
+                              "error": str(exc)[:180]}
+                for key in crop_totals:
+                    if key != "clips":
+                        crop_totals[key] += int(result.get(key, 0) or 0)
+                if result.get("error"):
+                    log(f"crop-only cache issue {result.get('id','')}: {result['error']}")
+                if completed % PROGRESS_EVERY == 0 or completed == len(moments):
+                    log(f"crop-only cache {completed}/{len(moments)}: "
+                        f"object hit/new/failed={crop_totals['object_hit']}/"
+                        f"{crop_totals['object_new']}/{crop_totals['object_failed']}, "
+                        f"person hit/new/failed={crop_totals['person_hit']}/"
+                        f"{crop_totals['person_new']}/{crop_totals['person_failed']}, "
+                        f"source mismatch={crop_totals['source_mismatch_or_no_fields']}")
+        log(f"{scope} crop-only cache pass complete: {crop_totals}")
+        return crop_totals
 
     if dry_run:
         for moment in moments:
@@ -962,6 +1056,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--limit", type=int)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--crop-only", action="store_true",
+                        help="warm local HOG/CLIP person/object grounding caches only; never call Qwen or Whisper")
     parser.add_argument("--all-profiles", action="store_true")
     short_group = parser.add_mutually_exclusive_group()
     short_group.add_argument("--short-all", action="store_true",
@@ -981,4 +1077,4 @@ if __name__ == "__main__":
     run(limit=args.limit, dry_run=args.dry_run, all_profiles=args.all_profiles,
         short_half=args.short_half, custom_all=args.custom_all,
         long_participants=long_participants, short_first=args.short_first,
-        short_all=args.short_all)
+        short_all=args.short_all, crop_only=args.crop_only)
