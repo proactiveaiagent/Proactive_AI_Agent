@@ -57,8 +57,8 @@ _SOURCE_FINGERPRINT_LOCK = threading.RLock()
 
 DEFAULT_API = os.environ.get("QWEN_API_URL", "http://127.0.0.1:8001")
 DEFAULT_FRAMES = 6
-PROMPT_VERSION = "memory-v8.0-visible-text-atomic-evidence-2026-10-19"
-LIST_PARSER_VERSION = "json-arrays-person-alias-visible-name-text-only-age-v6-2026-10-19"
+PROMPT_VERSION = "memory-v9.0-concise-semantic-entity-labels-2026-10-19"
+LIST_PARSER_VERSION = "json-arrays-concise-entity-labels-v7-2026-10-19"
 
 
 # ---------------------------------------------------------------------------
@@ -68,24 +68,24 @@ LIST_PARSER_VERSION = "json-arrays-person-alias-visible-name-text-only-age-v6-20
 def build_prompt(n_frames: int) -> str:
     return f"""Create a detailed, source-grounded episodic memory using only these {n_frames} ordered frames sampled from one first-person video clip.
 
-Use visible pixels only. Do not use transcript, subtitle files, captions, test annotations, reference answers, filenames, or dataset metadata as evidence. Do not invent names, age or age categories, dialogue, intent, plans, relationships, or facts not supported by the frames. Age words such as elderly, young, child, or baby are not visual traits and require explicit readable text. Read on-screen text only when clearly legible and directly relevant.
+Use visible pixels only. Do not use transcript files, captions, test annotations, reference answers, filenames, or dataset metadata as evidence. Do not invent names, exact ages, dialogue, intent, plans, relationships, or facts not supported by the frames. A relationship or social role may be used only when plainly established by readable text or an explicit interaction; never infer family, friendship, or occupation from clothing or appearance. Exact age and age categories require explicit readable text. Read on-screen text only when clearly legible and directly relevant.
 
-Understand the full clip as one coherent scene. Before answering, scan all frames in order and make an internal inventory of the visible people, their actions and interactions, important objects and their locations/states, the activity, setting, and any visible time/place clues. Record the scene as a short chronological account, not a bag of keywords. Preserve every distinct, clearly supported action or state change and who/what it affects. A person or unchanged object seen in several frames is one entity; use one stable, descriptive visual alias and summarize its visible interval. Do not omit an un-named visible person merely because the scene summary can be written without them. If identity continuity is unclear, keep observations separate. Never use numbered labels such as person 1/person 2 or generic labels as the stored identity.
+Understand the full clip as one coherent scene. Before answering, scan all frames in order and inventory visible people, their actions and interactions, important objects and their locations/states, the activity, setting, and visible time/place clues. Record a short chronological account, not a bag of keywords. Preserve distinct supported actions and state changes, including who/what they affect. A person or unchanged object seen in several frames is one entity; give it a short, stable, semantic name and summarize its visible interval. Keep identifying names separate from appearance details. Do not omit a visible person. If identity continuity is unclear, keep observations separate.
 
 Return exactly these English fields, each on its own line:
 Scene: two to four concise chronological sentences describing the whole scene, people, actions, interactions, object changes, and outcome; quote short, important legible text only when it materially identifies a person, place, object, or event
 Location: the broadest clearly supported place
 Time/Occasion: only a date, clock, or occasion clearly readable in a supplied frame; otherwise blank
 People: only literal names clearly readable in supplied-frame text and visibly linked to a specific person; otherwise leave blank. Never infer names from appearance, roles, filenames, or context
-Person Observations: one JSON array with one row for each distinct, visually distinguishable person in the clip (up to 16). Include people in the background when their appearance is actually visible; do not collapse several distinguishable people into one row. Schema: {{"entity":"person wearing a blue padded jacket and gray headscarf","appearance":"hair, clothing, accessories, posture, and distinguishing visual traits","face_features":"clear visible face details only; otherwise empty","readable_name":"literal name from legible in-frame text directly linked to this person, or empty","name_evidence":"exact visible name text and where it appears, or empty","age":"exact age only when readable in-frame text links it to this person; otherwise empty","age_basis":"visible_text|unknown","frame_index":1,"evidence":"specific visible detail","confidence":"high|medium|low"}}. For unnamed people, have the model organize each person under a short, stable descriptive visual alias based on distinctive visible traits (clothing, accessories, clear facial details); start with person and describe what distinguishes them, never use numbered or generic placeholders. Prefer traits that remain visible across frames; use position only when it is clearly stable and needed to distinguish otherwise similar people. If frames do not support a distinction, do not invent one or claim separate identities. Describe each person once, combining stable appearance with useful visible posture/location. Put facial details only in face_features and do not duplicate them in appearance. Leave face_features empty when the face is too small, obscured, or unclear. Use the exact same descriptive alias in Scene, Interaction Details, Temporal Facts, affected_people, and actor wherever that person is referenced. Never estimate age or age category from appearance; record exact age only when legible on-screen text links it to this person. Use readable_name/name_evidence only for exact visible text directly linked to the person; otherwise leave both empty. Do not infer real-world identity, gender, role, or relationship from appearance.
+Person Observations: one JSON row per distinct, visually distinguishable person (up to 16); include visible people in the background. Schema: {{"entity":"neighbor 1","appearance":"clothing, accessories, posture, and distinguishing visible traits","face_features":"clear visible face details only; otherwise empty","readable_name":"literal name from legible in-frame text directly linked to this person, or empty","name_evidence":"exact visible name text and where it appears, or empty","age":"exact age only when readable in-frame text links it to this person, or empty","age_basis":"visible_text|unknown","frame_index":1,"evidence":"specific visible evidence for this label and appearance","confidence":"high|medium|low"}}. Keep entity short: use a literal name only with readable-name evidence; use a supported relationship/role such as grandma, friend 2, or neighbor 1 only when clearly established by visible text or explicit interaction; otherwise use a concise visible category such as woman 1/man 1 when clear, or a stable position such as person at doorway. Never infer age from appearance; do not use old/young/elderly labels unless readable text establishes them. Put detailed clothing and face traits in appearance/face_features, not entity. Use the exact same short entity label in Scene, Interaction Details, Temporal Facts, affected_people, and actor. If two people cannot be distinguished from the frames, do not invent identities or separate them. Leave face_features empty when the face is too small, obscured, or unclear. Keep readable_name/name_evidence only for exact visible text linked to this person; age only for exact readable text linked to them.
 User Action: visible actions performed by the camera wearer only; otherwise blank
-Activity: the specific observable activity, its participants, roles only when directly supported, what each participant is doing, and how the activity develops; avoid vague labels
-Objects: up to 12 important visible items and their locations/states, especially handled or moved items; transcribe short, clearly legible names, ages, dates, diagnoses, labels, or plans printed on a relevant item, explicitly as text displayed on that item
+Activity: the specific observable activity, participants, supported roles, what each participant is doing, and how it develops; use the same short person labels
+Objects: up to 12 important visible items, using concise canonical nouns only (for example gate, lantern, phone, firewood, bag); do not use a full caption as an object name. If multiple distinct items share a type, distinguish them with short ordinals such as gate 1 and gate 2, and use those exact labels in facts. Keep color, material, position, condition, and printed text in Environment or evidence-linked Temporal Facts, especially for handled/moved items.
 Environment: concise details of indoor/outdoor setting, layout, legible signs or landmarks (quote exact short wording and where it appears), lighting, weather, and background; omit unsupported guesses
-Interaction Details: a chronological, semicolon-separated account of who did what to which person or object, including responses, transfers, and affected people; use the exact descriptive aliases from Person Observations
-Temporal Facts: one JSON array of up to 16 separately retrievable facts. If any visible action, interaction, object handling/change, or meaningful change in posture/expression occurs, this array must not be empty. Record every distinct action/state change as its own atomic row with actor, affected entity, before/after state or location when shown, order, and specific frame evidence; do not collapse all actions into one row. A static clip with no separable action may use []. Schema: {{"subject_type":"person|object|place|environment|event","subject":"entity label","predicate":"appearance|state|located_at|moved|held|used|placed|picked_up|handed_over|participated_in|occurred_at|other","value":"one specific supported fact","actor":"person who visibly acted, if known","affected_people":["only people visibly affected by this fact"],"from_location":"only when visually supported","to_location":"only when visually supported","from_state":"only when visually supported","to_state":"only when visually supported","time_scope":"observed clip-time range when supported","time_order":1,"frame_index":1,"modality":"visual","evidence":"short description of visible pixels or legible text","status":"observed|completed|unclear","confidence":"high|medium|low"}}. Include distinct actions/interactions, important object states and transitions, activity, place, environmental conditions, and time context. Preserve actor, affected people, before/after state/location, and order. When a legible document, sign, label, menu, or screen carries important information, add a separate evidence-linked fact quoting the exact visible text and identify the source item; record displayed claims as text shown, not as independently verified truth. Use each person observation’s exact descriptive alias for person subject, actor, and affected_people; never use numbered placeholders. Do not repeat unchanged facts across frames. Do not claim an item moved unless the frames show the transition. Keep each fact atomic and evidence-linked. Return up to 16 high-value facts: prioritize actions and interactions, object changes, person details, and place/environment context; cover more than one category when the clip supports it instead of filling the list with repeated appearance facts. Keep each value and evidence phrase short, omit unsupported or empty optional fields, and fit all arrays completely within the response. Use the correct subject type: a moved item is an object, while the person is its actor.
+Interaction Details: a chronological account of who did what to whom or to which item, including responses, transfers, and affected people; use the exact short person labels and concise object names
+Temporal Facts: one JSON array of up to 16 separately retrievable facts. If any visible action, interaction, object handling/change, or meaningful change in posture/expression occurs, this array must not be empty. Record every distinct action/state change as its own atomic row with actor, affected entity, before/after state or location when shown, order, and specific frame evidence; do not collapse all actions into one row. A static clip with no separable action may use []. Schema: {{"subject_type":"person|object|place|environment|event","subject":"entity label","predicate":"appearance|state|located_at|moved|held|used|placed|picked_up|handed_over|participated_in|occurred_at|other","value":"one specific supported fact","actor":"person who visibly acted, if known","affected_people":["only people visibly affected by this fact"],"from_location":"only when visually supported","to_location":"only when visually supported","from_state":"only when visually supported","to_state":"only when visually supported","time_scope":"observed clip-time range when supported","time_order":1,"frame_index":1,"modality":"visual","evidence":"short description of visible pixels or legible text","status":"observed|completed|unclear","confidence":"high|medium|low"}}. Include distinct actions/interactions, important object states and transitions, activity, place, environmental conditions, and time context. Preserve actor, affected people, before/after state/location, and order. When a legible document, sign, label, menu, or screen carries important information, add a separate evidence-linked fact quoting the exact visible text and identify the source item; record displayed claims as text shown, not as independently verified truth. Use each person observation’s exact short entity label for person subject, actor, and affected_people; use concise object names. Never replace names with clothing descriptions. Do not repeat unchanged facts across frames. Do not claim an item moved unless the frames show the transition. Keep each fact atomic and evidence-linked. Return up to 16 high-value facts: prioritize actions and interactions, object changes, person details, and place/environment context; cover more than one category when the clip supports it instead of filling the list with repeated appearance facts. Keep each value and evidence phrase short, omit unsupported or empty optional fields, and fit all arrays completely within the response. Use the correct subject type: a moved item is an object, while the person is its actor.
 
-For sequence questions, preserve only order visible across these frames. Do not infer speech, plans, diagnosis, needs, advice, reminders, names, age, or relationships. Do not infer a person’s identity, intent, or role from appearance. Do not guess obscured text or transform displayed medical claims into a diagnosis. Keep concise wording, but retain useful supported detail in structured observations and facts while keeping both arrays complete: person appearance at most 18 words, face_features at most 8 words, person evidence at most 12 words; each Temporal Facts value at most 20 words and evidence at most 12 words. Omit empty optional keys and do not repeat the scene in each fact. Before returning, check that every key action in Scene, User Action, and Interaction Details has a corresponding Temporal Facts row; actors and affected people use exact visual aliases; visible object locations/states and environment are represented; and every distinguishable person has a matching observation. People names must match name_evidence. Use [] for Temporal Facts only when no separable action or state change is visible. Use [] for Person Observations only when no human figure or identifiable body part is visible. Leave unsupported details blank and add no other text."""
+For sequence questions, preserve only order visible across these frames. Do not infer speech, plans, diagnosis, needs, advice, reminders, names, age, or relationships. Do not infer a person’s identity, intent, or role from appearance. Do not guess obscured text or transform displayed medical claims into a diagnosis. Keep concise wording, but retain useful supported detail in structured observations and facts while keeping both arrays complete: person appearance at most 18 words, face_features at most 8 words, person evidence at most 12 words; each Temporal Facts value at most 20 words and evidence at most 12 words. Omit empty optional keys and do not repeat the scene in each fact. Before returning, check that every key action in Scene, User Action, and Interaction Details has a corresponding Temporal Facts row; actors and affected people use the same short person labels; object subjects use concise nouns; visible object locations/states and environment are represented; and every distinguishable person has an observation. People names must match name_evidence. Use [] for Temporal Facts only when no separable action or state change is visible. Use [] for Person Observations only when no human figure or identifiable body part is visible. Leave unsupported details blank and add no other text."""
 
 
 _FIELD_LINE_RE = re.compile(
@@ -227,7 +227,63 @@ def _split_list(raw: str, person: bool = False, preserve_commas: bool = False):
 
 _PERSON_INDEXED_LABEL_RE = re.compile(r"^(?:(?:unidentified|unknown)\s+)?person\s+\d+$", re.I)
 _GENERIC_PERSON_LABELS = {"person", "unidentified person", "unknown person", "someone", "somebody"}
-_PERSON_LABEL_SCHEMA_VERSION = 2
+_PERSON_LABEL_SCHEMA_VERSION = 3
+_PERSON_DETAIL_MARKERS = re.compile(
+    r"\b(?:wearing|with|dressed|jacket|coat|shirt|pants|trousers|scarf|hat|hair|"
+    r"headscarf|puffer|padded|holding|standing|sitting|seated|walking|looking)\b", re.I)
+_PERSON_RELATION_LABEL_RE = re.compile(
+    r"^(grandma|grandmother|grandpa|grandfather|mother|mom|father|dad|aunt|uncle|"
+    r"sister|brother|wife|husband|friend|neighbor|neighbour|coworker|colleague|"
+    r"teacher|doctor|cashier|waiter|host|hostess|guide|driver)(?:\s+(\d+))?\b", re.I)
+_POSITION_LABEL_CUES = (
+    (r"\b(?:at|near|by|beside|in front of)\s+(?:the\s+)?(?:doorway|door|entrance)\b", "at doorway"),
+    (r"\b(?:at|near|by|beside|in front of)\s+(?:the\s+)?gate\b", "by gate"),
+    (r"\b(?:at|near|by|beside)\s+(?:the\s+)?table\b", "by table"),
+    (r"\b(?:at|near|by|beside)\s+(?:the\s+)?counter\b", "by counter"),
+    (r"\b(?:in|at)\s+the\s+background\b", "in background"),
+    (r"\b(?:in|at)\s+the\s+foreground\b", "in foreground"),
+    (r"\bon\s+the\s+left\b", "on left"),
+    (r"\bon\s+the\s+right\b", "on right"),
+)
+_PERSON_COLOR_RE = re.compile(
+    r"\b(blue|black|white|red|green|yellow|pink|gray|grey|brown|orange|purple)\b", re.I)
+_OBJECT_CANONICAL_NOUNS = (
+    ("smartphone", "phone"), ("cell phone", "phone"), ("mobile phone", "phone"),
+    ("lantern", "lantern"), ("gate", "gate"), ("firewood", "firewood"),
+    ("log", "log"), ("banner", "banner"), ("wall", "wall"),
+    ("decoration", "decoration"), ("broom", "broom"), ("chimney", "chimney"),
+    ("ground", "ground"), ("snow", "snow"), ("bell", "bell"),
+    ("laptop", "laptop"), ("computer", "computer"), ("phone", "phone"),
+    ("box", "box"), ("bottle", "bottle"), ("bag", "bag"),
+    ("table", "table"), ("desk", "desk"), ("chair", "chair"), ("shelf", "shelf"),
+    ("cabinet", "cabinet"), ("drawer", "drawer"), ("basket", "basket"),
+    ("cup", "cup"), ("mug", "mug"), ("glass", "glass"), ("bowl", "bowl"),
+    ("plate", "plate"), ("book", "book"), ("notebook", "notebook"), ("paper", "paper"),
+    ("screen", "screen"), ("monitor", "monitor"), ("keyboard", "keyboard"),
+    ("camera", "camera"), ("lamp", "lamp"), ("refrigerator", "refrigerator"),
+    ("microwave", "microwave"), ("sink", "sink"), ("pan", "pan"), ("pot", "pot"),
+    ("bucket", "bucket"), ("brush", "brush"), ("mop", "mop"), ("wallet", "wallet"),
+    ("document", "document"), ("sign", "sign"), ("poster", "poster"), ("fence", "fence"),
+    ("umbrella", "umbrella"), ("jacket", "jacket"), ("coat", "coat"),
+    ("hat", "hat"), ("scarf", "scarf"), ("car", "car"), ("vehicle", "vehicle"),
+    ("bus", "bus"), ("train", "train"), ("suitcase", "suitcase"),
+    ("door", "door"), ("window", "window"), ("tree", "tree"), ("plant", "plant"),
+    ("food", "food"), ("bicycle", "bicycle"), ("key", "key"), ("toy", "toy"),
+    ("device", "device"), ("item", "item"),
+)
+_OBJECT_PLURAL_LABELS = {
+    "lanterns": "lantern", "logs": "log", "banners": "banner", "walls": "wall",
+    "decorations": "decoration", "boxes": "box", "bottles": "bottle", "bags": "bag",
+    "chairs": "chair", "cups": "cup", "bowls": "bowl", "plates": "plate",
+    "books": "book", "windows": "window", "trees": "tree", "plants": "plant",
+    "keys": "key", "toys": "toy", "items": "item", "shelves": "shelf",
+    "mugs": "mug", "glasses": "glass", "notebooks": "notebook",
+    "screens": "screen", "monitors": "monitor", "keyboards": "keyboard",
+    "cameras": "camera", "lamps": "lamp", "refrigerators": "refrigerator",
+    "microwaves": "microwave", "sinks": "sink", "pans": "pan", "pots": "pot",
+    "buckets": "bucket", "brushes": "brush", "mops": "mop", "wallets": "wallet",
+    "documents": "document", "signs": "sign", "posters": "poster", "fences": "fence",
+}
 
 
 def _is_generic_person_label(value: object) -> bool:
@@ -235,38 +291,122 @@ def _is_generic_person_label(value: object) -> bool:
     return label in _GENERIC_PERSON_LABELS or bool(_PERSON_INDEXED_LABEL_RE.fullmatch(label))
 
 
-def _visual_person_alias(row: dict) -> str:
-    """Use the model's own visible description as a stable, searchable label."""
-    appearance = " ".join(str(row.get("appearance") or "").split()).strip(" .;,:-")
-    face = " ".join(str(row.get("face_features") or "").split()).strip(" .;,:-")
-    if not appearance and not face:
+def _concise_object_label(value: object) -> str:
+    """Collapse caption-like object strings to their visible item's short noun."""
+    text = " ".join(str(value or "").split()).strip(" .;,:-")
+    if not text:
         return ""
-    descriptor = appearance or face
-    if appearance and face and len(descriptor) < 80:
-        descriptor = f"{appearance}; {face}"
-    descriptor = descriptor[:180].rstrip(" .;,:-")
-    if re.match(r"^(?:person\b|someone\b|somebody\b)", descriptor, re.I):
-        alias = descriptor
-    elif re.match(r"^(?:wearing|with|in|has|holding|standing|sitting|seated|walking)\b", descriptor, re.I):
-        alias = "person " + descriptor
-    else:
-        alias = "person with " + descriptor
-    return alias[:200].rstrip(" .;,:-")
+    ordinal_match = re.search(r"\s+(\d+)$", text)
+    ordinal = f" {ordinal_match.group(1)}" if ordinal_match else ""
+    if ordinal_match:
+        text = text[:ordinal_match.start()].rstrip()
+    lowered = re.sub(r"^(?:a|an|the|two|three|several)\s+", "", text, flags=re.I)
+    if re.search(r"\b(?:stack|pile)\s+of\s+(?:chopped\s+)?(?:firewood|logs?)\b", lowered, re.I):
+        return "firewood" + ordinal
+    for plural, target in _OBJECT_PLURAL_LABELS.items():
+        if re.search(r"\b" + re.escape(plural) + r"\b", lowered, re.I):
+            return target + ordinal
+    for source, target in _OBJECT_CANONICAL_NOUNS:
+        match = re.search(r"\b" + re.escape(source) + r"(?:s|es)?\b", lowered, re.I)
+        if match:
+            matched = match.group(0).casefold()
+            if matched.endswith("es") and matched[:-2] in {"box", "match", "dish"}:
+                matched = matched[:-2] + "es"
+            return _OBJECT_PLURAL_LABELS.get(matched, target) + ordinal
+    return text[:100].rstrip(" .;,:-") + ordinal
+
+
+def _semantic_person_alias(row: dict, counters: dict, context_gender=None) -> str:
+    original = " ".join(str(row.get("entity") or "").split()).strip(" .;,:-")
+    name = " ".join(str(row.get("readable_name") or "").split()).strip(" .;,:-")
+    name_evidence = " ".join(str(row.get("name_evidence") or "").split())
+    if name and name_evidence:
+        return name[:48]
+    spoken_aliases = row.get("spoken_aliases") or []
+    for spoken in spoken_aliases:
+        if not isinstance(spoken, dict):
+            continue
+        alias = " ".join(str(spoken.get("alias") or "").split()).strip(" .;,:-")
+        if (alias and spoken.get("status") == "probable_visual_match"
+                and re.fullmatch(r"(?:grandma|grandmother|grandpa|grandfather|mother|mom|"
+                                 r"father|dad|aunt|uncle|sister|brother|wife|husband|"
+                                 r"friend|neighbor|neighbour|coworker|colleague)(?:\s+\d+)?",
+                                 alias, re.I)):
+            return alias
+    gender_only = re.fullmatch(r"(woman|women|man|men|female|male)(?:\s+(\d+))?", original, re.I)
+    if gender_only:
+        kind = "woman" if gender_only.group(1).casefold() in {"woman", "women", "female"} else "man"
+        counters[("kind", kind)] = counters.get(("kind", kind), 0) + 1
+        return f"{kind} {gender_only.group(2) or counters[('kind', kind)]}"
+    role = _PERSON_RELATION_LABEL_RE.match(original)
+    if role and not _PERSON_DETAIL_MARKERS.search(original):
+        base = role.group(1).casefold()
+        ordinal = role.group(2)
+        counters[("role", base)] = counters.get(("role", base), 0) + 1
+        return f"{base} {ordinal or counters[('role', base)]}"
+
+    # Keep concise model-produced names. Detailed clothing belongs in appearance.
+    if (original and len(original.split()) <= 3
+            and not _is_generic_person_label(original)
+            and not _PERSON_DETAIL_MARKERS.search(original)):
+        return original
+
+    evidence = " ".join(str(row.get(key) or "") for key in
+                        ("entity", "appearance", "face_features", "evidence"))
+    gender_match = re.search(r"\b(woman|women|man|men|female|male)\b", evidence, re.I)
+    if gender_match:
+        kind = "woman" if gender_match.group(1).casefold() in {"woman", "women", "female"} else "man"
+        counters[("kind", kind)] = counters.get(("kind", kind), 0) + 1
+        return f"{kind} {counters[('kind', kind)]}"
+    if context_gender in {"woman", "man"}:
+        counters[("kind", context_gender)] = counters.get(("kind", context_gender), 0) + 1
+        return f"{context_gender} {counters[('kind', context_gender)]}"
+
+    for pattern, position in _POSITION_LABEL_CUES:
+        if re.search(pattern, evidence, re.I):
+            counters[("position", position)] = counters.get(("position", position), 0) + 1
+            suffix = f" {counters[('position', position)]}" if counters[("position", position)] > 1 else ""
+            return f"person {position}{suffix}"
+
+    for trait in ("headscarf", "glasses", "hat", "backpack", "scarf", "uniform", "vest", "dress"):
+        if re.search(r"\b" + trait + r"\b", evidence, re.I):
+            counters[("trait", trait)] = counters.get(("trait", trait), 0) + 1
+            suffix = f" {counters[('trait', trait)]}" if counters[("trait", trait)] > 1 else ""
+            return f"{trait} wearer{suffix}"
+    color = _PERSON_COLOR_RE.search(evidence)
+    if color:
+        color_name = color.group(1).casefold()
+        counters[("color", color_name)] = counters.get(("color", color_name), 0) + 1
+        suffix = f" {counters[('color', color_name)]}" if counters[("color", color_name)] > 1 else ""
+        return f"person in {color_name}{suffix}"
+
+    # The model should normally supply a visible category or stable position. If
+    # evidence cannot distinguish this person safely, keep a neutral label instead
+    # of manufacturing an identity from an ordinal.
+    return "visible person"
 
 
 def _organize_person_entity_aliases(fields: dict) -> dict:
-    """Replace old numbered labels with aliases from Qwen's visual descriptions."""
+    """Replace verbose appearance-as-name labels with concise semantic aliases."""
     if not isinstance(fields, dict):
         return fields
     rows = [dict(row) for row in fields.get("person_observations") or []
-             if isinstance(row, dict)]
+            if isinstance(row, dict)]
     mapping = {}
+    counters = {}
+    context = " ".join(str(fields.get(key) or "") for key in
+                       ("scene", "activity", "interaction_details"))
+    context_gender = None
+    women_in_context = len(re.findall(r"\b(?:woman|women)\b", context, re.I))
+    men_in_context = len(re.findall(r"\b(?:man|men)\b", context, re.I))
+    if women_in_context >= len(rows) and men_in_context == 0:
+        context_gender = "woman"
+    elif men_in_context >= len(rows) and women_in_context == 0:
+        context_gender = "man"
     for row in rows:
-        original = " ".join(str(row.get("entity") or "").split())
-        if not _is_generic_person_label(original):
-            continue
-        alias = _visual_person_alias(row)
-        if alias:
+        original = " ".join(str(row.get("entity") or "").split()).strip(" .;,:-")
+        alias = _semantic_person_alias(row, counters, context_gender)
+        if alias and original and alias.casefold() != original.casefold():
             mapping[original] = alias
             row["entity"] = alias
     if not mapping:
@@ -292,6 +432,53 @@ def _organize_person_entity_aliases(fields: dict) -> dict:
     return organized
 
 
+def _organize_object_entity_labels(fields: dict) -> dict:
+    """Keep object index labels short while retaining rich details in facts/evidence."""
+    if not isinstance(fields, dict):
+        return fields
+    mapping = {}
+    concise = []
+    seen_original = set()
+    counts = {}
+    for original in fields.get("objects") or []:
+        label = " ".join(str(original or "").split()).strip(" .;,:-")
+        key = label.casefold()
+        if not label or key in seen_original:
+            continue
+        seen_original.add(key)
+        base = _concise_object_label(label)
+        if not base:
+            continue
+        numbered = re.search(r"^(.*?)\s+(\d+)$", base)
+        if numbered:
+            short = base
+            count_key = numbered.group(1).casefold()
+        else:
+            count_key = base.casefold()
+            counts[count_key] = counts.get(count_key, 0) + 1
+            short = base if counts[count_key] == 1 else f"{base} {counts[count_key]}"
+        mapping[key] = short
+        concise.append(short)
+    result = dict(fields)
+    if "objects" in fields:
+        result["objects"] = concise
+    facts = []
+    for row in fields.get("temporal_facts") or []:
+        if not isinstance(row, dict):
+            continue
+        fact = dict(row)
+        if str(fact.get("subject_type") or "").casefold() == "object":
+            subject = " ".join(str(fact.get("subject") or "").split()).strip(" .;,:-")
+            short = mapping.get(subject.casefold()) or _concise_object_label(subject)
+            if short:
+                fact["subject"] = short
+        facts.append(fact)
+    if "temporal_facts" in fields:
+        result["temporal_facts"] = facts
+    result["object_label_schema_version"] = 2
+    return result
+
+
 _INFERRED_AGE_CATEGORY_RE = re.compile(
     r"\b(?:elderly|elder|young|younger|older|middle[- ]aged|teenage|teenager|"
     r"adolescent|adult|senior|mature)\b|\bold(?=\s+(?:person|man|woman|"
@@ -300,7 +487,7 @@ _INFERRED_AGE_CATEGORY_RE = re.compile(
 _PERSON_AGE_NOUN_RE = re.compile(
     r"\b(?:baby|babies|infant|infants|toddler|toddlers|newborn|newborns|"
     r"child|children|girl|girls|boy|boys|teen|teens|adolescent|adolescents|"
-    r"adult|adults|senior|seniors|man|men|woman|women)\b", re.I
+    r"adult|adults|senior|seniors)\b", re.I
 )
 _AGE_RANGE_RE = re.compile(
     r"\b(?:in\s+)?(?:his|her|their)\s+(?:(?:early|mid|late)\s+)?\d{2}s\b|"
@@ -440,8 +627,10 @@ def parse_analysis(text: str, strict: bool = False) -> dict:
         "needs": [],
         "solutions": [],
     }
+    organized = _organize_person_entity_aliases(result)
+    organized = _organize_object_entity_labels(organized)
     return _strip_unverified_age_categories(
-        _normalize_camera_wearer_actor_aliases(_organize_person_entity_aliases(result))
+        _normalize_camera_wearer_actor_aliases(organized)
     )
 
 
@@ -1132,7 +1321,9 @@ def _apply_person_repair(fields: dict, payload: dict, reference_labels: list,
         repaired_facts.append(fact)
     repaired["temporal_facts"] = repaired_facts
     repaired["person_observations"] = observations
-    return _strip_unverified_age_categories(_organize_person_entity_aliases(repaired))
+    return _strip_unverified_age_categories(
+        _organize_object_entity_labels(_organize_person_entity_aliases(repaired))
+    )
 
 
 def _object_move_evidence_error(fields: dict) -> str:
@@ -1986,6 +2177,54 @@ class QwenPerceiver:
             and input_fingerprint is not None
             and (cached_entry or {}).get("source_input_fingerprint") == input_fingerprint
         )
+
+        reusable_label_only_prompts = {
+            "memory-v8.0-visible-text-atomic-evidence-2026-10-19",
+        }
+        if (cached_entry and cached_entry.get("prompt_version") in reusable_label_only_prompts
+                and cached_entry.get("prompt_version") != PROMPT_VERSION
+                and source_matches and not force):
+            # This prompt revision changes entity naming/normalization, not the
+            # sampled source. Reparse the stored model response once so existing
+            # hot caches gain concise labels without another GPU inference.
+            hit = dict(cached_entry)
+            cached_fields = dict(hit.get("fields") or {})
+            if hit.get("list_parser_version") != LIST_PARSER_VERSION:
+                try:
+                    raw_cached = hit.get("raw") or hit.get("raw_model_output") or ""
+                    reparsed = None
+                    if raw_cached:
+                        try:
+                            reparsed = parse_analysis(raw_cached, strict=True)
+                        except (ValueError, TypeError, json.JSONDecodeError):
+                            reparsed = None
+                    if not isinstance(reparsed, dict):
+                        reparsed = _organize_object_entity_labels(
+                            _organize_person_entity_aliases(cached_fields))
+                    for field in ("objects", "environments", "people", "person_observations",
+                                  "temporal_facts", "scene", "interaction_details", "user_action",
+                                  "activity", "location", "time_occasion"):
+                        cached_fields[field] = reparsed.get(field)
+                    cached_fields["person_label_schema_version"] = _PERSON_LABEL_SCHEMA_VERSION
+                    cached_fields["object_label_schema_version"] = 2
+                    hit["fields"] = cached_fields
+                    hit["list_parser_version"] = LIST_PARSER_VERSION
+                    hit["labels_normalized_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+                    with self._cache_lock:
+                        self.cache[mid] = dict(hit)
+                        self._dirty_cache_keys.add(mid)
+                        if persist_cache:
+                            self._save_cache()
+                except (ValueError, TypeError, json.JSONDecodeError):
+                    hit = None
+            if hit is not None and hit.get("list_parser_version") == LIST_PARSER_VERSION:
+                hit["source"] = "cache"
+                hit["label_normalization_only"] = True
+                hit["source_evidence"] = ""
+                hit["fields"] = dict(hit.get("fields") or {})
+                hit["fields"]["source_evidence"] = ""
+                emit("cache_reparse", "已复用视频感知缓存，整理人物与物品短名称；未重新调用视觉模型")
+                return hit
 
         def stale_cache_fallback(reason):
             if (not allow_stale_cache_fallback or force or not cached_entry

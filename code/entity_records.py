@@ -32,6 +32,18 @@ def _anonymous(name):
     return bool(re.search(r'unknown|unidentified|unnamed|camera wearer|speaker\s*\d|未知|匿名|未识别', name, re.I))
 
 
+def _speech_placeholder(name):
+    """Whisper cannot attribute a voice, so speaker placeholders are not scene people.
+
+    A visually observed 'unidentified person 1' stays a card; an 'unidentified
+    speaker' is only ever a slot in a quoted utterance.
+    """
+    return bool(re.search(
+        r'^(?:unidentified|unknown)\s+(?:speaker|addressee|voice)\b'
+        r'|^(?:unidentified|unknown)\s+person referred to as\b'
+        r'|^public-address announcement$|未识别说话人|未知说话', name, re.I))
+
+
 class EntityRecordIndex:
     def __init__(self, layer7):
         groups = {}
@@ -54,6 +66,26 @@ class EntityRecordIndex:
             object_rows = object_visual_observations(moment)
             observations = [x for x in moment.get('person_observations') or [] if isinstance(x, dict)]
             facts = [x for x in moment.get('temporal_facts') or [] if isinstance(x, dict)]
+            # Existing records may have been written before audio evidence was
+            # attached. Prefer an explicitly supported spoken alias or a readable
+            # on-screen name when presenting the person, while keeping all evidence.
+            person_aliases = {}
+            for row in observations:
+                original = _name(row.get('entity'))
+                readable = _name(row.get('readable_name'))
+                if readable and str(row.get('name_evidence') or '').strip():
+                    person_aliases[original.casefold()] = readable
+                    continue
+                spoken = next((item for item in row.get('spoken_aliases') or []
+                               if isinstance(item, dict) and item.get('alias')
+                               and item.get('status') == 'probable_visual_match'), None)
+                if original and spoken:
+                    person_aliases[original.casefold()] = _name(spoken.get('alias'))
+
+            def person_label(value):
+                label = _name(value)
+                return person_aliases.get(label.casefold(), label)
+
             if observations or facts or object_rows:
                 self.structured_moments += 1
 
@@ -61,23 +93,30 @@ class EntityRecordIndex:
             provenance = moment.get('source_provenance') or {}
             segment = str(provenance.get('source_segment_id') or mid)
             video = str(provenance.get('source_video_id') or segment)
+            def selected_person_rows(rows, wanted, label_fn):
+                return [row for row in rows
+                        if label_fn(row.get('entity')).casefold() == wanted.casefold()]
+
             labels = set()
             for entity_kind, values in (
                 ('person', moment.get('people') or []), ('object', moment.get('objects') or []),
                 ('place', [moment.get('location')]), ('environment', moment.get('environments') or []),
             ):
                 for value in values:
-                    if _name(value):
-                        labels.add((entity_kind, _name(value)))
+                    label = person_label(value) if entity_kind == 'person' else _name(value)
+                    if label:
+                        labels.add((entity_kind, label))
             labels.update(('object', _name(x.get('object'))) for x in object_rows if x.get('object'))
-            labels.update(('person', _name(x.get('entity'))) for x in observations if x.get('entity'))
+            labels.update(('person', person_label(x.get('entity')))
+                          for x in observations if x.get('entity'))
             for fact in facts:
                 fact_kind = fact.get('subject_type')
                 if fact_kind in {'person', 'object', 'place', 'environment'} and fact.get('subject'):
-                    labels.add((fact_kind, _name(fact['subject'])))
+                    subject = person_label(fact['subject']) if fact_kind == 'person' else _name(fact['subject'])
+                    labels.add((fact_kind, subject))
                 for person in [fact.get('actor')] + (fact.get('affected_people') or []):
                     if _name(person):
-                        labels.add(('person', _name(person)))
+                        labels.add(('person', person_label(person)))
 
             media = moment.get('multimodal') or {}
             visual = media.get('visual_frames') or ([media['visual']] if media.get('visual') else [])
@@ -90,12 +129,29 @@ class EntityRecordIndex:
                 'source_provenance': deepcopy(provenance),
                 'recorded_at': moment.get('timestamp'),
                 'location': moment.get('location') or '',
-                'people': deepcopy(moment.get('people') or []),
+                'people': [person_label(value) for value in moment.get('people') or []],
             }
             for entity_kind, label in sorted(labels):
-                # Repeated generic objects and anonymous people are source-scoped.
-                scope = segment if ((entity_kind == 'person' and _anonymous(label)) or entity_kind == 'object') else (
-                    '' if entity_kind == 'person' else video)
+                if entity_kind == 'person' and _speech_placeholder(label):
+                    continue
+                # Textual similarity is not proof that two visible people are the same
+                # person. Keep person labels local to their source clip unless the
+                # observation carries a directly linked readable name, or the label is
+                # one of the fixed identities in the long-term participant dataset.
+                named_in_frame = any(
+                    _name(row.get('readable_name')).casefold() == label.casefold()
+                    and bool(str(row.get('name_evidence') or '').strip())
+                    for row in selected_person_rows(observations, label, person_label)
+                )
+                known_participant = label.casefold() in {
+                    'jake', 'alice', 'tasha', 'lucia', 'katrina', 'shure'
+                }
+                if entity_kind == 'person':
+                    scope = '' if named_in_frame or known_participant else segment
+                elif entity_kind == 'object':
+                    scope = segment
+                else:
+                    scope = video
                 identity = (entity_kind, label.casefold(), scope)
                 record = groups.setdefault(identity, {
                     'id': hashlib.sha256(repr(identity).encode()).hexdigest()[:20],
@@ -103,8 +159,11 @@ class EntityRecordIndex:
                     'identity_scope': 'named_mentions' if not scope else 'source_observations',
                     'source_scope': scope, 'events': [], 'fact_count': 0,
                 })
-                selected_people = [deepcopy(x) for x in observations
-                                   if _name(x.get('entity')).casefold() == label.casefold()]
+                selected_people = []
+                for original_person in selected_person_rows(observations, label, person_label):
+                    person = deepcopy(original_person)
+                    person['entity'] = person_label(person.get('entity'))
+                    selected_people.append(person)
                 for person in selected_people:
                     if person.get('age_basis') not in {'stated', 'visible_text'}:
                         person.pop('age', None)
@@ -114,15 +173,23 @@ class EntityRecordIndex:
                             }):
                         person.pop('apparent_age_range', None)
                         person.pop('apparent_age_basis', None)
-                selected_facts = [deepcopy(x) for x in facts if label.casefold() in {
-                    _name(x.get('subject')).casefold(), _name(x.get('actor')).casefold(),
-                    *(_name(p).casefold() for p in x.get('affected_people') or []),
-                }]
+                selected_facts = []
+                for original_fact in facts:
+                    subject = (person_label(original_fact.get('subject'))
+                               if original_fact.get('subject_type') == 'person'
+                               else _name(original_fact.get('subject')))
+                    linked = {
+                        subject.casefold(), person_label(original_fact.get('actor')).casefold(),
+                        *(person_label(p).casefold()
+                          for p in original_fact.get('affected_people') or []),
+                    }
+                    if label.casefold() in linked:
+                        selected_facts.append(deepcopy(original_fact))
                 selected_objects = [deepcopy(x) for x in object_rows
                                     if _name(x.get('object')).casefold() == label.casefold()]
                 visual_people = (media.get('person_visuals') or {}).get('items') or []
                 person_crops = [deepcopy(ref) for item in visual_people
-                                if _name(item.get('person')).casefold() == label.casefold()
+                                if person_label(item.get('person')).casefold() == label.casefold()
                                 for ref in item.get('frame_refs') or []
                                 if ref.get('visual_role') == 'person_crop']
                 object_crops = [deepcopy(ref) for item in visual_objects

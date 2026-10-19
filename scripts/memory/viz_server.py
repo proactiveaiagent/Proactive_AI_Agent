@@ -49,6 +49,7 @@ SESSION = None
 RESTORED_SESSION_ACTIVE = False
 STEP_LOCK = threading.Lock()
 ENTITY_READ_LOCK = threading.Lock()  # Queue concurrent read-only entity queries; writers still use STEP_LOCK.
+ENTITY_ARCHIVE_INDEX_CACHE = {}  # scenario -> (path signature, EntityRecordIndex)
 # Qwen 缓存预热任务状态
 PREWARM = {"running": False, "done": 0, "total": 0, "cache_hits": 0, "inferred": 0,
            "failed": 0, "failed_items": [], "current_id": None,
@@ -184,6 +185,48 @@ def _build_preview(source, target, key, start=None, end=None):
             temp.unlink(missing_ok=True)
         except OSError:
             pass
+
+
+def _compact_interactive_state(state):
+    """Keep interactive responses small while retaining current memory and video navigation."""
+    compact = dict(state)
+    rows = state.get("log") or []
+    compact_rows = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        item = dict(row)
+        snapshot = item.pop("snapshot", None)
+        if item.get("kind") == "add" and isinstance(snapshot, dict):
+            full = snapshot.get("full") or {}
+            moments = full.get("layer7_moments") or []
+            perception = item.get("perception") or {}
+            moment_id = perception.get("moment_id")
+            moment = next((entry for entry in moments
+                           if isinstance(entry, dict) and entry.get("id") == moment_id),
+                          moments[-1] if moments else {})
+            video = (moment or {}).get("video") or {}
+            source = (moment or {}).get("source_provenance") or {}
+            if video.get("video_url"):
+                title_match = re.search(r"(\d+)\s*/\s*\d+", str(item.get("title") or ""))
+                item["video_nav"] = {
+                    "pos": max(0, int(title_match.group(1)) - 1) if title_match else len(compact_rows),
+                    "moment_id": (moment or {}).get("id"),
+                    "segment_id": source.get("source_segment_id") or perception.get("dataset_id") or (moment or {}).get("id"),
+                    "video_url": video.get("video_url"),
+                    "video": video.get("video") or source.get("source_video_id") or "",
+                    "clock": video.get("clock") or "",
+                    "clip_start": video.get("clip_start") if video.get("clip_start") is not None else source.get("clip_start_s", 0),
+                    "clip_end": video.get("clip_end") if video.get("clip_end") is not None else source.get("clip_end_s"),
+                    "people": (moment or {}).get("people") or [],
+                    "location": (moment or {}).get("location") or "",
+                    "scene": (moment or {}).get("scene") or "",
+                    "action": (moment or {}).get("user_action") or (moment or {}).get("activity") or "",
+                }
+        compact_rows.append(item)
+    compact["log"] = compact_rows
+    compact["snapshots_compact"] = True
+    return compact
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -838,7 +881,7 @@ class Handler(BaseHTTPRequestHandler):
         if url.path == "/api/interactive/new":
             reset_requested = (qs.get("reset") or ["0"])[0] in ("1", "true", "True")
             if SESSION is not None and not reset_requested:
-                return self._send(200, SESSION.state())
+                return self._send(200, _compact_interactive_state(SESSION.state()))
             if reset_requested:
                 RESTORED_SESSION_ACTIVE = False
             key = (qs.get("scenario") or ["short_term"])[0]
@@ -888,50 +931,78 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(500, {"error": f"创建会话失败: {e}"})
                 state = SESSION.state()
                 save_session_checkpoint(state)
-                return self._send(200, state)
+                return self._send(200, _compact_interactive_state(state))
             finally:
                 STEP_LOCK.release()
 
         if url.path == '/api/interactive/entities':
-            if SESSION is None:
-                return self._send(404, {'error': 'no session'})
             from entity_records import EntityRecordIndex
             if not ENTITY_READ_LOCK.acquire(timeout=15):
                 return self._send(503, {'error': '查询队列繁忙，请稍后重试'})
             try:
-                if not STEP_LOCK.acquire(blocking=False):
-                    return self._send(409, {'error': '记忆正在写入，请稍后刷新'})
                 try:
+                    offset = max(0, int((qs.get('offset') or ['0'])[0]))
+                    limit = max(1, min(50, int((qs.get('limit') or ['12'])[0])))
+                except ValueError:
+                    return self._send(400, {'error': 'offset 和 limit 必须是整数'})
+                scenario = (qs.get('scenario') or
+                            [SESSION.key if SESSION is not None else 'custom_test'])[0]
+                if scenario not in ('short_term', 'long_term', 'custom_test'):
+                    return self._send(400, {'error': 'unknown scenario'})
+                if SESSION is not None and scenario == SESSION.key:
+                    if not STEP_LOCK.acquire(blocking=False):
+                        return self._send(409, {'error': '记忆正在写入，请稍后刷新'})
                     try:
-                        offset = max(0, int((qs.get('offset') or ['0'])[0]))
-                    except ValueError:
-                        return self._send(400, {'error': 'offset 必须是整数'})
-                    layer7 = SESSION.mem.memory.get('layer7') or {}
-                    moments = layer7.get('moments') or {}
-                    revision = (
-                        getattr(SESSION, 'extraction_batch_id', id(SESSION)),
-                        int(getattr(SESSION, 'pos', 0) or 0),
-                        len(getattr(SESSION, 'operation_log', []) or []),
-                        len(moments),
-                    )
-                    index = getattr(SESSION, '_entity_record_index', None)
-                    if (index is None or
-                            getattr(SESSION, '_entity_record_index_revision', None) != revision):
-                        index = EntityRecordIndex(layer7)
-                        SESSION._entity_record_index = index
-                        SESSION._entity_record_index_revision = revision
-                    result = index.query(kind=(qs.get('kind') or ['all'])[0],
-                                         query=(qs.get('q') or [''])[0], offset=offset)
-                    for item in result['items']:
-                        for event in item['events']:
-                            for ref in event['images']:
-                                if ref.get('asset'):
-                                    ref['url'] = '/api/memory_asset?p=' + quote(ref['asset'])
-                                if ref.get('source_asset'):
-                                    ref['source_url'] = '/api/memory_asset?p=' + quote(ref['source_asset'])
-                    return self._send(200, result)
-                finally:
-                    STEP_LOCK.release()
+                        layer7 = SESSION.mem.memory.get('layer7') or {}
+                        moments = layer7.get('moments') or {}
+                        revision = (
+                            getattr(SESSION, 'extraction_batch_id', id(SESSION)),
+                            int(getattr(SESSION, 'pos', 0) or 0),
+                            len(getattr(SESSION, 'operation_log', []) or []),
+                            len(moments),
+                        )
+                        index = getattr(SESSION, '_entity_record_index', None)
+                        if (index is None or
+                                getattr(SESSION, '_entity_record_index_revision', None) != revision):
+                            index = EntityRecordIndex(layer7)
+                            SESSION._entity_record_index = index
+                            SESSION._entity_record_index_revision = revision
+                        result = index.query(kind=(qs.get('kind') or ['all'])[0],
+                                             query=(qs.get('q') or [''])[0], offset=offset, limit=limit)
+                    finally:
+                        STEP_LOCK.release()
+                else:
+                    memory_path = RUNS / 'interactive_mem' / scenario / 'memory.json'
+                    if not memory_path.is_file() and scenario in SCENARIOS:
+                        memory_path = RUNS / SCENARIOS[scenario]['memory']
+                    try:
+                        stat = memory_path.stat()
+                    except OSError:
+                        return self._send(404, {'error': '该场景还没有已保存的记忆'})
+                    signature = (str(memory_path.resolve()), stat.st_mtime_ns, stat.st_size)
+                    cached = ENTITY_ARCHIVE_INDEX_CACHE.get(scenario)
+                    if not cached or cached[0] != signature:
+                        memory = load_json(memory_path)
+                        if not isinstance(memory, dict):
+                            return self._send(404, {'error': '该场景还没有已保存的记忆'})
+                        index = EntityRecordIndex(memory.get('layer7') or {})
+                        ENTITY_ARCHIVE_INDEX_CACHE[scenario] = (signature, index)
+                    else:
+                        index = cached[1]
+                    result = index.query(
+                        kind=(qs.get('kind') or ['all'])[0],
+                        query=(qs.get('q') or [''])[0], offset=offset, limit=limit)
+                for item in result['items']:
+                    for event in item['events']:
+                        for ref in event['images']:
+                            if ref.get('asset'):
+                                ref['url'] = '/api/memory_asset?p=' + quote(ref['asset'])
+                            if ref.get('source_asset'):
+                                ref['source_url'] = '/api/memory_asset?p=' + quote(ref['source_asset'])
+                            if ref.get('at_s') is None:
+                                ref['at_s'] = ref.get('frame_time_s', 0)
+                result['scenario'] = scenario
+                return self._send(200, result)
             finally:
                 ENTITY_READ_LOCK.release()
 
@@ -983,7 +1054,7 @@ class Handler(BaseHTTPRequestHandler):
         if url.path == "/api/interactive/state":
             if SESSION is None:
                 return self._send(404, {"error": "no session"})
-            return self._send(200, SESSION.state())
+            return self._send(200, _compact_interactive_state(SESSION.state()))
 
         if url.path == "/api/interactive/retry_failed":
             if SESSION is None:
@@ -1079,7 +1150,7 @@ class Handler(BaseHTTPRequestHandler):
                 response = SESSION.state()
                 response["retry_results"] = retry_results
                 response["remaining_failed"] = remaining
-                return self._send(200, response)
+                return self._send(200, _compact_interactive_state(response))
             except Exception as exc:
                 SESSION._set_step_progress(running=False, stage="error",
                                            message=f"失败片段重试出错：{str(exc)[:240]}")
@@ -1168,7 +1239,7 @@ class Handler(BaseHTTPRequestHandler):
                 st["last_force"] = force
                 st["auto_paused"] = SESSION.auto_paused
                 save_session_checkpoint(st)
-                return self._send(200, st)
+                return self._send(200, _compact_interactive_state(st))
             finally:
                 ACTIVE_STEP_FORCE = False
                 ACTIVE_STEP_RUNNING = False
@@ -1324,7 +1395,7 @@ class Handler(BaseHTTPRequestHandler):
             SESSION._log_snapshot(label, operation, message, perception)
             state = SESSION.state()
             state["last_result"] = message
-            return self._send(200, state)
+            return self._send(200, _compact_interactive_state(state))
         finally:
             STEP_LOCK.release()
 

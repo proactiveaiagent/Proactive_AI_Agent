@@ -114,11 +114,18 @@ def load_moments(all_profiles: bool) -> list[dict]:
 
 def load_scoped_moments(short_half: bool, custom_all: bool,
                         long_participants: list[str] | None,
-                        short_first: int | None = None) -> tuple[list[dict], str]:
+                        short_first: int | None = None,
+                        short_all: bool = False) -> tuple[list[dict], str]:
     """Load only the explicitly requested profiles for a focused warm run."""
     profiles = []
     labels = []
-    if short_first is not None:
+    if short_all:
+        profiles.extend([
+            ("short-base-all", ir._load_jsonl(ir.SHORT_FILE)),
+            ("short-expanded-all", ir._load_jsonl(ir.SHORT_EXPANDED_FILE)),
+        ])
+        labels.append("all short-term clips")
+    elif short_first is not None:
         count = max(0, int(short_first))
         profiles.extend([
             ("short-base-first", ir._load_jsonl(ir.SHORT_FILE)[:count]),
@@ -603,12 +610,13 @@ def resolve_cached_perception(perceiver: QwenPerceiver, moment: dict, entry: dic
 def run(limit: int | None = None, dry_run: bool = False,
         all_profiles: bool = False, short_half: bool = False,
         custom_all: bool = False, long_participants: list[str] | None = None,
-        short_first: int | None = None) -> dict:
-    scoped = short_half or short_first is not None or custom_all or bool(long_participants)
+        short_first: int | None = None, short_all: bool = False) -> dict:
+    scoped = short_half or short_first is not None or short_all or custom_all or bool(long_participants)
     if all_profiles and scoped:
         raise ValueError("--all-profiles cannot be combined with focused profile selections")
     if scoped:
-        moments, scope = load_scoped_moments(short_half, custom_all, long_participants, short_first)
+        moments, scope = load_scoped_moments(
+            short_half, custom_all, long_participants, short_first, short_all)
     else:
         moments = load_moments(all_profiles)
         scope = "all selectable profiles" if all_profiles else "custom test set"
@@ -625,6 +633,8 @@ def run(limit: int | None = None, dry_run: bool = False,
         "grounding_hit": 0, "grounding_source_hit": 0, "grounding_new": 0,
         "grounding_failed": 0, "grounding_not_needed": 0,
         "audio_hit": 0, "audio_new": 0, "audio_failed": 0, "audio_silent": 0,
+        "person_grounding_hit": 0, "person_grounding_new": 0,
+        "person_grounding_failed": 0, "person_grounding_not_needed": 0,
     }
 
     if dry_run:
@@ -673,6 +683,27 @@ def run(limit: int | None = None, dry_run: bool = False,
             else:
                 totals["grounding_failed"] += 1
                 log(f"video asset unavailable for object grounding: {mid}")
+            person_rows = fields.get("person_observations") or []
+            if entry.get("prompt_version") != PROMPT_VERSION or not person_rows:
+                totals["person_grounding_not_needed"] += 1
+            elif video:
+                start, end = clip_range(moment)
+                person_frames = media.sample_visual_candidates(
+                    video, start, end, source_id=mid, count=7)
+                person_labels = [
+                    "person-crop-v1: " + str(row.get("entity") or "").strip()
+                    + " | " + str(row.get("appearance") or "").strip()
+                    for row in person_rows[:8] if isinstance(row, dict)
+                ]
+                if person_frames and person_labels:
+                    person_key = grounding_cache.key(mid, person_labels, person_frames)
+                    person_cached, _ = grounding_cache.get(person_key)
+                    totals["person_grounding_hit" if person_cached is not None
+                           else "person_grounding_new"] += 1
+                else:
+                    totals["person_grounding_failed"] += 1
+            else:
+                totals["person_grounding_failed"] += 1
             found_audio = False
             for _, _, audio_data in video_audio_chunks(moment):
                 found_audio = True
@@ -688,6 +719,10 @@ def run(limit: int | None = None, dry_run: bool = False,
         health = requests.get(api_url + "/health", timeout=5).json()
         if not health.get("model_loaded") or not health.get("whisper_loaded"):
             raise RuntimeError(f"Qwen/Whisper API is not fully loaded: {api_url}")
+        if not isinstance(health.get("gpu"), dict) or not health["gpu"].get("name"):
+            raise RuntimeError(
+                f"CUDA is unavailable at {api_url}; refusing to run cache prewarm on CPU"
+            )
         health_rows.append((api_url, health))
     log(f"healthy model endpoints: {len(health_rows)}")
 
@@ -812,6 +847,54 @@ def run(limit: int | None = None, dry_run: bool = False,
                     f"(source fast-path {totals['grounding_source_hit']}), new {totals['grounding_new']}, "
                     f"failed {totals['grounding_failed']}")
 
+    # Person grounding shares the persistent grounding cache used by interactive steps.
+    def ground_person_one(index, moment):
+        mid = str(moment.get("id") or "")
+        entry = perceiver.cache.get(mid) or {}
+        fields = entry.get("fields") or {}
+        rows = [row for row in fields.get("person_observations") or []
+                if isinstance(row, dict) and str(row.get("entity") or "").strip()]
+        if entry.get("prompt_version") != PROMPT_VERSION or not rows:
+            return {"person_grounding_not_needed": 1}
+        video = video_path_of(moment)
+        if not video:
+            return {"person_grounding_failed": 1, "id": mid, "error": "video asset unavailable"}
+        start, end = clip_range(moment)
+        frames = media.sample_visual_candidates(video, start, end, source_id=mid, count=7)
+        labels = ["person-crop-v1: " + str(row.get("entity") or "").strip()
+                  + " | " + str(row.get("appearance") or "").strip() for row in rows[:8]]
+        if not frames or not labels:
+            return {"person_grounding_failed": 1, "id": mid, "error": "person-frame sample unavailable"}
+        key = grounding_cache.key(mid, labels, frames)
+        cached, _ = grounding_cache.get(key)
+        if cached is not None:
+            return {"person_grounding_hit": 1}
+        try:
+            result = perceiver.ground_people(rows, frames)
+            if grounding_cache.put(key, result) and result.get("status") == "completed":
+                return {"person_grounding_new": 1}
+            return {"person_grounding_failed": 1, "id": mid,
+                    "error": str(result.get("message") or result.get("status") or "not cached")[:160]}
+        except Exception as exc:
+            return {"person_grounding_failed": 1, "id": mid, "error": str(exc)[:160]}
+
+    with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="person-ground-warm") as pool:
+        futures = {pool.submit(ground_person_one, index, moment): index
+                   for index, moment in enumerate(moments, 1)}
+        for completed, future in enumerate(as_completed(futures), 1):
+            try:
+                result = future.result()
+            except Exception as exc:
+                result = {"person_grounding_failed": 1, "error": str(exc)[:160]}
+            for key in ("person_grounding_hit", "person_grounding_new",
+                        "person_grounding_failed", "person_grounding_not_needed"):
+                totals[key] += int(result.get(key, 0) or 0)
+            if result.get("error"):
+                log(f"person-frame grounding issue {result.get('id','')}: {result['error']}")
+            if completed % PROGRESS_EVERY == 0 or completed == len(moments):
+                log(f"person-frame cache {completed}/{len(moments)}: hit {totals['person_grounding_hit']}, "
+                    f"new {totals['person_grounding_new']}, failed {totals['person_grounding_failed']}")
+
     # Decode and transcribe audio in parallel; each miss is sent round-robin to
     # an API server bound to one GPU. Cache writes remain atomic and serialized.
     def transcribe_one(index, moment):
@@ -881,6 +964,8 @@ if __name__ == "__main__":
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--all-profiles", action="store_true")
     short_group = parser.add_mutually_exclusive_group()
+    short_group.add_argument("--short-all", action="store_true",
+                             help="include all clips in both short-term sets")
     short_group.add_argument("--short-half", action="store_true",
                              help="evenly sample half of both short-term sets")
     short_group.add_argument("--short-first", type=int, metavar="N",
@@ -895,4 +980,5 @@ if __name__ == "__main__":
         parser.error("--short-first must be at least 1")
     run(limit=args.limit, dry_run=args.dry_run, all_profiles=args.all_profiles,
         short_half=args.short_half, custom_all=args.custom_all,
-        long_participants=long_participants, short_first=args.short_first)
+        long_participants=long_participants, short_first=args.short_first,
+        short_all=args.short_all)

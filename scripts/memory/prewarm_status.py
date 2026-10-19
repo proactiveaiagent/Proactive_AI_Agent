@@ -13,6 +13,8 @@ _STAGE_LABELS = {
     "audio": "语音转写文本",
     "complete": "全部完成",
     "reconciling": "核对剩余缓存",
+    "person_grounding": "人物定位与裁剪",
+    "waiting_for_gpu": "等待可用 GPU",
     "stopped": "已停止",
 }
 _PERCEPTION = re.compile(
@@ -29,6 +31,9 @@ _GROUNDING = re.compile(
 _AUDIO = re.compile(
     r"audio transcript cache (\d+)/(\d+): hit (\d+), new (\d+), "
     r"failed (\d+), silent (\d+)"
+)
+_PERSON_GROUNDING = re.compile(
+    r"person-frame cache (\d+)/(\d+): hit (\d+), new (\d+), failed (\d+)"
 )
 _COMPLETE = re.compile(r"multimodal cache pass complete: (\{.*\})")
 _QUEUE_COMPLETE = re.compile(r"v7\.\d+ cache refresh complete and audited: (\d+) clips")
@@ -62,6 +67,7 @@ def parse_multimodal_prewarm_log(text: str, *, running: bool = False,
                       "new": 0, "failed": 0},
         "audio": {"done": 0, "total": 0, "hit": 0, "new": 0,
                   "failed": 0, "silent": 0},
+        "person_grounding": {"done": 0, "total": 0, "hit": 0, "new": 0, "failed": 0},
         "final_totals": None,
         "error": None,
     }
@@ -114,6 +120,15 @@ def parse_multimodal_prewarm_log(text: str, *, running: bool = False,
             out.update(stage="audio", done=done, total=total,
                        cache_hits=hit, new=new, failed=failed)
             continue
+        match = _PERSON_GROUNDING.search(line)
+        if match:
+            done, total, hit, new, failed = map(int, match.groups())
+            out["person_grounding"] = {
+                "done": done, "total": total, "hit": hit, "new": new, "failed": failed,
+            }
+            out.update(stage="person_grounding", done=done, total=total,
+                       cache_hits=hit, new=new, failed=failed)
+            continue
         match = _COMPLETE.search(line)
         if match:
             try:
@@ -162,7 +177,7 @@ def _active_all_profiles_process(proc_root: Path, root: Path):
                 Path(arg.decode("utf-8", "ignore")).name == "prewarm_multimodal_evidence.py"
                 for arg in args if arg
             )
-            if not script_match or b"--all-profiles" not in args:
+            if not script_match:
                 continue
             raw_log = os.readlink(str(entry / "fd" / "1"))
             raw_log = raw_log.removesuffix(" (deleted)")
@@ -170,6 +185,26 @@ def _active_all_profiles_process(proc_root: Path, root: Path):
             if not log_path.is_absolute():
                 log_path = root / log_path
             return int(entry.name), (log_path if log_path.is_file() else None)
+        except (OSError, ValueError, PermissionError):
+            continue
+    return None
+
+
+def _active_requested_scope_watcher(proc_root: Path):
+    try:
+        entries = list(proc_root.iterdir())
+    except OSError:
+        return None
+    for entry in entries:
+        if not entry.name.isdigit():
+            continue
+        try:
+            args = [part.decode("utf-8", "ignore")
+                    for part in (entry / "cmdline").read_bytes().split(b"\0") if part]
+            if not any(Path(arg).name == "codex_prewarm_retry_4gpu_20261019.sh"
+                       for arg in args):
+                continue
+            return int(entry.name)
         except (OSError, ValueError, PermissionError):
             continue
     return None
@@ -223,6 +258,26 @@ def multimodal_prewarm_status(root: Path, proc_root: Path = Path("/proc")):
             text, running=True, pid=pid,
             log_path=str(log_path) if log_path else None,
         )
+    watcher_pid = _active_requested_scope_watcher(Path(proc_root))
+    if watcher_pid is not None:
+        log_path = Path("/tmp/codex_prewarm_retry_4gpu_20261019.log")
+        text = _read_tail(log_path)
+        timestamps = re.findall(r"^\[([^]]+)\]", text, re.M)
+        attempts = re.findall(r"starting attempt (\d+)", text)
+        out = parse_multimodal_prewarm_log(
+            "", running=True, pid=watcher_pid, log_path=str(log_path),
+        )
+        out.update(
+            task="requested_scope_excluding_jake",
+            scope=("all short-term clips + all custom clips + long-term "
+                   "Alice, Tasha, Lucia, Katrina, Shure"),
+            status="running", running=True, stage="waiting_for_gpu",
+            stage_label=_STAGE_LABELS["waiting_for_gpu"], done=0, total=3856,
+            updated_at=timestamps[-1] if timestamps else None,
+            attempt=int(attempts[-1]) if attempts else 0,
+            error=None,
+        )
+        return out
     queue = _active_prewarm_queue_process(Path(proc_root))
     if queue:
         pid, log_path = queue
@@ -244,8 +299,9 @@ def multimodal_prewarm_status(root: Path, proc_root: Path = Path("/proc")):
             out.update(status="running", running=True, stage="reconciling",
                        stage_label=_STAGE_LABELS["reconciling"], error=None)
         return out
-    candidates = sorted((root / "logs").glob("prewarm_multimodal_*.log"),
-                        key=lambda p: p.stat().st_mtime, reverse=True)
+    candidates = list((root / "logs").glob("prewarm_multimodal_*.log"))
+    candidates.extend((root / "logs").glob("prewarm_richer_memory_4gpu_retry_*.log"))
+    candidates = sorted(candidates, key=lambda p: p.stat().st_mtime, reverse=True)
     if not candidates:
         return None
     log_path = candidates[0]

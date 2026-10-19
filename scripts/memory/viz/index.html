@@ -85,7 +85,24 @@ input[type=range]{flex:1;min-width:200px;accent-color:var(--brand)}
 .body{font-size:13.5px;color:#3a4058;background:#fff;border-radius:7px;padding:8px 10px;max-height:120px;overflow-y:auto;border:1px solid var(--border)}
 .body .empty{color:#9aa0c3;font-style:italic}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+
 .profile-panel{display:block}
+.person-memory-section{margin-top:18px;padding-top:16px;border-top:1px solid #e7ebf3}
+.person-memory-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0 0 5px;color:#33415d;font-size:17px}
+.person-memory-intro{margin:0 0 12px;color:#71809a;font-size:13px;line-height:1.55}
+.person-memory-search{width:min(100%,440px);margin:0 0 10px;padding:8px 10px;border:1px solid #dce4f0;border-radius:9px;background:#fff;color:#34435e;font:inherit;font-size:13px}.person-memory-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,480px),1fr));gap:10px}
+.person-memory-card{display:grid;grid-template-columns:minmax(0,1fr) 150px;gap:10px;width:100%;padding:13px 14px;border:1px solid #dfe6f1;border-radius:12px;background:#fff;color:#34435e;text-align:left;font:inherit;min-width:0}
+.person-memory-card-main{min-width:0}
+.person-memory-card-title{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin:0 0 7px;color:#263752;font-weight:800;font-size:15px}
+.person-memory-card-title small{color:#7b879b;font-size:12px;font-weight:600}
+.person-memory-fact{margin:5px 0;color:#4e5e78;font-size:13px;line-height:1.5;overflow-wrap:anywhere}
+.person-memory-fact b{color:#5c6d8a}
+.person-memory-images{display:grid;grid-template-columns:1fr;align-content:start;gap:6px}
+.person-memory-images img{width:100%;height:82px;object-fit:cover;border:1px solid #e0e7f0;border-radius:8px;background:#eef2f8}
+.person-memory-empty{padding:12px 14px;border:1px dashed #dce4ef;border-radius:10px;background:#f9fbfe;color:#73819a;font-size:13px;line-height:1.55}
+.person-memory-loading{color:#73819a;font-size:13px;padding:8px 0}
+@media(max-width:620px){.person-memory-card{grid-template-columns:minmax(0,1fr) 100px;padding:10px}.person-memory-images img{height:68px}}
+
 @media(max-width:860px){.grid2{grid-template-columns:1fr}}
 table{width:100%;border-collapse:collapse;font-size:14px}
 th{background:var(--code);color:#3a4058;text-align:left;padding:6px 10px;font-weight:600}
@@ -738,7 +755,7 @@ body{height:100vh;height:100dvh;min-height:0;display:flex;flex-direction:column}
 .entity-graph-head{display:flex;justify-content:space-between;gap:8px;color:#43516b;font-size:13px;font-weight:800}
 .entity-graph-rows{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px;margin-top:6px}
 .entity-graph-row{min-width:0;padding:6px 8px;background:#fff;border:1px solid #e4eaf3;border-radius:7px;font-size:12px;line-height:1.45;overflow-wrap:anywhere}
-.entity-graph-row-head{color:#7b879c;font-size:12px;margin-bottom:5px}.entity-graph-chips{display:flex;gap:5px;flex-wrap:wrap}.entity-graph-chip{display:inline-block;padding:3px 7px;border:1px solid #e4eaf3;border-radius:999px;background:#f8faff;color:#5e6c84;font-size:11px}.entity-graph-chip b{color:#394b68}
+.entity-graph-row-head{display:block;width:100%;padding:0;margin:0 0 5px;border:0;background:transparent;color:#66758f;text-align:left;font:inherit;font-size:12px;line-height:1.45;overflow-wrap:anywhere}.entity-graph-chips{display:flex;gap:5px;flex-wrap:wrap}.entity-graph-chip{display:inline-flex;align-items:baseline;gap:4px;max-width:100%;padding:4px 8px;border:1px solid #e4eaf3;border-radius:999px;background:#f8faff;color:#5e6c84;text-align:left;font:inherit;font-size:11px;line-height:1.4;overflow-wrap:anywhere}.entity-graph-chip b{flex:0 0 auto;color:#394b68}.entity-graph-chip span{min-width:0;overflow-wrap:anywhere}.entity-evidence-text{overflow:auto}
 .entity-graph-panel .layer-strip-meta{display:block;margin-top:6px;color:#78849a;font-size:12px}
 .event-memory-list{display:grid;gap:10px;margin:12px 0 16px}
 .event-memory-card{padding:13px 15px;border:1px solid #dbe5f2;border-left:4px solid #5368df;border-radius:11px;background:#fff;box-shadow:0 2px 8px #263d6410}
@@ -1198,6 +1215,78 @@ pre,code{font-family:"Cascadia Code","SFMono-Regular",Consolas,"Liberation Mono"
   .card h2,.eval-heading h2{font-size:17px}
 }
 
+/* Lay multimodal evidence out as full-width groups with entity cards in horizontal rows. */
+.media-evidence-lists,
+.memory-supplement-body .media-evidence-lists,
+.fullmem .layer-section .media-evidence-lists{
+  grid-template-columns:minmax(0,1fr)!important;
+}
+.object-visual-list,
+.memory-supplement-body .object-visual-list,
+.fullmem .layer-section .object-visual-list{
+  grid-template-columns:repeat(auto-fill,minmax(min(100%,320px),1fr))!important;
+  align-content:start;
+}
+.object-visual-list>b,
+.memory-supplement-body .object-visual-list>b,
+.fullmem .layer-section .object-visual-list>b{
+  grid-column:1/-1!important;
+}
+/* Stacked photo albums: hover cycles the cover; the whole memory card opens its gallery. */
+.memory-photo-album{
+  position:relative;isolation:isolate;width:164px;height:108px;margin:11px 0 7px 9px;
+  perspective:760px;cursor:pointer;overflow:visible
+}
+.memory-photo-album-page{
+  position:absolute;inset:0;width:100%;height:100%;padding:4px;border:1px solid #d8e1ef;
+  border-radius:9px;background:#fff;object-fit:cover;box-shadow:0 5px 12px #27395824;
+  transition:transform .28s ease,box-shadow .28s ease
+}
+.memory-photo-album .album-back{z-index:1;transform:translate(-7px,4px) rotate(-7deg)}
+.memory-photo-album .album-middle{z-index:2;transform:translate(4px,-4px) rotate(5deg)}
+.memory-photo-album .album-cover{z-index:3;transform:rotate(-1deg)}
+.memory-photo-album:hover .album-cover,.memory-photo-album.is-cycling .album-cover{box-shadow:0 9px 20px #27395838}
+.memory-photo-album .album-cover.is-turning{animation:memoryAlbumPageTurn .36s ease}
+.memory-photo-album-count{
+  position:absolute;z-index:5;right:-7px;bottom:-7px;padding:3px 7px;border:1px solid #dce4f1;
+  border-radius:999px;background:#fff;color:#52627d;font-size:11px;font-weight:700;box-shadow:0 2px 6px #2538581c
+}
+@keyframes memoryAlbumPageTurn{
+  0%{transform:rotate(-1deg) translateX(0) rotateY(0);opacity:1}
+  45%{transform:rotate(5deg) translateX(13px) rotateY(-24deg);opacity:.72}
+  100%{transform:rotate(-1deg) translateX(0) rotateY(0);opacity:1}
+}
+.entity-evidence-gallery{
+  grid-column:2;grid-row:1/3;display:grid!important;
+  grid-template-columns:42px minmax(0,1fr) 42px;grid-template-rows:minmax(0,1fr) auto auto;
+  gap:7px 8px;align-items:stretch;min-width:0;min-height:0;height:100%;overflow:hidden
+}
+.entity-evidence-gallery[data-gallery-count="1"]{grid-template-columns:minmax(0,1fr)}
+.entity-evidence-current{grid-column:2;grid-row:1;display:grid;grid-template-rows:minmax(0,1fr) auto;min-width:0;min-height:0;height:100%;margin:0;padding:7px;border:1px solid #e0e7f2;border-radius:12px;background:#f8faff;overflow:hidden}
+.entity-evidence-gallery[data-gallery-count="1"] .entity-evidence-current{grid-column:1}
+.entity-evidence-current img{display:block;width:100%;height:100%;min-height:0;object-fit:contain;border-radius:8px;background:#e9eef6;cursor:zoom-in}
+.entity-evidence-current figcaption{padding:6px 3px 1px;color:#697992;font-size:12px;line-height:1.35;text-align:center}
+.entity-evidence-gallery-nav{grid-row:1;align-self:center;justify-self:center;width:36px;height:42px;border:1px solid #dbe3f0;border-radius:999px;background:#fff;color:#5268cb;font-size:26px;line-height:1;cursor:pointer;box-shadow:0 3px 10px #263d6412}
+.entity-evidence-gallery-nav:first-child{grid-column:1}
+.entity-evidence-gallery-nav:last-of-type{grid-column:3}
+.entity-evidence-gallery-nav:hover{background:#eef2ff;border-color:#b9c6f4}
+.entity-evidence-gallery-status{grid-column:1/-1;grid-row:2;display:flex;justify-content:space-between;gap:8px;color:#71809a;font-size:12px}
+.entity-evidence-gallery-counter{color:#4359bd;font-weight:750;font-variant-numeric:tabular-nums}
+.entity-evidence-gallery-thumbs{grid-column:1/-1;grid-row:3;display:flex;gap:7px;min-width:0;max-width:100%;overflow-x:auto;padding:3px 1px 5px}
+.entity-evidence-gallery-thumb{position:relative;flex:0 0 82px;width:82px;padding:3px;border:1px solid #dce4f0;border-radius:8px;background:#fff;color:#687791;cursor:pointer}
+.entity-evidence-gallery-thumb img{display:block;width:100%;height:48px;object-fit:cover;border-radius:5px;background:#e9eef6}
+.entity-evidence-gallery-thumb span{display:block;padding-top:2px;font-size:10px;text-align:center}
+.entity-evidence-gallery-thumb.active{border-color:#6174e8;box-shadow:0 0 0 2px #6174e82b}
+.entity-evidence-gallery-thumb.unavailable{opacity:.45}
+@media(max-width:700px){
+  .memory-photo-album{width:150px;height:100px}
+  .entity-evidence-gallery{grid-column:1;grid-row:3;grid-template-columns:34px minmax(0,1fr) 34px;grid-template-rows:minmax(0,1fr) auto auto;gap:6px 4px}
+  .entity-evidence-gallery[data-gallery-count="1"]{grid-template-columns:minmax(0,1fr)}
+  .entity-evidence-gallery-nav{width:30px;height:36px;font-size:22px}
+  .entity-evidence-gallery-thumb{flex-basis:70px;width:70px}
+  .entity-evidence-gallery-thumb img{height:42px}
+}
+@media(prefers-reduced-motion:reduce){.memory-photo-album-page{transition:none}.memory-photo-album .album-cover.is-turning{animation:none}}
 </style>
 </head>
 <body>
@@ -1241,7 +1330,7 @@ pre,code{font-family:"Cascadia Code","SFMono-Regular",Consolas,"Liberation Mono"
     <button class="view-tab" role="tab" aria-selected="true" data-view="overview">记忆流动</button>
     <button class="view-tab" role="tab" aria-selected="false" data-view="interactive">当前步骤</button>
     <button class="view-tab" role="tab" aria-selected="false" data-view="layers">记忆详情</button>
-    <button class="view-tab" role="tab" aria-selected="false" data-view="index">人物画像</button>
+    <button class="view-tab" role="tab" aria-selected="false" data-view="index">人物记忆</button>
     <button class='view-tab' role='tab' aria-selected='false' data-view='evaluation'>评估指标</button>
     <button class="view-tab" role="tab" aria-selected="false" data-view="log">操作日志</button>
   </nav>
@@ -1263,7 +1352,7 @@ pre,code{font-family:"Cascadia Code","SFMono-Regular",Consolas,"Liberation Mono"
       <div class="toolbar" id="intControls">
         <button class="btn" onclick="newSession(curKey||'short_term', intState&&intState.participant, intState&&intState.dataset_key, true)">🔄 重开当前会话</button>
         <div class="step-info" id="intProgress">未开始</div>
-        <button class="btn" id="prewarmBtn" onclick="prewarm()" title="仅补齐当前测试集的 Qwen 感知缓存；物品画面对照与语音转写文本为独立缓存">🔎 补齐视频感知缓存</button>
+        <button class="btn" id="prewarmBtn" onclick="prewarm()" title="补齐当前测试集的视频感知和人物画像缓存">🔎 补齐视频感知缓存</button>
         <div class="qstat" id="qstat">—</div>
       </div>
       <div class="pbar"><div id="intBar" style="width:0%"></div></div>
@@ -1331,10 +1420,10 @@ pre,code{font-family:"Cascadia Code","SFMono-Regular",Consolas,"Liberation Mono"
           <div class="flow-metric"><b id="flowL6">0</b><span><b class="layer-token layer-tone-l6">L6</b> · 字段槽</span></div>
         </div>
       </article>
-      <div class="flow-arrow"><span>建立检索入口<br>保留原始事实</span><i>→</i></div>
+      <div class="flow-arrow"><span>建立检索入口<br>归档人物画像与场景脉络</span><i>→</i></div>
       <article class="flow-stage" data-stage="archive">
-        <div class="flow-stage-head"><span class="flow-no">03</span><h3>索引与归档<small>让事实可检索、可追溯 · <b class="layer-token layer-tone-l7">L7</b></small></h3></div>
-        <p>保留原始事实，按人物、地点、时间、活动、环境和物品检索。</p>
+        <div class="flow-stage-head"><span class="flow-no">03</span><h3>索引与归档<small>让人物画像与场景记忆可检索、可追溯 · <b class="layer-token layer-tone-l7">L7</b></small></h3></div>
+        <p>以人物为主体，结合关系、场景、地点、时间、活动、环境和物品建立检索入口。</p>
         <div class="flow-metrics">
           <div class="flow-metric"><b id="flowL7">0</b><span><b class="layer-token layer-tone-l7">L7</b> · 主存储记录</span></div>
           <div class="flow-metric"><b id="flowIndex">0</b><span>六维索引键</span></div>
@@ -1352,10 +1441,10 @@ pre,code{font-family:"Cascadia Code","SFMono-Regular",Consolas,"Liberation Mono"
   </div>
   </section>
 
-  <section class="content-panel" data-view-panel="index" role="tabpanel" aria-label="人物画像">
+  <section class="content-panel" data-view-panel="index" role="tabpanel" aria-label="人物记忆">
   <div class="profile-panel">
     <div class="card">
-      <h2><span class="dot"></span><span class="layer-token layer-tone-l6">L6</span> · 人物画像</h2>
+      <h2><span class="dot"></span>人物记忆</h2>
       <div id="profile"></div>
     </div>
   </div>
@@ -1503,6 +1592,7 @@ const initialContentView = (() => {
 })();
 const API = location.origin;
 let scenarios = [], curKey = null, snaps = [], cur = 0, timer = null, memory = null;
+let personMemoryData = null, personMemoryKey = "", personMemoryLoading = false, personMemoryRequest = 0, personMemorySearchText = "";
 let heroFeishuOptions = [];
 let replayLoaded = false, playbackDelay = 600, selectionRequest = 0;
 
@@ -1513,7 +1603,7 @@ const LAYER_META = [
   {k:'layer4', no:'L4', ttl:'近期摘要', family:'summary', kind:'日级压缩摘要', desc:'保留近期状态，不再逐条保存事件正文。', scope:'日级 · 约 30 天（建议值）', trigger:'夜间 compress()', flow:'近期任务与生活动线可并入 L5', use:'近期状态 / 当前任务'},
   {k:'layer5', no:'L5', ttl:'远期摘要', family:'summary', kind:'跨日长期摘要', desc:'从多日证据归纳关键事件与长期模式。', scope:'周/月级 · 约 90 天（建议值）', trigger:'夜间 rollup / compress()', flow:'稳定事实经裁决后进入 L6', use:'跨日模式与关键事件'},
   {k:'layer6', no:'L6', ttl:'用户画像', family:'profile', kind:'稳定属性画像', desc:'只放可溯源、带置信度的稳定用户属性。', scope:'长期保留 · stale 后退出检索', trigger:'夜间候选验证 → update_profile()', flow:'衰减标 stale；保留历史供审计', use:'长期个性化'},
-  {k:'layer7', no:'L7', ttl:'索引归档', family:'index', kind:'事实主存储 + 六维索引', desc:'索引只引用 L7 moment；疑似重复事件先给候选，需人工确认后归并，来源原文和多模态资产保留。', scope:'永久归档', trigger:'每次 add()；夜间 sort()/combine()', flow:'按维度定位事实，不重复生成副本', use:'追溯 / 精确查找'},
+  {k:'layer7', no:'L7', ttl:'索引归档', family:'index', kind:'场景记忆主存储 + 六维索引', desc:'人物画像承载外观、身份关系和有用背景；索引链接场景、地点、时间、活动、环境与物品，保留来源画面。', scope:'永久归档', trigger:'每次 add()；夜间 sort()/combine()', flow:'按维度定位来源记忆，不重复生成副本', use:'追溯 / 精确查找'},
 ];
 
 async function init(){
@@ -1796,7 +1886,7 @@ function renderProfileFromFull(p, summary='', layerData={}){
   if(entries.length){
     html+=entries.map(x=>'<div class="profile-attribute'+(x.stale?' stale':'')+'"><b>'+esc(x.path)+'</b><span>'+esc(x.value)+'</span>'+(x.meta?'<small>'+esc(x.meta)+'</small>':'')+'</div>').join('');
   }else if(!summaryText||summaryText==='暂无'){
-    html+='<div class="profile-empty">尚未形成稳定画像。</div>';
+    html+='<div class="profile-empty">暂无证据充分的稳定用户画像；视频中出现的人物画像见下方 L7 人物记忆。</div>';
   }
   html+=renderProfileConflictHistory(p);
   const source=Number(layerData.source_moment_count||0);
@@ -1835,21 +1925,42 @@ function renderSummaryLayer(layer, kind){
   }
   return html;
 }
-function renderVisualEvidenceCards(items,evidenceContext,kind){
+function renderMemoryPhotoAlbum(refs){
+  const frames=(Array.isArray(refs)?refs:[]).filter(ref=>ref&&ref.url).map(ref=>({
+    url:String(ref.url),original:String(ref.source_url||ref.original_url||''),
+    at_s:Number(ref.at_s??ref.frame_time_s??0)
+  })).filter(frame=>frame.url).sort((a,b)=>(Number.isFinite(a.at_s)?a.at_s:0)-(Number.isFinite(b.at_s)?b.at_s:0));
+  if(!frames.length)return '';
+  const n=frames.length;
+  const page=(frame,slot)=>'<img class="memory-photo-album-page '+slot+'" data-album-slot="'+slot+'" src="'+esc(frame.url)+'" alt="" aria-hidden="true" loading="lazy">';
+  const back=n>1?page(frames[(n-1)%n],'album-back'):'';
+  const middle=n>2?page(frames[(n-2)%n],'album-middle'):'';
+  return '<div class="memory-photo-album" data-album-index="0" data-album-frames="'+esc(encodeURIComponent(JSON.stringify(frames)))+'" aria-label="'+n+' 张关联画面，悬停浏览，点击查看相册">'
+    +back+middle+page(frames[0],'album-cover')
+    +'<span class="memory-photo-album-count">'+n+' 帧</span></div>';
+}
+function renderVisualEvidenceCards(items,evidenceContext,kind,grounding){
   if(!Array.isArray(items)||!items.length)return '';
   const labels={person:'人物',object:'物品',scene:'场景',location:'地点',environment:'环境',activity:'活动',event:'事件'};
   const cards=items.map(item=>{
     const refs=(item.frame_refs||[]).filter(ref=>ref&&ref.url);
-    const crops=refs.filter(ref=>ref.visual_role==='person_crop'||ref.visual_role==='object_crop'||ref.crop_bbox);
-    const status=crops.length?'':refs.length?'场景画面':item.status==='no_visual_evidence'?'暂无画面证据':item.status==='not_verified'?'待核验':'未生成裁剪';
-    const frames=refs.slice(0,4).map(ref=>'<figure><img class="object-evidence-thumb" loading="lazy" data-original-url="'+esc(ref.source_url||'')+'" alt="'+esc(item.entity||'记忆实体')+' 对应画面" src="'+esc(ref.url)+'"><figcaption>'+esc(Number.isFinite(Number(ref.at_s))?Number(ref.at_s).toFixed(2)+' 秒':'来源画面')+'</figcaption></figure>').join('');
+    const cropRole=kind==='person'?'person_crop':kind==='object'?'object_crop':'context_crop';
+    const crops=refs.filter(ref=>ref.visual_role===cropRole);
+    const unavailable=grounding&&grounding.status==='unavailable'&&!crops.length;
+    const status=crops.length?'':unavailable?'视觉服务不可用 · 局部画面待重试':refs.length
+      ?(kind==='object'?'':kind==='person'?'尚无可靠人物裁剪 · 点击卡片核对来源画面':'尚无局部场景画面 · 点击卡片查看来源')
+      :item.status==='no_visual_evidence'?'暂无画面证据':item.status==='not_verified'?'模型未能可靠定位 · 待重试':'未生成局部画面';
     const title=(labels[kind]||'实体')+' · '+String(item.entity||'未命名');
     const description=String(item.description||'');
     const cardAttrs=renderEvidenceCardOpenAttrs(refs,evidenceContext,title,description||title);
-    return '<div class="object-visual-card'+(cardAttrs?' memory-evidence-card-trigger':'')+'"'+(cardAttrs?' '+cardAttrs:'')+'><span class="object-visual-name">'+esc(title)+'</span>'+(status?'<span class="object-visual-status">'+esc(status)+'</span>':'')+(description?'<div class="object-visual-description">'+esc(description)+'</div>':'')+(frames?'<div class="object-visual-frames">'+frames+'</div>':'')+'</div>';
+    return '<div class="object-visual-card'+(cardAttrs?' memory-evidence-card-trigger':'')+'"'+(cardAttrs?' '+cardAttrs:'')+'><span class="object-visual-name">'+esc(title)+'</span>'+(status?'<span class="object-visual-status">'+esc(status)+'</span>':'')+(description?'<div class="object-visual-description">'+esc(description)+'</div>':'')+renderMemoryPhotoAlbum(crops)+'</div>';
   }).join('');
   const groupTitle=kind==='person'?'人物对应画面':kind==='object'?'物品对应画面':'地点、环境与活动画面';
-  return '<div class="object-visual-list"><b>'+groupTitle+'</b>'+cards+'</div>';
+  const errorText=String((grounding&&grounding.message)||'');
+  const errorHint=/connection refused|errno 111/i.test(errorText)?'Qwen视觉服务连接被拒绝':/timed? ?out|timeout/i.test(errorText)?'Qwen视觉服务请求超时':'Qwen视觉服务暂不可用';
+  const note=grounding&&grounding.status==='unavailable'
+    ?'<small class="object-index-note" title="'+esc(errorText)+'">'+errorHint+'，局部裁剪待生成；服务恢复后重跑该片段会自动补齐。</small>':'';
+  return '<div class="object-visual-list"><b>'+groupTitle+'</b>'+cards+note+'</div>';
 }
 function renderObjectVisualEvidence(media,evidenceContext){
   const entityItems=(media&&media.entity_visuals&&media.entity_visuals.items)||[];
@@ -1858,7 +1969,7 @@ function renderObjectVisualEvidence(media,evidenceContext){
     const grounding=media&&media.object_visuals;
     items=(grounding&&Array.isArray(grounding.items)?grounding.items:[]).map(item=>({...item,entity:item.object,description:item.appearance}));
   }
-  return renderVisualEvidenceCards(items,evidenceContext,'object');
+  return renderVisualEvidenceCards(items,evidenceContext,'object',media&&media.object_visuals);
 }
 function renderPersonVisualEvidence(media,evidenceContext,contextRecord){
   const entityItems=(media&&media.entity_visuals&&media.entity_visuals.items)||[];
@@ -1870,7 +1981,7 @@ function renderPersonVisualEvidence(media,evidenceContext,contextRecord){
   if(!items.length&&contextRecord){
     items=(contextRecord.person_observations||[]).map(row=>({entity_type:'person',entity:row.entity,description:row.appearance,status:'context_fallback',frame_refs:(media.visual_frames||[]).slice(0,3)}));
   }
-  return renderVisualEvidenceCards(items,evidenceContext,'person');
+  return renderVisualEvidenceCards(items,evidenceContext,'person',media&&media.person_visuals);
 }
 function renderContextVisualEvidence(media,evidenceContext){
   const items=((media&&media.entity_visuals&&media.entity_visuals.items)||[])
@@ -1892,10 +2003,10 @@ function renderMultimodalEvidence(x,evidenceContext){
   const objectEvidence=renderObjectVisualEvidence(media,evidenceContext||x);
   const contextEvidence=renderContextVisualEvidence(media,evidenceContext||x);
   const objectFrameCount=(media.object_visuals&&media.object_visuals.items||[])
-    .reduce((count,item)=>count+(item.frame_refs||[]).filter(ref=>ref&&ref.url&&(ref.visual_role==='object_crop'||ref.crop_bbox)).length,0);
+    .reduce((count,item)=>count+(item.frame_refs||[]).filter(ref=>ref&&ref.url&&ref.visual_role==='object_crop').length,0);
   const personFrameCount=(media.person_visuals&&media.person_visuals.items||[])
-    .reduce((count,item)=>count+(item.frame_refs||[]).filter(ref=>ref&&ref.url&&(ref.visual_role==='person_crop'||ref.crop_bbox)).length,0);
-  const contextFrameCount=entityAssets.filter(ref=>ref&&(ref.visual_role==='context_crop'||ref.crop_bbox)).length;
+    .reduce((count,item)=>count+(item.frame_refs||[]).filter(ref=>ref&&ref.url&&ref.visual_role==='person_crop').length,0);
+  const contextFrameCount=entityAssets.filter(ref=>ref&&ref.visual_role==='context_crop').length;
   const summaryParts=[
     '<span><b>关联画面</b> '+assets.size+' 张</span>',
     '<span><b>人物、物品及场景裁剪</b> '+(personFrameCount+objectFrameCount+contextFrameCount)+' 张</span>',
@@ -1910,21 +2021,14 @@ function renderMultimodalEvidence(x,evidenceContext){
 function renderMemorySupplements(x, className){
   if(!x)return '';
   const people=renderPersonObservations(x.person_observations,x);
-  const facts=renderTemporalFacts(x.temporal_facts,x.person_observations,x);
   const media=renderMultimodalEvidence(x,x);
-  const transcript=String(x.source_evidence||'').trim();
   const personCount=Array.isArray(x.person_observations)?x.person_observations.length:0;
-  const factCount=Array.isArray(x.temporal_facts)?x.temporal_facts.length:0;
-  const hasFacts=!!(people||facts);
+  const hasFacts=!!people;
   const mediaData=x.multimodal||{};
-  const evidenceCount=[...((mediaData.person_visuals&&mediaData.person_visuals.items)||[]),...((mediaData.object_visuals&&mediaData.object_visuals.items)||[])].reduce((sum,item)=>sum+(item.frame_refs||[]).filter(ref=>ref&&ref.url&&(ref.visual_role==='person_crop'||ref.visual_role==='object_crop'||ref.crop_bbox)).length,0);
+  const evidenceCount=[...((mediaData.person_visuals&&mediaData.person_visuals.items)||[]),...((mediaData.object_visuals&&mediaData.object_visuals.items)||[])].reduce((sum,item)=>sum+(item.frame_refs||[]).filter(ref=>ref&&ref.url&&(ref.visual_role==='person_crop'||ref.visual_role==='object_crop')).length,0);
   let html='';
   if(hasFacts){
-    const count=personCount+factCount;
-    html+='<section class="memory-supplement"><div class="memory-supplement-title">人物与事件事实 · '+count+' 条</div><div class="memory-supplement-body">'+people+facts+'</div></section>';
-  }
-  if(transcript){
-    html+='<details class="memory-speech-transcript"><summary>语音转写文字</summary><div>'+esc(transcript.slice(0,4000))+'</div></details>';
+    html+='<section class="memory-supplement"><div class="memory-supplement-title">人物画像 · '+personCount+' 人</div><div class="memory-supplement-body">'+people+'</div></section>';
   }
   if(media){
     const counts=[];
@@ -1978,7 +2082,7 @@ function renderMomentDetail(x){
   else if(action) html+='<div class="moment-preview"><b>Action:</b> '+excerpt(action)+'</div>';
   else html+='<div class="moment-preview">'+excerpt(headline)+'</div>';
   if(scene&&action) html+='<div class="moment-action-preview"><b>Action:</b> '+excerpt(action)+'</div>';
-  if(x.interaction_details) html+='<div class="moment-action-preview"><b>人物交互与事件顺序:</b> '+excerpt(String(x.interaction_details))+'</div>';
+  if(x.interaction_details) html+='<div class="moment-action-preview"><b>场景背景:</b> '+excerpt(String(x.interaction_details))+'</div>';
   if(notes&&notes!==headline&&notes!==action) html+='<div class="moment-notes-preview"><b>补充线索</b> '+excerpt(notes)+'</div>';
   html+=renderMemorySupplements(x,'moment-supplements');
   return html+'</article>';
@@ -2051,14 +2155,26 @@ function renderEvidenceTrigger(refs,context,title,evidenceText=''){
   }else{
     candidates.slice(0,3).forEach(frame=>chosen.push({frame,requestedAt:null,exact:false}));
   }
-  const images=chosen.slice(0,3).map(item=>({
-    url:item.frame.url,original:item.frame.source_url||item.frame.original_url||'',
-    at_s:Number(item.frame.at_s??item.frame.frame_time_s??0),requested_at_s:item.requestedAt,exact:item.exact
+  const directFrames=list.map(frame=>{
+    const url=frame.url||(frame.asset?API+'/api/memory_asset?p='+encodeURIComponent(frame.asset):'');
+    return url?{...frame,url}:null;
+  }).filter(Boolean);
+  const imageFrames=directFrames.length?directFrames:chosen.map(item=>({...item.frame,requestedAt:item.requestedAt,exact:item.exact}));
+  const modalSeen=new Set();
+  const images=imageFrames.filter(frame=>{
+    const key=String(frame.asset||frame.url)+'|'+String(frame.at_s??frame.frame_time_s??'');
+    if(modalSeen.has(key))return false;
+    modalSeen.add(key);return true;
+  }).map(frame=>({
+    url:frame.url,original:frame.source_url||frame.original_url||'',
+    at_s:Number(frame.at_s??frame.frame_time_s??0),
+    requested_at_s:frame.requestedAt??frame.frame_time_s??nested(frame).frame_time_s??null,
+    exact:frame.exact===true||directFrames.length>0
   }));
   const audioStartValue=Number.isFinite(audioStart)?audioStart:null;
   const audioEndValue=Number.isFinite(audioEnd)?audioEnd:null;
   const payload={title:String(title||'来源核对'),segment,video:prov.source_video_id||'',clipStart:prov.clip_start_s??null,clipEnd:prov.clip_end_s??null,times,audioStart:audioStartValue,audioEnd:audioEndValue,evidence:String(evidenceText||list.map(ref=>ref.evidence||'').filter(Boolean).join('；')).slice(0,1200),images};
-  return '<button type="button" class="memory-evidence-trigger" aria-haspopup="dialog" data-evidence="'+esc(encodeURIComponent(JSON.stringify(payload)))+'" onclick="openEntityEvidence(this)">查看来源</button>';
+  return '<span hidden data-evidence="'+esc(encodeURIComponent(JSON.stringify(payload)))+'"></span>';
 }
 function renderEvidenceCardOpenAttrs(refs,context,title,evidenceText=''){
   const trigger=renderEvidenceTrigger(refs,context,title,evidenceText);
@@ -2080,7 +2196,8 @@ function renderPersonObservations(rows,evidenceContext){
   const body=Array.from(grouped.values()).slice(0,16).map(row=>{
     const details=[];
     const idMatch=String(row.entity||'').match(/^unidentified\s+person\s+(\d+)$/i);
-    const personTitle=idMatch?'人物 '+idMatch[1]:String(row.entity||'人物');
+    const fallbackLabel=String(row.display_label||row.visual_label||row.appearance||'').replace(/\s+/g,' ').trim();
+    const personTitle=idMatch?(fallbackLabel?'身份待确认 · '+fallbackLabel.slice(0,72):'身份待确认'):String(row.entity||'人物');
     const visualLabel=String(row.visual_label||'').trim();
     if(visualLabel)details.push('AI视觉描述：'+visualLabel);
     if(row.readable_name&&row.name_evidence)details.push('画面文字姓名：'+row.readable_name+'；证据：'+row.name_evidence);
@@ -2090,10 +2207,12 @@ function renderPersonObservations(rows,evidenceContext){
     else if(row.age_basis==='visible_text'&&row.age)details.push('画面文字年龄：'+row.age);
     if(row.clothing)details.push('衣着：'+row.clothing);
     if(row.position)details.push('位置：'+row.position);
-    const trigger=renderEvidenceTrigger(row._evidenceRefs,evidenceContext,personTitle+' · 人物观察',details.join('；'));
-    return '<span class="memory-person-chip"><b>'+esc(personTitle)+'</b>'+(details.length?'<small>'+esc(details.join('；'))+'</small>':'')+trigger+'</span>';
+    if(Array.isArray(row.relationships)&&row.relationships.length)details.push('关系：'+row.relationships.join('；'));
+    if(row.profile_context)details.push('相关背景：'+row.profile_context);
+    const cardAttrs=renderEvidenceCardOpenAttrs(row._evidenceRefs,evidenceContext,personTitle+' · 人物画像',details.join('；'));
+    return '<span class="memory-person-chip'+(cardAttrs?' memory-evidence-card-trigger':'')+'"'+(cardAttrs?' '+cardAttrs:'')+'><b>'+esc(personTitle)+'</b>'+(details.length?'<small>'+esc(details.join('；'))+'</small>':'')+'</span>';
   }).join('');
-  return '<div><b>人物观察</b><div class="memory-person-row">'+body+'</div></div>';
+  return '<div><b>人物画像</b><div class="memory-person-row">'+body+'</div></div>';
 }
 function renderObjectObservations(rows){
   if(!Array.isArray(rows)||!rows.length)return '';
@@ -2109,7 +2228,7 @@ function renderTemporalFacts(rows,personObservations,evidenceContext){
   if(!Array.isArray(rows)||!rows.length)return '';
   const labels={'state':'状态','location':'位置','plan':'计划','event':'事件','appearance':'外观','age':'年龄','other':'事实'};
   const typeLabels={'person':'人物','object':'物品','place':'地点','environment':'环境','event':'事件'};
-  const predicateLabels={stated_name:'口述姓名',stated_preference:'明确表达的偏好',stated_relationship:'明确说明的关系',stated_background:'明确陈述的背景',stated_experience:'明确提及的经历',stated_age:'口述年龄',stated_plan:'口述计划',stated_health_history:'口述健康史',moved:'移动',located_at:'所在位置',participated_in:'参与事件',occurred_at:'发生时间'};
+  const predicateLabels={greeted:'打招呼',asked_about_wellbeing:'询问近况',stated_name:'口述姓名',stated_preference:'明确表达的偏好',stated_relationship:'明确说明的关系',stated_background:'明确陈述的背景',stated_experience:'明确提及的经历',stated_age:'口述年龄',stated_plan:'口述计划',stated_health_history:'口述健康史',moved:'移动',located_at:'所在位置',participated_in:'参与事件',occurred_at:'发生时间'};
   const people=personReferenceLabels(personObservations);
   const body=rows.slice(0,32).map(row=>{
     if(!row||typeof row!=='object')return '';
@@ -2128,8 +2247,8 @@ function renderTemporalFacts(rows,personObservations,evidenceContext){
     const ref=row.evidence_ref||{};
     const refs=Array.isArray(row.evidence_refs)&&row.evidence_refs.length?row.evidence_refs.slice():(Object.keys(ref).length?[ref]:[]);
     if(row.frame_time_s!=null)refs.push({frame_time_s:row.frame_time_s,source_segment_id:ref.source_segment_id});
-    const trigger=renderEvidenceTrigger(refs,evidenceContext,label+' · '+(subjectName||'事实'),row.evidence||row.value||'');
-    return '<div class="memory-fact-row"><b>'+esc(label)+'</b>'+(subject?' · '+esc(subject):'')+(detail?'：'+esc(detail):'')+(time?' <span>· '+esc(time)+'</span>':'')+(affected?'<small>'+esc(affected)+'</small>':'')+trigger+'</div>';
+    const cardAttrs=renderEvidenceCardOpenAttrs(refs,evidenceContext,label+' · '+(subjectName||'事实'),row.evidence||row.value||'');
+    return '<div class="memory-fact-row'+(cardAttrs?' memory-evidence-card-trigger':'')+'"'+(cardAttrs?' '+cardAttrs:'')+'><b>'+esc(label)+'</b>'+(subject?' · '+esc(subject):'')+(detail?'：'+esc(detail):'')+(time?' <span>· '+esc(time)+'</span>':'')+(affected?'<small>'+esc(affected)+'</small>':'')+'</div>';
   }).join('');
   return '<div><b>带时间的事实</b><div class="memory-fact-list">'+body+'</div></div>';
 }
@@ -2139,7 +2258,7 @@ function layerMemoryContent(x){
   const interactions=cleanMemoryText(x.interaction_details);
   const notes=cleanMemoryText(x.notes);
   const primary=scene||action||notes||'暂无记忆正文';
-  return [primary, action && action !== primary ? 'Action: ' + action : '', interactions ? '人物交互与事件顺序: ' + interactions : '', notes && notes !== primary && notes !== action ? 'Additional context: ' + notes : ''].filter(Boolean).join(' · ');
+  return [primary, interactions ? '场景背景: ' + interactions : '', notes && notes !== primary && notes !== action ? 'Additional context: ' + notes : ''].filter(Boolean).join(' · ');
 }
 function renderLayerMemoryRow(x, sourceLabel){
   if(!x) return '<div class="layer-empty-evidence">暂无</div>';
@@ -2228,30 +2347,70 @@ function renderLayer7Archive(samples){
     return '<div class="archive-dimension"><div class="archive-dimension-title">'+label+'索引命中的记忆</div><div class="layer-index-grid">'+cells+'</div></div>';
   }).join('');
 }
+function entityGraphEvidence(row, typeLabel, entityName){
+  const media=row.multimodal||{};
+  const refs=[
+    ...(Array.isArray(media.visual_frames)?media.visual_frames:[]),
+    ...(typeLabel==='人物'&&Array.isArray(media.person_crops)?media.person_crops:[]),
+    ...(typeLabel==='物品'&&Array.isArray(media.object_crops)?media.object_crops:[])
+  ];
+  const context={
+    moment_id:row.moment_id||'',
+    source_provenance:row.source_provenance||{},
+    multimodal:{source_id:media.source_id||'',visual_frames:Array.isArray(media.visual_frames)?media.visual_frames:[]}
+  };
+  const entities=Array.isArray(row.entities)?row.entities:[];
+  const groups=[
+    ['人物',Array.isArray(row.people)?row.people:[]],
+    ['地点',row.location?[row.location]:[]],
+    ['活动',row.activity?[row.activity]:[]],
+    ['物品',Array.isArray(row.objects)?row.objects:[]],
+    ['环境',Array.isArray(row.environments)?row.environments:[]]
+  ];
+  const all=groups.filter(([,values])=>values.length)
+    .map(([label,values])=>label+'：'+values.map(value=>cleanMemoryText(value)).filter(Boolean).join('、'))
+    .join('\n');
+  const detail=[
+    row.event?'场景：'+row.event:'',
+    row.action?'行为：'+row.action:'',
+    row.interaction_details?'人物交互与事件顺序：'+row.interaction_details:'',
+    entityName?'当前实体：'+typeLabel+' · '+entityName:'',
+    all?'同条记忆中的关联实体：\n'+all:'',
+    entities.length?'关系记录：'+entities.map(item=>item.type+' · '+item.name).join('；'):''
+  ].filter(Boolean).join('\n\n');
+  const button=renderEvidenceTrigger(refs,context,(typeLabel?typeLabel+' · ':'')+(entityName||'记忆来源'),detail);
+  return (button.match(/data-evidence="([^"]+)"/)||[])[1]||'';
+}
 function renderEntityGraph(graph){
   if(!graph) return '';
   const rows=Array.isArray(graph.samples)?graph.samples.slice(0,6):[];
-  const compact=(label,value)=>{
-    const values=(Array.isArray(value)?value:[value]).map(item=>cleanMemoryText(item)).filter(Boolean);
-    if(!values.length) return '';
-    const shown=values.slice(0,3).map(esc).join('、');
-    const rest=values.length>3?' 等 '+values.length+' 项':'';
-    return '<span class="entity-graph-chip"><b>'+label+' '+values.length+'</b> '+shown+rest+'</span>';
-  };
   const body=rows.map(row=>{
     const when=row.source_time&&[
       row.source_time.day_label,row.source_time.time_of_day,
       cleanMemoryText(row.source_time.time_occasion)
     ].filter(Boolean).join(' · ');
-    const chips=[
-      compact('人物',row.people),compact('地点',row.location),
-      compact('活动',row.activity),compact('物品',row.objects),
-      compact('环境',row.environments)
-    ].filter(Boolean).join('');
+    const momentId=String(row.moment_id||'');
+    const headerText=(when||row.timestamp||'时间未标注')+' · 记忆 '+(momentId.slice(-14)||'未编号');
+    const headerEvidence=entityGraphEvidence(row,'','');
+    const header='<button type="button" class="entity-graph-row-head memory-evidence-card-trigger" aria-haspopup="dialog" aria-label="'+esc(headerText+'，点击查看该条记忆及来源画面')+'" data-evidence="'+headerEvidence+'">'+esc(headerText)+'</button>';
+    const groups=[
+      ['人物',Array.isArray(row.people)?row.people:[]],
+      ['地点',row.location?[row.location]:[]],
+      ['活动',row.activity?[row.activity]:[]],
+      ['物品',Array.isArray(row.objects)?row.objects:[]],
+      ['环境',Array.isArray(row.environments)?row.environments:[]]
+    ];
+    const seen=new Set();
+    const chips=groups.map(([label,values])=>values.map(value=>{
+      const name=cleanMemoryText(value);
+      const identity=label+'|'+name.toLocaleLowerCase();
+      if(!name||seen.has(identity))return '';
+      seen.add(identity);
+      const evidence=entityGraphEvidence(row,label,name);
+      return '<button type="button" class="entity-graph-chip memory-evidence-card-trigger" aria-haspopup="dialog" aria-label="'+esc(label+'：'+name+'，点击查看相关记忆和来源画面')+'" data-evidence="'+evidence+'"><b>'+esc(label)+'</b><span>'+esc(name)+'</span></button>';
+    }).join('')).join('');
     if(!chips) return '';
-    return '<article class="entity-graph-row"><div class="entity-graph-row-head">'+
-      esc(when||row.timestamp||'时间未标注')+' · 记忆 '+esc(String(row.moment_id||'').slice(-14))+
-      '</div><div class="entity-graph-chips">'+chips+'</div></article>';
+    return '<article class="entity-graph-row">'+header+'<div class="entity-graph-chips">'+chips+'</div></article>';
   }).filter(Boolean).join('');
   if(!body) return '<div class="layer-empty-evidence">暂无</div>';
   return '<div class="entity-graph-panel"><div class="entity-graph-head"><span>关联实体概览</span><span>'+
@@ -2490,8 +2649,10 @@ function render(){
   const full = s.full || null;
 
   // 画像
-  document.getElementById('profile').innerHTML = memory ? renderProfile() :
-    '<span class="empty">尚未形成稳定画像。</span>';
+  document.getElementById('profile').innerHTML = renderProfile();
+  if(document.querySelector('[data-view-panel="index"]').classList.contains('active')){
+    loadPersonMemoryRecords();
+  }
 
   // 记忆详情（保持展开并同步更新）
   if(document.querySelector('[data-view-panel="layers"]').classList.contains('active')){
@@ -2501,8 +2662,127 @@ function render(){
 }
 
 function renderProfile(){
-  const layer=memory.layer6||{};
-  return renderProfileFromFull(layer.profile||{},layer.summary||'',layer);
+  const latestFull=(snaps[cur]&&snaps[cur].full)||{};
+  const layer=(memory&&memory.layer6)||latestFull.layer6||{};
+  const scenario=(mode==='interactive'&&intState&&intState.scenario)||curKey||'custom_test';
+  const personData=personMemoryKey===scenario?personMemoryData:null;
+  const profile='<section><h3 class="person-memory-heading"><span>用户长期画像 · L6</span></h3>'+
+    '<p class="person-memory-intro">仅汇总有证据支持的稳定用户画像；多人测试视频中的出镜角色不会自动混为同一位用户。</p>'+
+    renderProfileFromFull(layer.profile||{},layer.summary||'',layer)+'</section>';
+  const records=personData&&Array.isArray(personData.items)?personData.items:[];
+  const list=personMemoryLoading&&personMemoryKey===scenario
+    ?'<div class="person-memory-loading">正在读取已保存的人物记忆…</div>'
+    :renderPersonMemoryCards(records,personData||{});
+  const search=records.length?'<input class="person-memory-search" id="personMemorySearch" type="search" aria-label="搜索人物记忆" placeholder="搜索姓名、关系、外观、背景或场景" value="'+esc(personMemorySearchText)+'" oninput="filterPersonMemoryCards(this.value)">':'';
+  return profile+'<section class="person-memory-section"><h3 class="person-memory-heading"><span>视频人物记忆 · L7</span>'+
+    '<small>'+(personData?esc(personData.total||0)+' 个记录':'')+'</small></h3>'+
+    '<p class="person-memory-intro">以人物为主体，将画面特征、口述中明确的身份关系和有意义的个人背景合并到同一画像；原始口述不单独入库。无法可靠对应人物时保留为身份待确认，不从外貌猜测身份或年龄。</p>'+
+    search+list+'</section>';
+}
+function loadPersonMemoryRecords(force=false){
+  const scenario=(mode==='interactive'&&intState&&intState.scenario)||curKey||'custom_test';
+  if(!['short_term','long_term','custom_test'].includes(scenario))return;
+  if(!force&&personMemoryKey===scenario&&(personMemoryData||personMemoryLoading))return;
+  const request=++personMemoryRequest;
+  personMemoryKey=scenario; personMemoryData=null; personMemoryLoading=true;
+  const profile=document.getElementById('profile');
+  if(profile)profile.innerHTML=renderProfile();
+  const readPage=async(offset,items,total)=>{
+    const params=new URLSearchParams({kind:'person',scenario,offset:String(offset),limit:'50'});
+    const response=await fetch(API+'/api/interactive/entities?'+params.toString(),{cache:'no-store'});
+    const data=await response.json();
+    if(!response.ok||data.error)throw new Error(data.message||data.error||'读取人物记忆失败');
+    const combined=items.concat(data.items||[]);
+    const count=Number(data.total)||0;
+    return combined.length<count?readPage(combined.length,combined,count):Promise.resolve({...data,items:combined});
+  };
+  readPage(0,[],0)
+    .then(data=>{
+      if(request!==personMemoryRequest)return;
+      personMemoryData=data; personMemoryKey=scenario; personMemoryLoading=false;
+      const target=document.getElementById('profile');
+      if(target)target.innerHTML=renderProfile();
+    })
+    .catch(error=>{
+      if(request!==personMemoryRequest)return;
+      personMemoryData={items:[],total:0,error:error.message}; personMemoryKey=scenario; personMemoryLoading=false;
+      const target=document.getElementById('profile');
+      if(target)target.innerHTML=renderProfile();
+    });
+}
+function personMemoryLabel(record,events){
+  const observations=events.flatMap(event=>event.person_observations||[]);
+  const row=observations.find(item=>item&&item.entity&&String(item.entity).toLowerCase()===String(record.name||'').toLowerCase())||observations[0]||{};
+  if(row.readable_name&&row.name_evidence)return String(row.readable_name);
+  const raw=String(record.name||'').trim();
+  const verbose=/\b(?:wearing|with|dressed|jacket|coat|shirt|pants|trousers|scarf|hat|hair|headscarf|puffer|padded|holding|standing|sitting|walking|looking)\b/i.test(raw);
+  if(raw&&!verbose&&raw.split(/\s+/).length<=4)return raw;
+  const provenance=events[0]&&events[0].source_provenance||{};
+  const segment=String(provenance.source_segment_id||'').match(/^(FEISHU_\d+_\d+)/i);
+  return '身份待确认 · '+(segment?segment[1]:'来源片段');
+}
+function renderPersonMemoryCards(records,data){
+  if(data&&data.error)return '<div class="person-memory-empty">人物记忆暂时无法读取：'+esc(data.error)+'</div>';
+  if(!records.length)return '<div class="person-memory-empty">当前保存场景还没有人物记录。包含人物的视频写入后，人物身份、外观、关系与来源画面会显示在这里。</div>';
+  return '<div class="person-memory-grid">'+records.map(record=>{
+    const events=Array.isArray(record.events)?record.events:[];
+    const title=personMemoryLabel(record,events);
+    const observationRows=events.flatMap(event=>event.person_observations||[]);
+    const appearance=[...new Set(observationRows.map(row=>String(row.appearance||'').trim()).filter(Boolean))].slice(0,2);
+    const face=[...new Set(observationRows.map(row=>String(row.face_features||'').trim()).filter(Boolean))].slice(0,1);
+    const profileRows=events.flatMap(event=>(event.person_observations||[]).filter(row=>row&&String(row.entity||'').toLocaleLowerCase()===String(record.name||'').toLocaleLowerCase()));
+    const relationships=[...new Set(profileRows.flatMap(row=>Array.isArray(row.relationships)?row.relationships:[]).map(value=>String(value||'').trim()).filter(Boolean))].slice(0,6);
+    const profileContexts=[...new Set(profileRows.map(row=>String(row.profile_context||'').trim()).filter(Boolean))].slice(0,4);
+    const scenes=[...new Set(events.map(event=>String(event.scene||'').trim()).filter(Boolean))].slice(0,1);
+    const imageRows=events.flatMap(event=>(event.images||[]).map(image=>({image,event})));
+    const seen=new Set(),images=[];
+    imageRows.forEach(({image,event})=>{
+      const key=image.asset||image.url||String(image.frame_time_s||'');
+      if(!image.url||seen.has(key))return;
+      seen.add(key); images.push({url:image.url,at_s:image.at_s??image.frame_time_s??0,
+        original:image.source_url||'',event});
+    });
+    const provenance=events[0]&&events[0].source_provenance||{};
+    const segment=provenance.source_segment_id||'';
+    const video=provenance.source_video_id||'';
+    const clipStart=provenance.clip_start_s;
+    const clipEnd=provenance.clip_end_s;
+    const evidenceParts=[];
+    if(scenes.length)evidenceParts.push('场景：'+scenes.join('；'));
+    appearance.forEach(text=>evidenceParts.push('外观观察：'+text));
+    face.forEach(text=>evidenceParts.push('可见面部特征：'+text));
+    relationships.forEach(text=>evidenceParts.push('人物关系：'+text));
+    profileContexts.forEach(text=>evidenceParts.push('人物背景：'+text));
+    const otherSources=events.slice(1).map(event=>{
+      const source=event.source_provenance||{};
+      return [source.source_segment_id,event.recorded_at].filter(Boolean).join(' · ');
+    }).filter(Boolean);
+    if(otherSources.length)evidenceParts.push('其他来源：'+otherSources.join('；'));
+    const ev={title:title+' · 人物记忆',segment,video,clipStart,clipEnd,
+      times:images.map(image=>image.at_s),evidence:evidenceParts.join('\n'),images};
+    const attrs='data-evidence="'+esc(encodeURIComponent(JSON.stringify(ev)))+'"';
+    const searchText=[record.name,title,...events.map(event=>[
+      event.scene,event.interaction_details,
+      ...(event.person_observations||[]).flatMap(row=>[row.appearance,row.face_features,row.profile_context,...(row.relationships||[])] )
+    ].join(' '))].join(' ').toLowerCase();
+    const searchAttr='data-person-search="'+esc(searchText)+'"';
+    const imageHtml=images.slice(0,3).map((image,index)=>'<img loading="lazy" src="'+esc(image.url)+'" alt="'+esc(title+' 对应画面 '+(index+1))+'">').join('');
+    const meta=Number(record.event_count||events.length)+' 段关联记忆';
+    const content='<span class="person-memory-card-main"><span class="person-memory-card-title">'+esc(title)+' <small>'+esc(meta)+'</small></span>'+
+      appearance.map(text=>'<span class="person-memory-fact"><b>外观</b> '+esc(text)+'</span>').join('')+
+      face.map(text=>'<span class="person-memory-fact"><b>可见特征</b> '+esc(text)+'</span>').join('')+
+      scenes.map(text=>'<span class="person-memory-fact"><b>相关场景</b> '+esc(text)+'</span>').join('')+
+      relationships.map(text=>'<span class="person-memory-fact"><b>关系</b> '+esc(text)+'</span>').join('')+
+      profileContexts.map(text=>'<span class="person-memory-fact"><b>人物背景</b> '+esc(text)+'</span>').join('')+
+      '</span><span class="person-memory-images">'+(imageHtml||'<span class="person-memory-empty">暂无关联裁剪图</span>')+'</span>';
+    return '<button type="button" class="person-memory-card memory-evidence-card-trigger" aria-haspopup="dialog" '+searchAttr+' '+attrs+'>'+content+'</button>';
+  }).join('')+'</div>';
+}
+function filterPersonMemoryCards(value){
+  personMemorySearchText=String(value||'').trim().toLowerCase();
+  document.querySelectorAll('.person-memory-card[data-person-search]').forEach(card=>{
+    card.hidden=!!personMemorySearchText&&!String(card.dataset.personSearch||'').includes(personMemorySearchText);
+  });
 }
 
 function esc(s){ return String(s==null?'':s).replace(/[<>&"']/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -2722,6 +3002,9 @@ function setContentView(view){
   if(view==='layers'){
     renderCurrentMemory();
   }
+  if(view==='index'){
+    loadPersonMemoryRecords();
+  }
 }
 
 function setMode(m){
@@ -2777,6 +3060,7 @@ async function newSession(key, participant=null, dataset='base', reset=false){
       return;
     }
     intState=next;
+    personMemoryData=null; personMemoryKey=""; personMemoryLoading=false; personMemoryRequest++;
     clearInteractiveSwitchNotice();
     sessionLost=false;
     const autoBox=document.getElementById('autoSuggestion');
@@ -2893,6 +3177,7 @@ async function runStep(force, automatic=false, continuousKind=null){
       videoNavigation.nextState=null;
     }
     if(st.auto_paused) stopAuto();
+    personMemoryData=null; personMemoryKey=""; personMemoryLoading=false; personMemoryRequest++;
     renderInt();
     if(progressBox){progressBox.style.display='none';progressBox.innerHTML='';}
     // 每段写入后展示新增记忆；原始感知结果保存在来源记录中，不占运行页。
@@ -3350,22 +3635,19 @@ function renderMemoryAddition(log){
   add('时间',moment.source_time&&[moment.source_time.day_label,moment.source_time.time_of_day,cleanMemoryText(moment.source_time.time_occasion)].filter(Boolean).join(' · ')||moment.timestamp&&moment.timestamp.replace('T',' ').slice(0,16));
   add('地点',moment.location); add('人物',moment.people); add('活动',moment.activity);
   add('物品',moment.objects); add('环境',moment.environments);
-  const summary=[cleanMemoryText(moment.scene),cleanMemoryText(moment.user_action),cleanMemoryText(moment.interaction_details)].filter(Boolean);
-  const structured=renderPersonObservations(moment.person_observations,moment)+renderTemporalFacts(moment.temporal_facts,moment.person_observations,moment);
-  const structuredCount=(Array.isArray(moment.person_observations)?moment.person_observations.length:0)
-    +(Array.isArray(moment.temporal_facts)?moment.temporal_facts.length:0);
-  const structuredPanel=structured?'<details class="memory-supplement"><summary>人物外观与事件事实 · '+structuredCount+' 条</summary><div class="memory-supplement-body">'+structured+'</div></details>':'';
+  const summary=[cleanMemoryText(moment.scene),cleanMemoryText(moment.interaction_details)].filter(Boolean);
+  const structured=renderPersonObservations(moment.person_observations,moment);
+  const structuredCount=Array.isArray(moment.person_observations)?moment.person_observations.length:0;
+  const structuredPanel=structured?'<section class="memory-supplement memory-person-primary"><div class="memory-supplement-title">人物画像 · '+structuredCount+' 人</div><div class="memory-supplement-body">'+structured+'</div></section>':'';
   const rawStoredPanel='<details class="memory-raw-json" data-moment-id="'+esc(moment.id||p.moment_id)+'" ontoggle="loadStoredMemoryRecord(this)"><summary>\u67e5\u770b\u8bb0\u5fc6\u5b9e\u9645\u5b58\u50a8\u683c\u5f0f (JSON)</summary><pre class="memory-raw-json-content">\u5c55\u5f00\u540e\u8bfb\u53d6\u5f53\u524d\u8bb0\u5fc6\u5e93\u4e2d\u7684\u539f\u59cb\u8bb0\u5f55</pre></details>';
   const media=renderMultimodalEvidence(moment,moment);
-  const speech=String(moment.source_evidence||'').trim();
-  const speechPanel=speech?'<details class="memory-speech-transcript"><summary>视频语音转写 · 自动识别，未校对</summary><div>'+esc(speech.slice(0,4000))+'</div></details>':'';
-  const details=[media?'<details><summary>查看画面与来源</summary>'+media+speechPanel+'</details>':speechPanel].filter(Boolean).join('');
+  const details=media?'<details><summary>查看画面与来源</summary>'+media+'</details>':'';
   const qwenPerceptionPanel=renderQwenPerceptionOutput(p);
   const resultTitle=p.memory_refreshed?'本片段记忆已更新':'本片段新增记忆';
   box.innerHTML='<article class="memory-added-card"><h3 class="memory-added-head">'+resultTitle+' <span class="memory-added-id">L7 · '+esc(moment.id||p.moment_id)+'</span></h3>'+
-    (tags.length?'<div class="memory-added-context">'+tags.join('')+'</div>':'')+
-    (summary.length?'<div class="memory-added-summary">'+summary.map((text,index)=>'<div><b>'+(['场景','事件细节','人物交互'][index]||'记忆内容')+'：</b>'+esc(text)+'</div>').join('')+'</div>':'')+
     structuredPanel+
+    (tags.length?'<div class="memory-added-context">'+tags.join('')+'</div>':'')+
+    (summary.length?'<div class="memory-added-summary">'+summary.map((text,index)=>'<div><b>'+(['场景','场景背景'][index]||'记忆内容')+'：</b>'+esc(text)+'</div>').join('')+'</div>':'')+
     rawStoredPanel+
     details+'</article>';
   if(qwenBox)qwenBox.innerHTML=qwenPerceptionPanel;
@@ -3458,7 +3740,8 @@ function updateRunBtn(){
   const ok = intState && !intState.finished && !sessionLost && !intState.current_completed;
   const isAdd = !!(intState && intState.current && ['add','add_batch'].includes(intState.current.kind));
   btn.disabled=!ok;
-  btn.textContent = sessionLost?'▶ 运行此步':intState&&intState.current_completed?'✅ 本段已完成':ok?'▶ 运行此步':'✅ 全部完成';
+  const isNightly=!!(intState&&intState.current&&intState.current.kind==='nightly');
+  btn.textContent = sessionLost?'▶ 运行此步':intState&&intState.current_completed?'✅ 本段已完成':ok?(isNightly?'🌙 场景结束，夜间归纳':'▶ 运行此步'):'✅ 全部完成';
   if(live){ live.disabled=!ok||!isAdd; live.style.display=ok&&isAdd?'':'none'; }
   const ab=document.getElementById('autoBtn');
   if(ab){
@@ -3502,7 +3785,7 @@ function renderInt(){
     picker.disabled=false;
   }
   const datasetNote=document.getElementById('interactiveDatasetNote');
-  if(datasetNote) datasetNote.textContent=isCustomTest?'飞书测试集 · 原片输入 · 按段运行':(st.dataset_note||'');
+  if(datasetNote) datasetNote.textContent=isCustomTest?(st.dataset_note||'飞书测试集 · 原片输入 · 按段运行'):(st.dataset_note||'');
   document.getElementById('intName').textContent=st.name;
   const completedCount=Number.isFinite(Number(st.completed_count))?Number(st.completed_count):(st.current_completed?(Number(st.pos)||0)+1:(Number(st.pos)||0));
   document.getElementById('intProgress').innerHTML = st.finished
@@ -3527,8 +3810,13 @@ function renderInt(){
   updateQstat();
 
   // 接入通用渲染：snaps = 已执行步骤的快照序列
-  snaps = st.log.map(l=>l.snapshot);
-  cur = snaps.length-1;
+  if(st.snapshots_compact&&st.snapshot){
+    snaps=[st.snapshot];
+    cur=0;
+  }else{
+    snaps = st.log.map(l=>l.snapshot);
+    cur = snaps.length-1;
+  }
   document.getElementById('slider').max=Math.max(0,snaps.length-1);
   document.getElementById('slider').value=cur;
   renderLog();
@@ -3547,6 +3835,17 @@ function hydrateVideoNavigation(state){
   const entries=[];
   for(const row of state.log){
     if(row.kind!=='add') continue;
+    const compact=row.video_nav;
+    if(compact&&compact.video_url){
+      const pos=Number.isFinite(Number(compact.pos))?Number(compact.pos):entries.length;
+      entries.push({pos,resultLog:row,step:{kind:'add',title:row.title||'已完成视频',inputs:[{
+        id:compact.segment_id||compact.moment_id||'',video:compact.video||'',clock:compact.clock||'',
+        people:compact.people||[],location:compact.location||'',scene:compact.scene||'',
+        action:compact.action||'',video_url:compact.video_url,clip_start:compact.clip_start??0,
+        clip_end:compact.clip_end??null,preview_source:'previous_perception'
+      }]}});
+      continue;
+    }
     const full=row.snapshot&&row.snapshot.full||{};
     const moments=Array.isArray(full.layer7_moments)?full.layer7_moments:[];
     const perception=row.perception||{};
@@ -3620,6 +3919,7 @@ function renderInputs(inputs, expand){
     const actionText=cleanMemoryText(m.action);
     const sceneText=cleanMemoryText(m.scene);
     const showAction=actionText&&!/^English summary will appear after this step runs\.?$/i.test(actionText);
+    if(priorPerception) return '';
     return '<div class="minput '+(m.video_url?'':'novid')+'"><div class="mhead">'
       +'<span class="tag">📹 '+esc(m.video||m.id)+'</span>'
       +'<span class="tag">🕐 '+(m.clock?'拍摄时间 '+esc(m.clock):'视频 '+Number(m.clip_start||0).toFixed(1)+(m.clip_end!=null?'–'+Number(m.clip_end).toFixed(1):'')+' 秒')+'</span>'
@@ -3919,11 +4219,10 @@ function renderRetrievedMemories(rows){
     const source=provenance.source_segment_id||(isSummary?'':row.id)||'';
     const lineage=row.source_moment_ids&&row.source_moment_ids.length?'摘要来源 '+row.source_moment_ids.length+' 条（'+(row.source_link_coverage||'未知')+'）':'';
     const reasons=(row.match_reasons||[]).filter(Boolean).join('、');
-    const media=row.modalities?[(row.modalities.visual?'画面':''),(row.modalities.transcript_text?'语音转写文字':'')].filter(Boolean).join('、'):'';
+    const media=row.modalities?(row.modalities.visual?'画面':''):'';
     const details=[row.id?'记忆编号：'+row.id:'',layerText?'所在层级：'+layerText:'',source?'来源片段：'+source:'',media?'证据类型：'+media:'',lineage,reasons?'匹配依据：'+reasons:''].filter(Boolean).map(text=>'<div>'+esc(text)+'</div>').join('');
-    const factsDetail=(row.person_observations?.length||row.temporal_facts?.length)?renderPersonObservations(row.person_observations,row)+renderTemporalFacts(row.temporal_facts,row.person_observations,row):'';
-    const transcript=row.source_evidence?'<details class="memory-speech-transcript"><summary>语音转写文字</summary><div>'+esc(String(row.source_evidence).slice(0,4000))+'</div></details>':'';
-    return '<article class="retrieval-memory-card"><div class="retrieval-memory-top"><b>记忆 '+(index+1)+'</b><span class="clip-advice-status">'+esc(layerText||'历史记忆')+'</span></div>'+(facts?'<div class="retrieval-memory-meta">'+esc(facts)+'</div>':'')+'<p>'+esc(body||'暂无记忆摘要')+'</p>'+(details||factsDetail?'<details><summary>查看来源与事实</summary><div class="retrieval-memory-source">'+details+'</div>'+factsDetail+'</details>':'')+transcript+'</article>';
+    const personProfiles=row.person_observations?.length?renderPersonObservations(row.person_observations,row):'';
+    return '<article class="retrieval-memory-card"><div class="retrieval-memory-top"><b>记忆 '+(index+1)+'</b><span class="clip-advice-status">'+esc(layerText||'历史记忆')+'</span></div>'+(facts?'<div class="retrieval-memory-meta">'+esc(facts)+'</div>':'')+'<p>'+esc(body||'暂无记忆摘要')+'</p>'+(details||personProfiles?'<details><summary>查看来源与人物画像</summary><div class="retrieval-memory-source">'+details+'</div>'+personProfiles+'</details>':'')+'</article>';
   }).join('');
   return '<section class="clip-advice"><div class="clip-advice-head">相关历史记忆 <span class="clip-evidence-count">'+rows.length+' 条</span></div><div class="retrieval-memory-list">'+cards+'</div></section>';
 }
@@ -4070,6 +4369,10 @@ fetch(API+'/api/multimodal-capacity',{cache:'no-store'})
     document.getElementById('multimodalLatencyMetric').textContent='已保存记忆的索引检索耗时暂不可用：'+error.message;
   });
 
+function evidenceImageCaption(image){
+  const at=Number(image.at_s||0).toFixed(2);
+  return image.exact?'对应画面 · '+at+' 秒':image.requested_at_s!=null?'最近抽样画面 · '+at+' 秒（事实位置 '+Number(image.requested_at_s).toFixed(2)+' 秒）':'片段关键帧 · '+at+' 秒';
+}
 function openEntityEvidence(button){
   const dialog=document.getElementById('entityEvidenceDialog'),body=document.getElementById('entityEvidenceBody');
   if(!dialog||typeof dialog.showModal!=='function')return;
@@ -4083,32 +4386,118 @@ function openEntityEvidence(button){
   if(data.times&&data.times.length)rows.push(['画面时间',data.times.map(time=>Number(time).toFixed(2)+' 秒').join('、')]);
   if(data.audioStart!=null)rows.push(['转写时间',Number(data.audioStart).toFixed(2)+'–'+Number(data.audioEnd??data.audioStart).toFixed(2)+' 秒']);
   const metadata=rows.length?'<dl class="entity-evidence-meta">'+rows.map(([label,value])=>'<dt>'+esc(label)+'</dt><dd>'+esc(value)+'</dd>').join('')+'</dl>':'';
-  const text=data.evidence?'<div class="entity-evidence-text"><b>对应记忆内容</b><br>'+esc(data.evidence)+'</div>':'';
-  const frames=(data.images||[]).map(image=>{
-    const at=Number(image.at_s||0).toFixed(2);
-    const caption=image.exact?'对应画面 · '+at+' 秒':image.requested_at_s!=null?'最近抽样画面 · '+at+' 秒（事实位置 '+Number(image.requested_at_s).toFixed(2)+' 秒）':'片段关键帧 · '+at+' 秒';
-    return '<figure class="entity-evidence-frame"><img loading="lazy" src="'+esc(image.url)+'" '+(image.original?'data-original-url="'+esc(image.original)+'"':'')+' alt="来源画面 '+at+' 秒"><figcaption>'+caption+' · 点击可放大</figcaption></figure>';
-  }).join('');
-  const frameCount=(data.images||[]).length;
-  const visual=frames?'<div class="entity-evidence-frames" data-frame-count="'+frameCount+'">'+frames+'</div>':'<div class="entity-evidence-empty">这条记录暂时没有可用的关联画面。来源和时间仍可用于回查。</div>';
+  const text=data.evidence?'<div class="entity-evidence-text"><b>对应记忆内容</b><br>'+esc(data.evidence).replace(/\n/g,'<br>')+'</div>':'';
+  const images=(Array.isArray(data.images)?data.images:[]).filter(image=>image&&image.url);
+  let visual='';
+  if(images.length){
+    const first=images[0],caption=evidenceImageCaption(first);
+    const thumbs=images.length>1?'<div class="entity-evidence-gallery-thumbs" aria-label="选择画面">'+images.map((image,index)=>'<button type="button" class="entity-evidence-gallery-thumb'+(index===0?' active':'')+'" data-gallery-index="'+index+'" aria-label="查看第 '+(index+1)+' 张画面" aria-pressed="'+(index===0?'true':'false')+'"><img loading="lazy" src="'+esc(image.url)+'" alt=""><span>'+Number(image.at_s||0).toFixed(2)+' 秒</span></button>').join('')+'</div>':'';
+    visual='<div class="entity-evidence-frames entity-evidence-gallery" data-gallery-count="'+images.length+'">'
+      +'<button type="button" class="entity-evidence-gallery-nav" data-gallery-move="-1" aria-label="上一张画面" '+(images.length>1?'':'hidden')+'>‹</button>'
+      +'<figure class="entity-evidence-frame entity-evidence-current"><img loading="eager" src="'+esc(first.url)+'" '+(first.original?'data-original-url="'+esc(first.original)+'"':'')+' alt="来源画面 '+Number(first.at_s||0).toFixed(2)+' 秒"><figcaption>'+caption+' · 点击放大</figcaption></figure>'
+      +'<button type="button" class="entity-evidence-gallery-nav" data-gallery-move="1" aria-label="下一张画面" '+(images.length>1?'':'hidden')+'>›</button>'
+      +'<div class="entity-evidence-gallery-status"><span class="entity-evidence-gallery-counter">1 / '+images.length+'</span><span>'+(images.length>1?'用 ← → 或缩略图切换':'关联画面预览')+'</span></div>'+thumbs+'</div>';
+  }else{
+    visual='<div class="entity-evidence-empty">这条记录暂时没有可用的关联画面。来源和时间仍可用于回查。</div>';
+  }
   body.innerHTML=metadata+text+visual;
-  body.querySelectorAll('.entity-evidence-frame img').forEach(image=>image.addEventListener('error',()=>{
+  const gallery=body.querySelector('.entity-evidence-gallery');
+  if(gallery){
+    let index=0;
+    const setImage=next=>{
+      index=(next+images.length)%images.length;
+      const image=images[index],preview=gallery.querySelector('.entity-evidence-current img');
+      preview.src=image.url;
+      preview.alt='来源画面 '+Number(image.at_s||0).toFixed(2)+' 秒';
+      if(image.original)preview.dataset.originalUrl=image.original;else delete preview.dataset.originalUrl;
+      gallery.querySelector('.entity-evidence-current figcaption').textContent=evidenceImageCaption(image)+' · 点击放大';
+      gallery.querySelector('.entity-evidence-gallery-counter').textContent=(index+1)+' / '+images.length;
+      gallery.querySelectorAll('.entity-evidence-gallery-thumb').forEach((thumb,i)=>{
+        thumb.classList.toggle('active',i===index);
+        thumb.setAttribute('aria-pressed',i===index?'true':'false');
+      });
+    };
+    gallery.querySelectorAll('[data-gallery-move]').forEach(control=>control.addEventListener('click',event=>{
+      event.preventDefault();event.stopPropagation();setImage(index+Number(control.dataset.galleryMove||0));
+    }));
+    gallery.querySelectorAll('.entity-evidence-gallery-thumb').forEach((thumb,i)=>thumb.addEventListener('click',event=>{
+      event.preventDefault();event.stopPropagation();setImage(i);
+    }));
+    gallery._setGalleryImage=setImage;
+  }
+  body.querySelectorAll('.entity-evidence-current img').forEach(image=>image.addEventListener('error',()=>{
     const empty=document.createElement('div');empty.className='entity-evidence-empty';empty.textContent='来源信息已保存，但对应画面文件当前不可用。';
-    image.closest('figure')?.replaceWith(empty);
+    image.closest('.entity-evidence-gallery')?.replaceWith(empty);
+  },{once:true}));
+  body.querySelectorAll('.entity-evidence-gallery-thumb img').forEach(image=>image.addEventListener('error',()=>{
+    image.closest('button')?.classList.add('unavailable');
   },{once:true}));
   if(!dialog.open)dialog.showModal();
   dialog.querySelector('.entity-evidence-close').focus();
 }
+
 (()=>{
   const dialog=document.getElementById('entityEvidenceDialog');
   if(!dialog)return;
   dialog.querySelector('.entity-evidence-close').addEventListener('click',()=>dialog.close());
   dialog.addEventListener('click',event=>{if(event.target===dialog)dialog.close();});
+  dialog.addEventListener('keydown',event=>{
+    if(event.key!=='ArrowLeft'&&event.key!=='ArrowRight')return;
+    const gallery=dialog.querySelector('.entity-evidence-gallery');
+    if(!gallery||Number(gallery.dataset.galleryCount||0)<2)return;
+    event.preventDefault();gallery._setGalleryImage?.((Number(gallery.querySelector('.entity-evidence-gallery-counter').textContent.split('/')[0])-1)+(event.key==='ArrowRight'?1:-1));
+  });
+})();
+
+// Hover over a stacked memory album to cycle its cover frames; leaving stops the carousel.
+(()=>{
+  const readFrames=album=>{
+    if(Array.isArray(album._albumFrames))return album._albumFrames;
+    try{album._albumFrames=JSON.parse(decodeURIComponent(album.dataset.albumFrames||''));}
+    catch(_){album._albumFrames=[];}
+    return album._albumFrames;
+  };
+  const paint=(album,index)=>{
+    const frames=readFrames(album);
+    if(!frames.length)return;
+    index=(index+frames.length)%frames.length;
+    album.dataset.albumIndex=String(index);
+    const assign=(slot,offset)=>{
+      const image=album.querySelector('[data-album-slot="'+slot+'"]');
+      if(image)image.src=frames[(index+offset+frames.length)%frames.length].url;
+    };
+    assign('album-back',-1);assign('album-middle',-2);assign('album-cover',0);
+  };
+  const stop=album=>{
+    if(album._albumTimer){clearInterval(album._albumTimer);album._albumTimer=null;}
+    album.classList.remove('is-cycling');
+  };
+  const start=album=>{
+    if(album._albumTimer||readFrames(album).length<2)return;
+    album.classList.add('is-cycling');
+    album._albumTimer=setInterval(()=>{
+      const cover=album.querySelector('.album-cover');
+      cover?.classList.remove('is-turning');
+      if(cover)void cover.offsetWidth;
+      cover?.classList.add('is-turning');
+      setTimeout(()=>paint(album,Number(album.dataset.albumIndex||0)+1),180);
+      setTimeout(()=>cover?.classList.remove('is-turning'),380);
+    },1150);
+  };
+  document.addEventListener('pointerover',event=>{
+    if(event.pointerType==='touch')return;
+    const album=event.target.closest?.('.memory-photo-album');
+    if(album&&!album.contains(event.relatedTarget))start(album);
+  });
+  document.addEventListener('pointerout',event=>{
+    const album=event.target.closest?.('.memory-photo-album');
+    if(album&&!album.contains(event.relatedTarget))stop(album);
+  });
 })();
 
 // Open evidence images at their full stored resolution; Escape, backdrop, or close button dismisses.
 (()=>{
-  const selector='.media-evidence img, .object-index-moment img, .entity-event img, .entity-evidence-dialog img';
+  const selector='.media-evidence img, .object-index-moment img, .entity-event img, .entity-evidence-dialog .entity-evidence-current img';
   let opener=null;
   const decorate=(root=document)=>{
     const images=[];

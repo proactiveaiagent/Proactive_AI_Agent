@@ -223,6 +223,21 @@ class MultimodalAssetStore:
                 top, bottom = max(0, center - min_h / 2), min(height, center + min_h / 2)
                 if bottom - top < min_h:
                     top = max(0, bottom - min_h)
+            # Grounders occasionally return an image-sized box for broad objects
+            # (walls, doors, floors). Keep the resulting attachment a real local
+            # view instead of silently persisting the whole frame as a "crop".
+            max_w = max(2, round(width * 0.78))
+            max_h = max(2, round(height * 0.78))
+            if right - left > max_w:
+                center = (left + right) / 2
+                left = max(0, center - max_w / 2)
+                right = min(width, left + max_w)
+                left = max(0, right - max_w)
+            if bottom - top > max_h:
+                center = (top + bottom) / 2
+                top = max(0, center - max_h / 2)
+                bottom = min(height, top + max_h)
+                top = max(0, bottom - max_h)
             crop = source.crop((round(left), round(top), round(right), round(bottom)))
             for target_width in (512, 448, 384, 320, 256):
                 if crop.width > target_width:
@@ -415,7 +430,9 @@ class MultimodalAssetStore:
             for index in indices:
                 if index not in refs_by_frame:
                     frame = frames[index]
-                    bbox = [0.025, 0.025, 0.975, 0.975]
+                    # Scene-level memories need context, but still use a tighter
+                    # view; crop_visual_candidate caps broad boxes at 78% per axis.
+                    bbox = [0.0, 0.0, 1.0, 1.0]
                     crop_bytes = self.crop_visual_candidate(frame["bytes"], bbox, 12_000)
                     crop_ref = self._put("visual", crop_bytes, "webp", 12_000) if crop_bytes else None
                     source_bytes = self.fit_visual_candidate(frame["bytes"], 6_000)

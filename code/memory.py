@@ -1154,7 +1154,9 @@ def _empty_moment() -> Dict:
 def _clean_source_fact_rows(rows, kind: str, limit: int) -> list:
     """Validate compact, source-linked facts; collapse repeated person-frame descriptions."""
     allowed = ({"entity", "appearance", "face_features", "apparent_age_range", "apparent_age_basis", "age", "age_basis", "frame_index",
-                "frame_time_s", "evidence", "confidence", "evidence_ref", "evidence_refs"}
+                "frame_time_s", "evidence", "confidence", "evidence_ref", "evidence_refs",
+                "spoken_aliases", "relationships", "profile_context",
+                "profile_confidence"}
                if kind == "person" else
                {"subject_type", "subject", "predicate", "value", "actor",
                 "affected_people", "from_location", "to_location", "from_state",
@@ -1236,6 +1238,38 @@ def _clean_source_fact_rows(rows, kind: str, limit: int) -> list:
                 row[key] = list(dict.fromkeys(
                     item.strip()[:120] for item in value
                     if isinstance(item, str) and item.strip()))[:8]
+            elif key == "relationships" and isinstance(value, list):
+                relationships = list(dict.fromkeys(
+                    " ".join(str(item).split()).strip()[:180]
+                    for item in value if isinstance(item, str) and item.strip()
+                ))[:8]
+                if relationships:
+                    row[key] = relationships
+            elif key == "profile_confidence":
+                if value in {"high", "medium", "low"}:
+                    row[key] = value
+            elif key == "spoken_aliases" and isinstance(value, list):
+                aliases = []
+                for item in value[:4]:
+                    if not isinstance(item, dict):
+                        continue
+                    alias = str(item.get("alias") or "").strip()[:80]
+                    if not alias:
+                        continue
+                    cleaned_alias = {"alias": alias}
+                    if item.get("status") == "probable_visual_match":
+                        cleaned_alias["status"] = item["status"]
+                    if item.get("confidence") in {"high", "medium", "low"}:
+                        cleaned_alias["confidence"] = item["confidence"]
+                    basis = str(item.get("basis") or "").strip()
+                    if basis:
+                        cleaned_alias["basis"] = basis[:320]
+                    ref = clean_ref(item.get("evidence_ref"))
+                    if ref:
+                        cleaned_alias["evidence_ref"] = ref
+                    aliases.append(cleaned_alias)
+                if aliases:
+                    row[key] = aliases
             elif isinstance(value, str) and value.strip():
                 row[key] = value.strip()[:500]
         refs = []
@@ -1270,7 +1304,10 @@ def _clean_source_fact_rows(rows, kind: str, limit: int) -> list:
             row.pop("confidence", None)
         if row.get("modality") not in {"visual", "speech"}:
             row.pop("modality", None)
-        if row.get("status") not in {"observed", "stated_plan", "completed", "unclear"}:
+        if row.get("status") not in {
+                "observed", "stated", "self_identified", "spoken_event", "stated_plan",
+                "self_reported", "self_reported_unverified", "unverified_claim",
+                "quoted_unverified_claim", "quoted_relationship_term", "completed", "unclear"}:
             row.pop("status", None)
         if not (row.get("entity") or row.get("subject")):
             continue
