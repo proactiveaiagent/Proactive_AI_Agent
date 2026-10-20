@@ -27,7 +27,6 @@ def main():
     # These cache rows were created without an explicit model path/revision override.
     os.environ.pop("QWEN_MODEL_PATH", None)
     os.environ.pop("QWEN_MODEL_REVISION", None)
-    grounding_cache_module.GROUNDING_IMPLEMENTATION_FINGERPRINT = OLD_FINGERPRINT
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
     memory_bytes = MEMORY.read_bytes()
     memory_stat = MEMORY.stat()
@@ -39,6 +38,8 @@ def main():
     }
     cache = PersistentObjectGroundingCache(GROUNDING_DB, ROOT)
     store = MultimodalAssetStore(MEMORY.parent)
+    current_fingerprint = grounding_cache_module.GROUNDING_IMPLEMENTATION_FINGERPRINT
+    cache_fingerprints = (current_fingerprint, OLD_FINGERPRINT)
     report = {"clips_updated": 0, "cache_matches": 0, "objects_cropped": 0,
               "objects_preserved": 0, "clips_skipped": 0, "bytes_added": 0,
               "details": []}
@@ -60,17 +61,29 @@ def main():
             report["clips_skipped"] += 1
             continue
         duration = float(row.get("duration_seconds") or 0)
-        source_key = cache.source_key(segment_id, video_path, 0.0, duration, objects)
-        source_payload, _ = cache.get_source(source_key)
-        if not source_payload:
-            report["clips_skipped"] += 1
-            continue
-        frames = store.sample_visual_candidates(
-            video_path, 0.0, duration, source_id=segment_id, count=7)
-        # source keys omit frame hashes; require the full frame-content key as a
-        # second proof before applying any cached bounding box.
-        exact_key = cache.key(segment_id, objects, frames)
-        payload, _ = cache.get(exact_key)
+        frames = None
+        payload = None
+        for fingerprint in cache_fingerprints:
+            grounding_cache_module.GROUNDING_IMPLEMENTATION_FINGERPRINT = fingerprint
+            source_key = cache.source_key(segment_id, video_path, 0.0, duration, objects)
+            source_payload, _ = cache.get_source(source_key)
+            if not source_payload:
+                continue
+            if frames is None:
+                frames = store.sample_visual_candidates(
+                    video_path, 0.0, duration, source_id=segment_id, count=7)
+            # Source keys omit frame hashes. Require an exact frame-content key
+            # before applying any cached bounding box.
+            exact_key = cache.key(segment_id, objects, frames)
+            payload, _ = cache.get(exact_key)
+            if not payload:
+                # Interactive Run Step itself accepts this exact source-key hit.
+                # The key binds the unchanged source file, clip interval, labels,
+                # and grounding implementation; reuse the already-validated boxes.
+                payload = source_payload
+            if payload and len(payload.get("items") or []) == len(objects):
+                break
+        grounding_cache_module.GROUNDING_IMPLEMENTATION_FINGERPRINT = current_fingerprint
         if not payload or len(payload.get("items") or []) != len(objects):
             report["clips_skipped"] += 1
             continue

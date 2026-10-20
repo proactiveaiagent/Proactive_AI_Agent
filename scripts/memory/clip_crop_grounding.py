@@ -1,7 +1,7 @@
-"""CPU-only entity crop localization using HOG proposals and cached CLIP ranking.
+"""GPU entity crop localization using CUDA HOG proposals and cached CLIP ranking.
 
 The main perception model supplies entity labels and appearance hints. This module
-never calls a generative vision service: OpenCV proposes human regions and a small
+never calls a generative vision service: CUDA HOG and a small
 multiscale grid proposes generic regions; locally cached CLIP ranks them.
 """
 from __future__ import annotations
@@ -14,7 +14,7 @@ from collections import OrderedDict
 from pathlib import Path
 
 _MODEL_ID = "openai/clip-vit-large-patch14"
-_METHOD = "opencv-hog+clip-grid-v1"
+_METHOD = "torch-cuda-hog+clip-grid-v3-no-score-threshold"
 _MODEL = None
 _PROCESSOR = None
 _DEVICE = None
@@ -41,20 +41,18 @@ def _model():
             tokenizer = CLIPTokenizer.from_pretrained(_MODEL_ID, local_files_only=True)
             image_processor = CLIPImageProcessor()
             _PROCESSOR = CLIPProcessor(image_processor=image_processor, tokenizer=tokenizer)
-            # Keep local crop ranking on CPU so it cannot exhaust VRAM reserved
-            # for the perception endpoints.
-            device_name = "cpu"
-            try:
-                _MODEL = CLIPModel.from_pretrained(
-                    _MODEL_ID, local_files_only=True).to(device_name).eval()
-                _DEVICE = torch.device(device_name)
-            except RuntimeError:
-                if not device_name.startswith("cuda"):
-                    raise
-                torch.cuda.empty_cache()
-                _MODEL = CLIPModel.from_pretrained(
-                    _MODEL_ID, local_files_only=True).to("cpu").eval()
-                _DEVICE = torch.device("cpu")
+            # Cropping must use a GPU; CUDA failures are surfaced instead of hidden by CPU fallback.
+            device_name = os.environ.get("MEMORY_CROP_DEVICE", "cuda:1").strip() or "cuda:1"
+            if not device_name.startswith("cuda") or not torch.cuda.is_available():
+                raise RuntimeError(f"local crop ranking requires CUDA, configured device={device_name}")
+            device = torch.device(device_name)
+            device_index = device.index if device.index is not None else torch.cuda.current_device()
+            free_bytes, _total_bytes = torch.cuda.mem_get_info(device_index)
+            if free_bytes < 3 * 1024**3:
+                raise RuntimeError(f"insufficient free CUDA memory for CLIP on {device_name}: "
+                                   f"{free_bytes / 1024**3:.2f} GiB free")
+            _MODEL = CLIPModel.from_pretrained(_MODEL_ID, local_files_only=True).to(device).eval()
+            _DEVICE = device
             torch.set_num_threads(min(8, max(1, os.cpu_count() or 1)))
     return _MODEL, _PROCESSOR
 
@@ -78,7 +76,7 @@ def _iou(a, b):
 
 
 def _grid_boxes(width, height):
-    # Fixed low-count image pyramid: keeps corpus prewarming bounded on CPU.
+    # Fixed low-count image pyramid: bounds proposal generation work.
     specs = ((.16,.24),(.28,.44),(.46,.72),(.62,.34))
     centers = ((.25,.30),(.75,.30),(.50,.50),(.25,.70),(.75,.70))
     rows = []
@@ -95,37 +93,90 @@ def _grid_boxes(width, height):
     return rows
 
 
-def _person_boxes(image):
-    try:
-        import cv2
-        import numpy as np
-        detector = cv2.HOGDescriptor()
-        detector.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
-        rgb = np.asarray(image.convert("RGB"))
-        bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
-        scale = min(1.8, 900 / max(1, bgr.shape[1]))
-        if scale > 1:
-            bgr = cv2.resize(bgr, None, fx=scale, fy=scale)
-        found, weights = detector.detectMultiScale(
-            bgr, winStride=(8,8), padding=(8,8), scale=1.05, finalThreshold=1.5)
-        height, width = rgb.shape[:2]
-        output = []
-        for (x,y,w,h), weight in zip(found, weights):
-            confidence = float(weight[0]) if hasattr(weight, "__len__") else float(weight)
-            box = (max(0,x/scale/width), max(0,y/scale/height),
-                   min(1,(x+w)/scale/width), min(1,(y+h)/scale/height))
+def _person_boxes(image, device):
+    """Run HOG feature extraction and people-window ranking entirely on CUDA."""
+    import numpy as np
+    import torch
+    import torch.nn.functional as F
+
+    device = torch.device(device)
+    if device.type != "cuda" or not torch.cuda.is_available():
+        raise RuntimeError(f"person HOG requires CUDA, got {device}")
+    rgb = np.array(image.convert("RGB"), copy=True)
+    height, width = rgb.shape[:2]
+    pixels = torch.as_tensor(rgb, device=device).permute(2, 0, 1).unsqueeze(0).float()
+    gray = (pixels[:, 0:1] * 0.299 + pixels[:, 1:2] * 0.587
+            + pixels[:, 2:3] * 0.114) / 255.0
+    max_width = 900
+    if width > max_width:
+        gray = F.interpolate(gray, size=(max(128, round(height * max_width / width)), max_width),
+                             mode="bilinear", align_corners=False)
+    base_h, base_w = gray.shape[-2:]
+    weights = np.load(Path(__file__).parent / "assets" / "opencv_default_people_detector.npy",
+                      allow_pickle=False).astype(np.float32, copy=False).reshape(-1)
+    descriptor_size = 15 * 7 * 36
+    if weights.size != descriptor_size + 1:
+        raise RuntimeError(f"unexpected OpenCV HOG weight count: {weights.size}")
+    svm = torch.as_tensor(weights[:descriptor_size], device=device)
+    bias = float(weights[descriptor_size])
+    found = []
+    for scale in (1.0, 0.82, 0.67):
+        sh, sw = max(128, round(base_h * scale)), max(64, round(base_w * scale))
+        frame = gray if (sh, sw) == (base_h, base_w) else F.interpolate(
+            gray, size=(sh, sw), mode="bilinear", align_corners=False)
+        h, w = (frame.shape[-2] // 8) * 8, (frame.shape[-1] // 8) * 8
+        if h < 128 or w < 64:
+            continue
+        frame = frame[:, :, :h, :w]
+        gx, gy = torch.zeros_like(frame), torch.zeros_like(frame)
+        gx[:, :, :, 1:-1] = frame[:, :, :, 2:] - frame[:, :, :, :-2]
+        gx[:, :, :, 0] = frame[:, :, :, 1] - frame[:, :, :, 0]
+        gx[:, :, :, -1] = frame[:, :, :, -1] - frame[:, :, :, -2]
+        gy[:, :, 1:-1, :] = frame[:, :, 2:, :] - frame[:, :, :-2, :]
+        gy[:, :, 0, :] = frame[:, :, 1, :] - frame[:, :, 0, :]
+        gy[:, :, -1, :] = frame[:, :, -1, :] - frame[:, :, -2, :]
+        magnitude = torch.sqrt(gx.square() + gy.square() + 1e-12).reshape(-1)
+        angle = torch.remainder(torch.atan2(gy, gx).reshape(-1) * (9.0 / np.pi), 9.0).clamp_(0.0, 8.999999)
+        bin0 = torch.floor(angle).long()
+        frac, bin1 = angle - bin0, (bin0 + 1) % 9
+        hc, wc = h // 8, w // 8
+        yy = torch.arange(h, device=device).repeat_interleave(w) // 8
+        xx = torch.arange(w, device=device).repeat(h) // 8
+        cell, ncells = yy * wc + xx, hc * wc
+        hist_flat = torch.zeros(9 * ncells, dtype=frame.dtype, device=device)
+        hist_flat.scatter_add_(0, bin0 * ncells + cell, magnitude * (1.0 - frac))
+        hist_flat.scatter_add_(0, bin1 * ncells + cell, magnitude * frac)
+        hist = hist_flat.view(9, hc, wc).permute(1, 2, 0)
+        blocks = torch.cat((hist[:-1, :-1], hist[:-1, 1:],
+                            hist[1:, :-1], hist[1:, 1:]), dim=-1)
+        blocks = (blocks / torch.sqrt(blocks.square().sum(-1, keepdim=True) + 1e-6)).clamp(max=0.2)
+        blocks = blocks / torch.sqrt(blocks.square().sum(-1, keepdim=True) + 1e-6)
+        if blocks.shape[0] < 15 or blocks.shape[1] < 7:
+            continue
+        windows = blocks.unfold(0, 15, 1).unfold(1, 7, 1)
+        windows = windows.permute(0, 1, 3, 4, 2).contiguous()
+        windows = windows.view(windows.shape[0], windows.shape[1], descriptor_size)
+        scores = torch.matmul(windows, svm) + bias
+        flat = scores.reshape(-1)
+        top_scores, indices = torch.topk(flat, min(48, flat.numel()))
+        nx = scores.shape[1]
+        ys = torch.div(indices, nx, rounding_mode="floor")
+        xs = indices % nx
+        for score, y, x in zip(top_scores.tolist(), ys.tolist(), xs.tolist()):
+            box = (max(0.0, x * 8 / (base_w * scale)),
+                   max(0.0, y * 8 / (base_h * scale)),
+                   min(1.0, (x * 8 + 64) / (base_w * scale)),
+                   min(1.0, (y * 8 + 128) / (base_h * scale)))
             if box[2] > box[0] and box[3] > box[1]:
-                output.append((box, confidence))
-        output.sort(key=lambda row: row[1], reverse=True)
-        kept = []
-        for row in output:
-            if not any(_iou(row[0], old[0]) > .65 for old in kept):
-                kept.append(row)
-            if len(kept) >= 12:
-                break
-        return kept
-    except Exception:
-        return []
+                found.append((box, float(score)))
+    found.sort(key=lambda row: row[1], reverse=True)
+    kept = []
+    for row in found:
+        if not any(_iou(row[0], old[0]) > 0.55 for old in kept):
+            kept.append(row)
+        if len(kept) >= 12:
+            break
+    return kept
 
 
 def _load_frame(frame):
@@ -183,14 +234,21 @@ def _ground(rows, frames, kind, progress_callback=None):
         return base
     if progress_callback:
         try:
+            requested_device = os.environ.get("MEMORY_CROP_DEVICE", "cuda:1").strip() or "cuda:1"
             progress_callback({"stage": f"{kind}_visual_grounding",
-                               "message": "本地 CPU 正在生成候选区域并匹配实体"})
+                               "message": f"本地 HOG + CLIP（配置设备 {requested_device}）正在匹配实体；不调用 Qwen"})
         except Exception:
             pass
     try:
         import torch
         from PIL import Image
         model, processor = _model()
+        if progress_callback:
+            try:
+                progress_callback({"stage": f"{kind}_visual_grounding",
+                                   "message": f"本地 CLIP 已就绪（实际设备 {_DEVICE or 'CPU'}），正在排序候选区域；不调用 Qwen"})
+            except Exception:
+                pass
         proposals, proposal_images = [], []
         frame_rows = list(enumerate(frames[:7], 1))
         if len(frame_rows) > 4:
@@ -209,13 +267,13 @@ def _ground(rows, frames, kind, progress_callback=None):
                 anchor_images[frame_index] = image
             if kind == "person":
                 hog_proposals.extend((frame_index, box)
-                                     for box, _score in _person_boxes(image))
-        if kind == "person" and hog_proposals:
+                                     for box, _score in _person_boxes(image, _DEVICE))
+        if kind == "person":
             proposals.extend(hog_proposals)
-        else:
-            for frame_index, image in anchor_images.items():
-                proposals.extend((frame_index, box)
-                                 for box in _grid_boxes(*image.size))
+        # Grid candidates cover partial/occluded people; CLIP ranks all proposals on CUDA.
+        for frame_index, image in anchor_images.items():
+            proposals.extend((frame_index, box)
+                             for box in _grid_boxes(*image.size))
         for frame_index, bbox in proposals:
             image = anchor_images.get(frame_index)
             if image is None:
@@ -279,14 +337,9 @@ def _ground(rows, frames, kind, progress_callback=None):
                 ranked = [(0.0, 0)]
             best_score, best_index = ranked[0]
             frame_index, bbox = proposals[best_index]
-            # Reject weak semantics and same-frame competing regions; uncertainty is
-            # stored as a terminal outcome for this exact source fingerprint.
-            rivals = [score for score, idx in ranked[1:]
-                      if proposals[idx][0] == frame_index
-                      and _iou(proposals[idx][1], bbox) < .50]
-            gap = best_score - rivals[0] if rivals else 1.0
-            threshold = .205 if kind == "person" else .195
-            accepted = best_score >= threshold and gap >= .010
+            # CLIP only ranks available regions. Do not reject a crop based on a
+            # similarity threshold; downstream memory/review decides how to use it.
+            accepted = True
             if accepted and kind == "person":
                 assigned_people.append((frame_index, bbox))
             item = {label_key: candidate["label"],
@@ -299,7 +352,7 @@ def _ground(rows, frames, kind, progress_callback=None):
                                       "score": round(best_score,5),
                                       "method": _METHOD}] if accepted else []),
                     "score": round(best_score,5),
-                    "reason": "matched" if accepted else "low_similarity_or_ambiguous"}
+                    "reason": "best_available_region_no_score_gate"}
             output_items.append(item)
         base["items"] = output_items
         base["prompt_version"] = _METHOD
@@ -325,3 +378,9 @@ def ground_people(people, frames, cancel_event=None, progress_callback=None):
     if cancel_event is not None and cancel_event.is_set():
         return {"schema":1,"status":"cancelled","model":_METHOD,"items":[]}
     return _ground(people, frames, "person", progress_callback)
+
+
+def warmup():
+    """Load the local CLIP ranker on its configured CUDA device."""
+    model, _processor = _model()
+    return {"model": _MODEL_ID, "device": str(_DEVICE), "ready": model is not None}

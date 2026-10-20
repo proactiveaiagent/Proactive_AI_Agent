@@ -18,6 +18,7 @@ viz_server.py — 7 层记忆模型可视化网站后端
 """
 
 import hashlib
+import copy
 import math
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
@@ -59,6 +60,111 @@ PREVIEW_LOCK = threading.Lock()
 MEMORY_ASSET_CACHE = {}
 MEMORY_ASSET_CACHE_LOCK = threading.Lock()
 PREVIEW_SEMAPHORE = threading.BoundedSemaphore(2)
+
+
+def _with_memory_asset_urls(value):
+    """Add browser URLs to nested image assets returned from saved memory records."""
+    if isinstance(value, list):
+        return [_with_memory_asset_urls(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    enriched = {key: _with_memory_asset_urls(item) for key, item in value.items()}
+    asset = str(value.get("asset") or "")
+    source_asset = str(value.get("source_asset") or "")
+    if asset.startswith("assets/"):
+        enriched["url"] = "/api/memory_asset?p=" + quote(asset)
+    if source_asset.startswith("assets/"):
+        enriched["source_url"] = "/api/memory_asset?p=" + quote(source_asset)
+
+    # Entity summaries and visual-grounding results are stored separately.
+    # Join them here so the detail UI does not hide valid crops just because
+    # entity_visuals only contains the semantic card text.
+    entities = enriched.get("entity_visuals")
+    person_group = enriched.get("person_visuals") or {}
+    object_group = enriched.get("object_visuals") or {}
+    person_rows = person_group.get("items") or [] if isinstance(person_group, dict) else []
+    object_rows = object_group.get("items") or [] if isinstance(object_group, dict) else []
+    source_frames = [row for row in enriched.get("visual_frames", [])
+                     if isinstance(row, dict) and row.get("url")]
+    context_assets = ([row for row in entities.get("assets", [])
+                       if isinstance(row, dict) and row.get("visual_role") == "scene_context_fallback"
+                       and row.get("url")] if isinstance(entities, dict) else [])
+
+    def fallback_refs(rows, reason):
+        return [{**row, "visual_role": "source_frame_fallback",
+                 "evidence_fallback_reason": reason} for row in rows[:3]]
+
+    # Preserve source-frame evidence for any visible person/object whose local
+    # box was uncertain or not materialized. Do not attach arbitrary frames to
+    # rows explicitly marked as having no visual evidence.
+    for group_name, rows in (("person", person_rows), ("object", object_rows)):
+        for row in rows:
+            if not isinstance(row, dict) or row.get("frame_refs"):
+                continue
+            if row.get("status") in {"no_visual_evidence", "not_needed", "not_applicable"}:
+                continue
+            reason = ("未找到可靠的人物局部框，已保留完整来源画面供核对"
+                      if group_name == "person" else
+                      "未找到可靠的物品局部框，已保留完整来源画面供核对")
+            row["frame_refs"] = fallback_refs(source_frames, reason)
+            if row["frame_refs"]:
+                row["evidence_fallback_reason"] = reason
+
+    if isinstance(entities, dict) and isinstance(entities.get("items"), list):
+        entity_assets = entities.get("assets") or []
+        for item in entities["items"]:
+            if not isinstance(item, dict) or item.get("frame_refs"):
+                continue
+            refs = []
+            for raw_index in item.get("asset_indices") or []:
+                try:
+                    index = int(raw_index)
+                except (TypeError, ValueError):
+                    continue
+                if 0 <= index < len(entity_assets):
+                    ref = entity_assets[index]
+                    if isinstance(ref, dict) and ref.get("asset"):
+                        refs.append(ref)
+            if refs:
+                item["frame_refs"] = refs
+        def label_key(text):
+            return " ".join(str(text or "").casefold().split())
+        people_by_name = {label_key(row.get("person")): row for row in person_rows
+                          if isinstance(row, dict) and label_key(row.get("person"))}
+        objects_by_name = {label_key(row.get("object")): row for row in object_rows
+                           if isinstance(row, dict) and label_key(row.get("object"))}
+        for item in entities["items"]:
+            if not isinstance(item, dict):
+                continue
+            entity_type = str(item.get("entity_type") or "").casefold()
+            name = label_key(item.get("entity"))
+            grounding = (people_by_name.get(name) if entity_type == "person"
+                         else objects_by_name.get(name) if entity_type == "object" else None)
+            if grounding:
+                if not item.get("frame_refs") and grounding.get("frame_refs"):
+                    item["frame_refs"] = grounding["frame_refs"]
+                if grounding.get("status"):
+                    item["status"] = grounding["status"]
+                if not item.get("description") and grounding.get("appearance"):
+                    item["description"] = grounding.get("appearance")
+                if grounding.get("evidence_fallback_reason"):
+                    item["evidence_fallback_reason"] = grounding["evidence_fallback_reason"]
+            elif entity_type in {"person", "object"} and not item.get("frame_refs"):
+                reason = ("人物未与定位结果匹配，已保留完整来源画面供核对"
+                          if entity_type == "person" else
+                          "物品未与定位结果匹配，已保留完整来源画面供核对")
+                item["frame_refs"] = fallback_refs(source_frames, reason)
+                if item["frame_refs"]:
+                    item["evidence_fallback_reason"] = reason
+            elif entity_type in {"scene", "location", "environment", "activity", "event"}:
+                reason = "该场景/活动暂无独立局部框，已保留完整来源画面"
+                if not item.get("frame_refs"):
+                    item["frame_refs"] = fallback_refs(context_assets or source_frames, reason)
+                if item.get("frame_refs") and not any(
+                        ref.get("visual_role") in {"context_crop", "scene_crop"}
+                        for ref in item["frame_refs"] if isinstance(ref, dict)):
+                    item["evidence_fallback_reason"] = reason
+    return enriched
 ACTIVE_STEP_FORCE = False
 ACTIVE_STEP_RUNNING = False
 ACTIVE_STEP_PHASE = None
@@ -197,6 +303,13 @@ def _compact_interactive_state(state):
             continue
         item = dict(row)
         snapshot = item.pop("snapshot", None)
+        if item.get("kind") == "add" and SESSION is not None:
+            perception = item.get("perception")
+            if isinstance(perception, dict):
+                moment_id = str(perception.get("moment_id") or "")
+                stored = ((SESSION.mem.memory.get("layer7") or {}).get("moments") or {}).get(moment_id)
+                if isinstance(stored, dict) and isinstance(stored.get("multimodal"), dict):
+                    perception["multimodal"] = copy.deepcopy(stored["multimodal"])
         if item.get("kind") == "add" and isinstance(snapshot, dict):
             full = snapshot.get("full") or {}
             moments = full.get("layer7_moments") or []
@@ -226,7 +339,8 @@ def _compact_interactive_state(state):
         compact_rows.append(item)
     compact["log"] = compact_rows
     compact["snapshots_compact"] = True
-    return compact
+    # Step cards and memory details must resolve the same saved crop/source assets.
+    return _with_memory_asset_urls(compact)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -369,7 +483,7 @@ class Handler(BaseHTTPRequestHandler):
             if SESSION is not None:
                 roots.append(Path(SESSION.mem.memory_dir))
             memory_root = RUNS / "interactive_mem"
-            roots.extend(memory_root / name for name in ("short_term", "long_term", "custom_test"))
+            roots.extend(memory_root / name for name in ("current", "short_term", "long_term", "custom_test"))
             # Tabs can retain media URLs after a session is archived. Search only
             # the application's own archived memory folders so those thumbnails
             # remain available after switching scenarios or restarting a session.
@@ -394,7 +508,8 @@ class Handler(BaseHTTPRequestHandler):
                         continue
             if asset is None:
                 return self._send(404, {"error": "memory asset missing"})
-            ctype = {".webp": "image/webp"}.get(asset.suffix.lower())
+            ctype = {".webp": "image/webp", ".jpg": "image/jpeg",
+                     ".jpeg": "image/jpeg", ".png": "image/png"}.get(asset.suffix.lower())
             if not ctype:
                 return self._send(400, {"error": "invalid asset type"})
             cache_lock = globals().get("MEMORY_ASSET_CACHE_LOCK")
@@ -949,22 +1064,57 @@ class Handler(BaseHTTPRequestHandler):
                             [SESSION.key if SESSION is not None else 'custom_test'])[0]
                 if scenario not in ('short_term', 'long_term', 'custom_test'):
                     return self._send(400, {'error': 'unknown scenario'})
-                if SESSION is not None and scenario == SESSION.key:
+                if SESSION is not None:
                     if not STEP_LOCK.acquire(blocking=False):
                         return self._send(409, {'error': '记忆正在写入，请稍后刷新'})
                     try:
                         layer7 = SESSION.mem.memory.get('layer7') or {}
                         moments = layer7.get('moments') or {}
+                        identity_root = Path(SESSION.media_store.root)
+                        face_model_root = Path(os.environ.get(
+                            "MEMORY_FACEID_ROOT", str(Path.home() / ".insightface")
+                        )) / "models" / "buffalo_l"
+                        face_model_signature = []
+                        worker_path = ROOT / "scripts" / "memory" / "face_identity_worker.py"
+                        face_model_paths = [
+                            face_model_root / "det_10g.onnx",
+                            face_model_root / "w600k_r50.onnx",
+                            worker_path,
+                        ]
+                        for model_path in face_model_paths:
+                            model_name = model_path.name
+                            try:
+                                model_stat = model_path.stat()
+                                face_model_signature.append((model_name, model_stat.st_mtime_ns,
+                                                             model_stat.st_size))
+                            except OSError:
+                                face_model_signature.append((model_name, 0, 0))
+                        embedding_cache = identity_root / "person_face_embedding_cache.json"
+                        correction_file = identity_root / "person_identity_corrections.json"
+                        identity_state_signature = []
+                        for state_file in (embedding_cache, correction_file):
+                            try:
+                                state_stat = state_file.stat()
+                                identity_state_signature.append(
+                                    (state_file.name, state_stat.st_mtime_ns, state_stat.st_size)
+                                )
+                            except OSError:
+                                identity_state_signature.append((state_file.name, 0, 0))
                         revision = (
                             getattr(SESSION, 'extraction_batch_id', id(SESSION)),
                             int(getattr(SESSION, 'pos', 0) or 0),
                             len(getattr(SESSION, 'operation_log', []) or []),
                             len(moments),
+                            tuple(face_model_signature),
+                            tuple(identity_state_signature),
                         )
                         index = getattr(SESSION, '_entity_record_index', None)
                         if (index is None or
                                 getattr(SESSION, '_entity_record_index_revision', None) != revision):
-                            index = EntityRecordIndex(layer7)
+                            index = EntityRecordIndex(
+                                layer7, asset_root=identity_root,
+                                identity_correction_path=identity_root / "person_identity_corrections.json",
+                            )
                             SESSION._entity_record_index = index
                             SESSION._entity_record_index_revision = revision
                         result = index.query(kind=(qs.get('kind') or ['all'])[0],
@@ -972,20 +1122,33 @@ class Handler(BaseHTTPRequestHandler):
                     finally:
                         STEP_LOCK.release()
                 else:
-                    memory_path = RUNS / 'interactive_mem' / scenario / 'memory.json'
+                    memory_path = RUNS / 'interactive_mem' / 'current' / 'memory.json'
                     if not memory_path.is_file() and scenario in SCENARIOS:
                         memory_path = RUNS / SCENARIOS[scenario]['memory']
                     try:
                         stat = memory_path.stat()
                     except OSError:
                         return self._send(404, {'error': '该场景还没有已保存的记忆'})
-                    signature = (str(memory_path.resolve()), stat.st_mtime_ns, stat.st_size)
+                    identity_root = memory_path.parent
+                    correction_path = identity_root / "person_identity_corrections.json"
+                    embedding_path = identity_root / "person_face_embedding_cache.json"
+                    def _identity_stat(path):
+                        try:
+                            current = path.stat()
+                            return current.st_mtime_ns, current.st_size
+                        except OSError:
+                            return 0, 0
+                    signature = (str(memory_path.resolve()), stat.st_mtime_ns, stat.st_size,
+                                 _identity_stat(correction_path), _identity_stat(embedding_path))
                     cached = ENTITY_ARCHIVE_INDEX_CACHE.get(scenario)
                     if not cached or cached[0] != signature:
                         memory = load_json(memory_path)
                         if not isinstance(memory, dict):
                             return self._send(404, {'error': '该场景还没有已保存的记忆'})
-                        index = EntityRecordIndex(memory.get('layer7') or {})
+                        index = EntityRecordIndex(
+                            memory.get('layer7') or {}, asset_root=identity_root,
+                            identity_correction_path=correction_path,
+                        )
                         ENTITY_ARCHIVE_INDEX_CACHE[scenario] = (signature, index)
                     else:
                         index = cached[1]
@@ -1024,7 +1187,7 @@ class Handler(BaseHTTPRequestHandler):
                         return self._send(200, {
                             "moment_id": moment_id,
                             "scenario": SESSION.key,
-                            "record": record,
+                            "record": _with_memory_asset_urls(record),
                         })
                 finally:
                     STEP_LOCK.release()
@@ -1034,7 +1197,7 @@ class Handler(BaseHTTPRequestHandler):
             scenarios = ([requested_scenario] if requested_scenario in allowed_scenarios
                          else list(allowed_scenarios) if not requested_scenario else [])
             for scenario in scenarios:
-                memory_path = RUNS / "interactive_mem" / scenario / "memory.json"
+                memory_path = RUNS / "interactive_mem" / "current" / "memory.json"
                 try:
                     memory = load_json(memory_path)
                 except (OSError, ValueError, TypeError):
@@ -1047,7 +1210,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(200, {
                         "moment_id": moment_id,
                         "scenario": scenario,
-                        "record": record,
+                        "record": _with_memory_asset_urls(record),
                     })
             return self._send(404, {"error": "memory record not found"})
 
@@ -1343,8 +1506,102 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         global SESSION
         url = urlparse(self.path)
-        if url.path not in ("/api/interactive/merge", "/api/interactive/unmerge"):
+        if url.path not in ("/api/interactive/merge", "/api/interactive/unmerge",
+                            "/api/interactive/person_identity", "/api/interactive/clear_memory"):
             return self._send(404, {"error": "not found"})
+        if url.path == "/api/interactive/clear_memory":
+            if not STEP_LOCK.acquire(blocking=False):
+                return self._send(409, {"error": "记忆正在写入，无法清空"})
+            try:
+                if SESSION is None:
+                    return self._send(409, {"error": "请先创建交互会话"})
+                old_dir = Path(SESSION.mem.memory_dir)
+                try:
+                    SESSION.daytime.end_scene()
+                except Exception:
+                    pass
+                trash_dir = RUNS / "interactive_mem" / "_trash"
+                trash_dir.mkdir(parents=True, exist_ok=True)
+                archived = trash_dir / f"current_cleared_{time.time_ns()}"
+                if old_dir.exists():
+                    os.rename(old_dir, archived)
+                old_dir.mkdir(parents=True, exist_ok=True)
+                SESSION.mem = ir.PersonMemory(memory_dir=str(old_dir))
+                SESSION.media_store = ir.MultimodalAssetStore(old_dir)
+                SESSION.daytime = ir.DaytimeProcessor(SESSION.mem)
+                SESSION.daytime.start_scene(f"accumulation_{time.strftime('%Y-%m-%d')}")
+                SESSION.id_map = {}
+                SESSION.log = []
+                SESSION._entity_record_index = None
+                SESSION._entity_record_index_revision = None
+                SESSION.nightly_progress = None
+                SESSION._install_operation_audit()
+                save_session_checkpoint(SESSION.state())
+                MEMORY_ASSET_CACHE.clear()
+                ENTITY_ARCHIVE_INDEX_CACHE.clear()
+                return self._send(200, {"ok": True, "archived": archived.name,
+                                        "memory_count": 0,
+                                        "message": "当前累积记忆已清空；原记忆已保留在可恢复归档中"})
+            except Exception as exc:
+                return self._send(500, {"error": f"清空累积记忆失败：{exc}"})
+            finally:
+                STEP_LOCK.release()
+        if url.path == "/api/interactive/person_identity":
+            if not STEP_LOCK.acquire(blocking=False):
+                return self._send(409, {"error": "记忆正在写入，请稍后纠正"})
+            try:
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                    if length <= 0 or length > 32768:
+                        return self._send(400, {"error": "请求内容长度无效"})
+                    payload = json.loads(self.rfile.read(length).decode("utf-8"))
+                except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
+                    return self._send(400, {"error": "请求内容必须是有效 JSON"})
+                scenario = str(payload.get("scenario") or
+                               (SESSION.key if SESSION is not None else "custom_test"))
+                if scenario not in ("short_term", "long_term", "custom_test"):
+                    return self._send(400, {"error": "unknown scenario"})
+                if SESSION is not None and scenario == SESSION.key:
+                    identity_root = Path(SESSION.media_store.root)
+                    layer7 = SESSION.mem.memory.get("layer7") or {}
+                else:
+                    memory_path = RUNS / "interactive_mem" / "current" / "memory.json"
+                    if not memory_path.is_file():
+                        return self._send(404, {"error": "该场景还没有已保存的记忆"})
+                    identity_root = memory_path.parent
+                    memory = load_json(memory_path) or {}
+                    layer7 = memory.get("layer7") or {}
+                from entity_records import EntityRecordIndex
+                from face_identity import write_correction
+                index = EntityRecordIndex(
+                    layer7, asset_root=identity_root,
+                    identity_correction_path=identity_root / "person_identity_corrections.json",
+                )
+                valid_ids = {str(member_id) for row in index.records if row.get("kind") == "person"
+                             for member_id in (row.get("member_ids") or [row.get("id")])}
+                source_member = str(payload.get("source_member_id") or "")
+                target_member = str(payload.get("target_member_id") or "")
+                if not source_member or not target_member:
+                    return self._send(400, {"error": "请指定两条具体人物成员记录"})
+                if (source_member not in valid_ids or target_member not in valid_ids
+                        or source_member == target_member):
+                    return self._send(404, {"error": "人物成员记录已变化，请刷新人物记忆后重试"})
+                action = str(payload.get("action") or "")
+                result = write_correction(
+                    identity_root / "person_identity_corrections.json",
+                    action, source_member, target_member,
+                    reason=str(payload.get("reason") or "人物页人工纠错"),
+                )
+                if not result.get("ok"):
+                    return self._send(400, result)
+                ENTITY_ARCHIVE_INDEX_CACHE.pop(scenario, None)
+                if SESSION is not None and scenario == SESSION.key:
+                    SESSION._entity_record_index = None
+                    SESSION._entity_record_index_revision = None
+                return self._send(200, {"ok": True, "action": action,
+                                        "message": "身份纠错已保存，人物记忆已按纠错记录刷新"})
+            finally:
+                STEP_LOCK.release()
         if SESSION is None:
             return self._send(404, {"error": "请先创建交互会话"})
         if not STEP_LOCK.acquire(blocking=False):
@@ -1418,6 +1675,17 @@ def main():
     print(f"\n  服务地址: http://localhost:{port}")
     print("  页面内可切换「交互执行」模式：逐步查看输入的视频/时间点，手工点击运行")
     print("  按 Ctrl+C 停止\n")
+    # Keep local crop and face models resident on their explicitly assigned GPUs.
+    for module_name, function_name in (
+        ("clip_crop_grounding", "warmup"),
+        ("face_detection", "warmup"),
+    ):
+        try:
+            module = __import__(module_name, fromlist=[function_name])
+            result = getattr(module, function_name)()
+            print(f"  本地 GPU 模型就绪: {result}")
+        except Exception as exc:
+            print(f"  GPU 模型预热失败（网页仍可用）: {module_name}: {str(exc)[:240]}")
     ThreadingHTTPServer(("0.0.0.0", port), Handler).serve_forever()
 
 

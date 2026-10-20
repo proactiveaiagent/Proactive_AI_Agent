@@ -9,7 +9,7 @@ from pathlib import Path
 # Stable fingerprint of the object-grounding implementation used by the
 # existing cache rows. Perception prompt edits must not invalidate grounding.
 # Bump this when ground_objects' prompt or result schema changes.
-GROUNDING_IMPLEMENTATION_FINGERPRINT = "opencv-hog-clip-vit-l14-grid-v1-20261019"
+GROUNDING_IMPLEMENTATION_FINGERPRINT = "torch-cuda-hog-clip-vit-l14-grid-v3-no-score-threshold-20261019"
 
 def _json(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))

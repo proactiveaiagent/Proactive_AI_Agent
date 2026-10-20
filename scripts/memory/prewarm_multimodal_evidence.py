@@ -555,57 +555,51 @@ def _cache_text_needs_full_reperception(entry: dict) -> bool:
 
 
 def resolve_cached_perception(perceiver: QwenPerceiver, moment: dict, entry: dict) -> dict:
-    """Upgrade current-source cache rows and close their quality gaps in one pass."""
-    def refresh_and_repair():
-        result = perceiver.perceive(moment, force=False, persist_cache=False)
+    """Refresh scenes as a whole; use focused repairs only for person coverage."""
+    result = perceiver.perceive(moment, force=False, persist_cache=False, allow_quality_warning=True)
+    if result.get("source") == "error" or not result.get("fields"):
+        return result
+
+    fields = result["fields"]
+    quality_error = (_structured_fact_quality_error(fields)
+                     or _temporal_fact_coverage_error(fields))
+    if quality_error and not result.get("quality_warning"):
+        # Person-only repair cannot restore missing event or state facts.
+        result = perceiver.perceive(moment, force=True, persist_cache=False, allow_quality_warning=True)
         if result.get("source") == "error" or not result.get("fields"):
             return result
-        refreshed = perceiver.cache.get(str(moment.get("id") or "")) or entry or {}
-        if (_structured_fact_quality_error(result["fields"])
-                or needs_person_observation_review(result["fields"], refreshed)):
-            repaired = repair_cached_quality_gap(perceiver, moment)
-            if repaired.get("source") == "needs_full_reperception":
-                return perceiver.perceive(moment, force=False, persist_cache=False)
-            return repaired
-        return result
+        fields = result["fields"]
+        quality_error = (_structured_fact_quality_error(fields)
+                         or _temporal_fact_coverage_error(fields))
+        if quality_error:
+            result["quality_warning"] = quality_error
 
-    if (not entry
-            or entry.get("prompt_version") != PROMPT_VERSION
-            or not _source_fingerprint_matches(entry, moment)
-            or _cache_text_needs_full_reperception(entry)):
-        return refresh_and_repair()
+    mid = str(moment.get("id") or "")
+    with perceiver._cache_lock:
+        refreshed = perceiver.cache.get(mid) or entry or {}
+    if needs_person_observation_review(fields, refreshed):
+        repaired = repair_cached_quality_gap(perceiver, moment)
+        if repaired.get("source") == "needs_full_reperception":
+            repaired = perceiver.perceive(moment, force=True, persist_cache=False, allow_quality_warning=True)
+        if repaired.get("source") == "error" or not repaired.get("fields"):
+            if result.get("quality_warning"):
+                result["quality_warning"] += "; "
+            result["quality_warning"] = (
+                str(result.get("quality_warning") or "")
+                + str(repaired.get("error") or "person observation review failed")
+            )[:500]
+        else:
+            result = repaired
 
-    if entry.get("list_parser_version") != LIST_PARSER_VERSION:
-        result = perceiver.perceive(moment, force=False, persist_cache=False)
-        if result.get("source") == "error" or not result.get("fields"):
+    if result.get("quality_warning"):
+        # Cache availability and content quality are separate outcomes. Keep the
+        # source-matched current-prompt result reusable, while exposing the exact
+        # quality gap to the UI and evaluation report instead of dropping the row.
+        if result.get("fields"):
             return result
-        # Local reparse updates the in-memory cache row. Check the normalized
-        # fields immediately so person/source repairs do not wait for another
-        # all-profile pass.
-        refreshed = perceiver.cache.get(str(moment.get("id") or "")) or entry
-        if (_structured_fact_quality_error(result["fields"])
-                or needs_person_observation_review(result["fields"], refreshed)):
-            result = repair_cached_quality_gap(perceiver, moment)
-            if result.get("source") == "needs_full_reperception":
-                return perceiver.perceive(moment, force=False, persist_cache=False)
-        return result
-
-    cached_fields = entry.get("fields") or {}
-    if _temporal_fact_coverage_error(cached_fields):
-        # Event omissions require a full scene pass; a person-only repair cannot
-        # reconstruct missing actions or object state changes.
-        return perceiver.perceive(moment, force=True, persist_cache=False)
-
-    if (_structured_fact_quality_error(cached_fields)
-            or needs_person_observation_review(cached_fields, entry)):
-        result = repair_cached_quality_gap(perceiver, moment)
-        if result.get("source") == "needs_full_reperception":
-            return perceiver.perceive(moment, force=False, persist_cache=False)
-        return result
-
-    result = dict(entry)
-    result["source"] = "cache"
+        return {"source": "error", "error": result["quality_warning"], "fields": None}
     return result
+
 
 def run(limit: int | None = None, dry_run: bool = False,
         all_profiles: bool = False, short_half: bool = False,
@@ -631,6 +625,7 @@ def run(limit: int | None = None, dry_run: bool = False,
     totals = {
         "clips": len(moments), "perception_cache_hits": 0, "perception_refreshed": 0,
         "perception_new": 0, "perception_repaired": 0, "perception_failed": 0,
+        "perception_quality_warning_hits": 0,
         "grounding_hit": 0, "grounding_source_hit": 0, "grounding_new": 0,
         "grounding_failed": 0, "grounding_not_needed": 0,
         "audio_hit": 0, "audio_new": 0, "audio_failed": 0, "audio_silent": 0,
@@ -639,7 +634,6 @@ def run(limit: int | None = None, dry_run: bool = False,
     }
 
     if crop_only:
-        from concurrent.futures import ThreadPoolExecutor, as_completed
         crop_totals = {"clips": len(moments), "object_hit": 0, "object_new": 0,
                        "object_failed": 0, "object_not_needed": 0,
                        "person_hit": 0, "person_new": 0,
@@ -663,8 +657,8 @@ def run(limit: int | None = None, dry_run: bool = False,
                 return {"object_failed": 1, "person_failed": 1, "id": mid,
                         "error": "no sampled visual frames"}
             result = {}
-            labels = [str(value).strip() for value in fields.get("objects") or []
-                      if str(value).strip()][:12]
+            # Match InteractiveSession exactly; normalizing labels creates a different cache key.
+            labels = fields.get("objects") or []
             if labels:
                 source_key = grounding_cache.source_key(mid, video, start, end, labels)
                 cached = grounding_cache.get_source(source_key)[0]
@@ -743,11 +737,11 @@ def run(limit: int | None = None, dry_run: bool = False,
                 totals["perception_refreshed"] += 1
             elif entry.get("list_parser_version") != LIST_PARSER_VERSION:
                 totals["perception_repaired"] += 1
-            elif (_structured_fact_quality_error(fields)
-                    or needs_person_observation_review(fields, entry)):
-                totals["perception_repaired"] += 1
             else:
                 totals["perception_cache_hits"] += 1
+                if (_structured_fact_quality_error(fields)
+                        or needs_person_observation_review(fields, entry)):
+                    totals["perception_quality_warning_hits"] += 1
             labels = fields.get("objects") or []
             video = video_path_of(moment)
             if not labels:
@@ -835,7 +829,21 @@ def run(limit: int | None = None, dry_run: bool = False,
             or needs_person_observation_review(fields, entry)
         )
         had_current_prompt = bool(entry and entry.get("prompt_version") == PROMPT_VERSION)
-        result = resolve_cached_perception(perceiver, moment, entry)
+        if entry and fields and had_current_prompt and _source_fingerprint_matches(entry, moment):
+            # Exact-source cache rows remain reusable for interactive execution
+            # when strict quality review finds gaps; keep the warning visible.
+            result = dict(entry)
+            result["fields"] = dict(fields)
+            result["source"] = "cache_quality_warning" if had_quality_gap else "cache"
+            if had_quality_gap:
+                result["quality_warning"] = (
+                    _structured_fact_quality_error(fields)
+                    or _temporal_fact_coverage_error(fields)
+                    or _person_observation_coverage_error(fields)
+                    or "source-matched cache has a quality review gap"
+                )
+        else:
+            result = resolve_cached_perception(perceiver, moment, entry)
         return index, mid, had_quality_gap, bool(entry), had_current_prompt, result
 
     with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="perception-warm") as pool:
@@ -853,8 +861,10 @@ def run(limit: int | None = None, dry_run: bool = False,
                 log(f"perception cache repair failed {mid}: {str(result.get('error') or '')[:160]}")
             else:
                 source = result.get("source")
-                if source == "cache":
+                if source in {"cache", "cache_quality_warning"}:
                     totals["perception_cache_hits"] += 1
+                    if source == "cache_quality_warning":
+                        totals["perception_quality_warning_hits"] += 1
                 elif source in {"qwen_repair", "quality_repair", "parser_repair", "cache_person_repair"} or (
                         had_quality_gap and had_current_prompt and source == "qwen"):
                     totals["perception_repaired"] += 1
@@ -874,6 +884,7 @@ def run(limit: int | None = None, dry_run: bool = False,
                     f"refreshed {totals['perception_refreshed']}, "
                     f"new {totals['perception_new']}, "
                     f"repaired {totals['perception_repaired']}, "
+                    f"quality-warning {totals['perception_quality_warning_hits']}, "
                     f"failed {totals['perception_failed']}"
                 )
     perceiver._save_cache()
@@ -886,7 +897,7 @@ def run(limit: int | None = None, dry_run: bool = False,
         fields = entry.get("fields") or {}
         labels = fields.get("objects") or []
         video = video_path_of(moment)
-        if entry.get("prompt_version") != PROMPT_VERSION or not labels:
+        if not labels or not _source_fingerprint_matches(entry, moment):
             return {"grounding_not_needed": 1}
         if not video:
             return {"grounding_failed": 1, "id": mid, "error": "video asset unavailable"}
@@ -948,7 +959,7 @@ def run(limit: int | None = None, dry_run: bool = False,
         fields = entry.get("fields") or {}
         rows = [row for row in fields.get("person_observations") or []
                 if isinstance(row, dict) and str(row.get("entity") or "").strip()]
-        if entry.get("prompt_version") != PROMPT_VERSION or not rows:
+        if not rows or not _source_fingerprint_matches(entry, moment):
             return {"person_grounding_not_needed": 1}
         video = video_path_of(moment)
         if not video:
@@ -1048,6 +1059,103 @@ def run(limit: int | None = None, dry_run: bool = False,
                 log(f"audio cache issue: {error}")
             if completed % PROGRESS_EVERY == 0 or completed == len(moments):
                 log(f"audio transcript cache {completed}/{len(moments)}: hit {totals['audio_hit']}, new {totals['audio_new']}, failed {totals['audio_failed']}, silent {totals['audio_silent']}")
+    # Profile enrichment is a separate step in the interactive run path. Warm its
+    # cache from the same transcript and sampled frames so Run Step does not issue
+    # another model request after perception and transcription have already hit.
+    profile_cache = PersistentTranscriptCache(
+        RUNS / "interactive_person_profile_cache.json")
+    profile_runner = object.__new__(ir.InteractiveSession)
+    profile_runner.perceiver = perceiver
+    profile_runner.person_profile_cache = profile_cache
+    profile_totals = {"hit": 0, "new": 0, "failed": 0, "skipped": 0}
+
+    def transcript_from_cache(moment):
+        rows = []
+        mid = str(moment.get("id") or "")
+        for offset, duration, audio_data in video_audio_chunks(moment):
+            key = "whisper-source-audio-v2:" + hashlib.sha256(audio_data).hexdigest()
+            decoded = speech_cache.get(key)
+            if not isinstance(decoded, dict):
+                continue
+            language = str(decoded.get("language") or "unknown")[:24]
+            segments = decoded.get("segments") or []
+            if segments:
+                for segment in segments:
+                    if not isinstance(segment, dict):
+                        continue
+                    text = str(segment.get("text") or "").strip()
+                    if not text:
+                        continue
+                    start_s = offset + max(0.0, float(segment.get("start") or 0))
+                    end_s = offset + max(float(segment.get("start") or 0),
+                                         float(segment.get("end") or 0))
+                    rows.append((round(start_s, 2), round(end_s, 2), language, text[:1000]))
+            else:
+                text = str(decoded.get("full_text") or "").strip()
+                if text:
+                    rows.append((round(offset, 2), round(offset + duration, 2),
+                                 language, text[:1000]))
+        return "\n".join(
+            f"[audio {start_s:.2f}–{end_s:.2f}s; {language}] {text}"
+            for start_s, end_s, language, text in rows
+        )[:4000]
+
+    def profile_one(moment):
+        mid = str(moment.get("id") or "")
+        entry = perceiver.cache.get(mid) or {}
+        fields = entry.get("fields") or {}
+        people = [row for row in fields.get("person_observations") or []
+                  if isinstance(row, dict) and str(row.get("entity") or "").strip()][:16]
+        if not people or not _source_fingerprint_matches(entry, moment):
+            return {"skipped": 1}
+        speech = transcript_from_cache(moment)
+        if not speech:
+            return {"skipped": 1}
+        transcript_hash = hashlib.sha256(speech.encode("utf-8")).hexdigest()
+        cache_key = hashlib.sha256(json.dumps({
+            "source": mid, "transcript": transcript_hash,
+            "people": [(str(row.get("entity") or ""), str(row.get("appearance") or ""))
+                       for row in people],
+            "version": "person-profile-from-speech-v1",
+        }, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+        if profile_cache.get(cache_key) is not None:
+            return {"hit": 1}
+        video = video_path_of(moment)
+        if not video:
+            return {"failed": 1, "id": mid, "error": "video asset unavailable"}
+        start, end = clip_range(moment)
+        frames = media.sample_visual_candidates(
+            video, start, end, source_id=mid, count=7)
+        if not frames:
+            return {"failed": 1, "id": mid, "error": "profile frame sampling failed"}
+        # Retry against the round-robin pool if a busy API rejects one request.
+        for attempt in range(3):
+            profile_runner._enrich_person_profiles_from_speech(
+                people, speech, frames, mid)
+            if profile_cache.get(cache_key) is not None:
+                return {"new": 1}
+            if attempt < 2:
+                time.sleep(1)
+        return {"failed": 1, "id": mid, "error": "profile cache was not written"}
+
+    with ThreadPoolExecutor(max_workers=worker_count,
+                            thread_name_prefix="profile-warm") as pool:
+        futures = [pool.submit(profile_one, moment) for moment in moments]
+        for completed, future in enumerate(as_completed(futures), 1):
+            try:
+                result = future.result()
+            except Exception as exc:
+                result = {"failed": 1, "error": str(exc)[:160]}
+            for key in profile_totals:
+                profile_totals[key] += int(result.get(key, 0) or 0)
+            if result.get("error"):
+                log(f"person-profile cache issue {result.get('id','')}: {result['error']}")
+            if completed % PROGRESS_EVERY == 0 or completed == len(moments):
+                log(f"person-profile cache {completed}/{len(moments)}: "
+                    f"hit {profile_totals['hit']}, new {profile_totals['new']}, "
+                    f"failed {profile_totals['failed']}, skipped {profile_totals['skipped']}")
+    totals.update({f"person_profile_{key}": value
+                   for key, value in profile_totals.items()})
     log(f"{scope} multimodal cache pass complete: {totals}")
     return totals
 

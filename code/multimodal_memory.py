@@ -21,7 +21,7 @@ from typing import Any
 
 IMAGE_LIMIT = 12_000
 TEMPORAL_IMAGE_LIMIT = 6_000
-CAPTURE_VERSION = "temporal-v7-context-entity-crops-2026-10-19"
+CAPTURE_VERSION = "temporal-v9-source-resolution-yolo-face-evidence-2026-10-19"
 
 
 def media_refs(media: dict, kind: str) -> list[dict]:
@@ -129,7 +129,8 @@ class MultimodalAssetStore:
 
     def sample_visual_candidates(self, video: str | Path, start_s: float,
                                  end_s: float | None, source_id: str = "",
-                                 count: int = 7) -> list[dict[str, Any]]:
+                                 count: int = 7,
+                                 full_resolution: bool = False) -> list[dict[str, Any]]:
         """Sample transient candidates; callers persist only the selected frames."""
         path = Path(video)
         if not path.is_file():
@@ -152,12 +153,22 @@ class MultimodalAssetStore:
                            for i in range(n)))
         frames = []
         for sample_time in times:
-            image = _run_ffmpeg([
-                "-ss", f"{sample_time:.3f}", "-i", str(path), "-frames:v", "1",
-                "-vf", "scale=512:-2", "-c:v", "libwebp",
-                "-quality", "55", "-f", "webp", "pipe:1",
-            ])
-            if not image or len(image) > 32_000:
+            if full_resolution:
+                image = _run_ffmpeg([
+                    "-ss", f"{sample_time:.3f}", "-i", str(path), "-frames:v", "1",
+                    "-q:v", "2", "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1",
+                ])
+                mime = "image/jpeg"
+                max_bytes = 16_000_000
+            else:
+                image = _run_ffmpeg([
+                    "-ss", f"{sample_time:.3f}", "-i", str(path), "-frames:v", "1",
+                    "-vf", "scale=512:-2", "-c:v", "libwebp",
+                    "-quality", "55", "-f", "webp", "pipe:1",
+                ])
+                mime = "image/webp"
+                max_bytes = 32_000
+            if not image or len(image) > max_bytes:
                 continue
             try:
                 image_hash = _visual_hash(image)
@@ -165,9 +176,10 @@ class MultimodalAssetStore:
                 continue
             if not image_hash:
                 continue
-            frames.append({"bytes": image, "mime": "image/webp",
+            frames.append({"bytes": image, "mime": mime,
                            "dhash": image_hash, "at_s": sample_time,
-                           "source_id": str(source_id)})
+                           "source_id": str(source_id),
+                           "source_resolution": bool(full_resolution)})
         return frames
 
     @staticmethod
@@ -254,6 +266,32 @@ class MultimodalAssetStore:
         except Exception:
             return None
         return None
+
+    @staticmethod
+    def crop_visual_original(data: bytes, bbox: list | tuple,
+                             face: bool = False) -> bytes | None:
+        """Crop a source-resolution person/face region and save high-quality JPEG."""
+        try:
+            from PIL import Image, ImageOps
+            values = [float(value) for value in bbox]
+            if len(values) != 4 or not all(math.isfinite(value) for value in values):
+                return None
+            x1, y1, x2, y2 = [min(1.0, max(0.0, value)) for value in values]
+            if x2 <= x1 or y2 <= y1:
+                return None
+            source = ImageOps.exif_transpose(Image.open(io.BytesIO(data))).convert("RGB")
+            width, height = source.size
+            left, top, right, bottom = x1 * width, y1 * height, x2 * width, y2 * height
+            pad_x = (right - left) * (0.38 if face else 0.16)
+            pad_y = (bottom - top) * (0.48 if face else 0.12)
+            box = (max(0, round(left-pad_x)), max(0, round(top-pad_y)),
+                   min(width, round(right+pad_x)), min(height, round(bottom+pad_y)))
+            output = io.BytesIO()
+            source.crop(box).save(output, format="JPEG", quality=96,
+                                  subsampling=0, optimize=True)
+            return output.getvalue()
+        except Exception:
+            return None
 
     def capture(self, video: str | Path, start_s: float, end_s: float | None,
                 source_id: str = "",
@@ -635,7 +673,8 @@ class MultimodalAssetStore:
             for ref, field in visual_references(moment):
                 asset = str(ref.get(field) or "")
                 if (not asset or asset in protected_assets
-                        or ref.get("quality_tier") == "archive"):
+                        or ref.get("quality_tier") == "archive"
+                        or ref.get("visual_role") in {"person_crop", "face_crop"}):
                     continue
                 refs_by_asset.setdefault(asset, []).append((mid, ref, field))
 

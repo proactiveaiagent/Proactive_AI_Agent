@@ -18,6 +18,7 @@ import hashlib
 import json
 import re
 import os
+import shutil
 import sys
 import threading
 import time
@@ -32,6 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from memory import (PersonMemory, _build_entity_visuals, _portable_video_id,
                     entity_graph_summary, normalize_object_transition_facts)  # noqa: E402
+from translator import make_translator, translate_structured_fields  # noqa: E402
 from entity_records import memory_facts
 from daytime_processor import DaytimeProcessor  # noqa: E402
 from nighttime_processor import NightlyProcessor  # noqa: E402
@@ -40,12 +42,15 @@ from multimodal_memory import (CAPTURE_VERSION, MultimodalAssetStore, _run_ffmpe
 import run_scenarios as rs               # noqa: E402  复用 snapshot / 夜间整理辅助函数
 from qwen_perceive import (QwenPerceiver, golden_eval, clip_range, video_path_of,
                            PROMPT_VERSION, LIST_PARSER_VERSION,
-                           _organize_person_entity_aliases)   # noqa: E402
+                           _organize_person_entity_aliases,
+                           _retain_episode_objects)   # noqa: E402
 from advice_cache import PersistentAdviceCache  # noqa: E402
 from grounding_cache import PersistentObjectGroundingCache  # noqa: E402
 from speech_identity import (attach_spoken_identity, person_labels_from_observations,
                              terms_in_text)  # noqa: E402
 from audio_transcript_cache import PersistentTranscriptCache  # noqa: E402
+from object_crop_policy import select_object_crop_candidates  # noqa: E402
+from face_detection import detect_faces, select_face_for_person  # noqa: E402
 from scene_retrieval import PostWriteRetrievalMixin  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -1422,8 +1427,13 @@ class InteractiveSession(PostWriteRetrievalMixin):
                 "video. The transcript is noisy ASR evidence, not verified truth. Return one update "
                 "for existing visible candidates only; never invent or merge a person. Use explicit "
                 "introductions, forms of address, replies, turn order, gaze, gestures, and who is "
-                "visibly interacting to map spoken names/roles to a candidate. Do not assume that "
-                "the speaker is the camera wearer, and do not infer age, health, identity, or a family "
+                "visibly interacting to map spoken names/roles to a candidate. A vocative/form of "
+                "address (for example, \"Dad, ...\") identifies the listener, never the speaker; do "
+                "not assign that role to a candidate visibly speaking in the same utterance. If the "
+                "visible speaker is clear, record the reverse parent-child relation with medium "
+                "confidence and leave the addressed person unlinked unless that person is separately "
+                "visible and supported by interaction evidence. Do not assume that the speaker is the "
+                "camera wearer, and do not infer age, health, identity, or a family "
                 "role from appearance. A concise display_label may replace a visual alias only when "
                 "the transcript and scene support that match; otherwise keep the exact current entity. "
                 "Put stable or useful personal context (relationship, explicit plans/preferences, "
@@ -1580,14 +1590,15 @@ class InteractiveSession(PostWriteRetrievalMixin):
         """Detect missing expected entity crops so a later run can retry them."""
         media = media if isinstance(media, dict) else {}
         fields = fields if isinstance(fields, dict) else {}
-        objects = [
-            str(row.get("name") or row.get("object") or row.get("entity") or "").strip()
-            if isinstance(row, dict) else str(row or "").strip()
-            for row in (fields.get("objects") or [])
-        ][:12]
+        objects, _skipped = select_object_crop_candidates(
+            fields.get("objects") or [], fields.get("temporal_facts") or [])
+        objects = objects[:12]
         people = [str(row.get("entity") or "").strip()
                   for row in (fields.get("person_observations") or [])
                   if isinstance(row, dict) and str(row.get("entity") or "").strip()][:8]
+        person_visual = media.get("person_visuals") or {}
+        if people and int(person_visual.get("crop_schema") or 0) < 2:
+            return True
         for key, labels, label_key, role in (
             ("object_visuals", objects, "object", "object_crop"),
             ("person_visuals", people, "person", "person_crop"),
@@ -1597,6 +1608,8 @@ class InteractiveSession(PostWriteRetrievalMixin):
                 continue
             visual = media.get(key)
             if not isinstance(visual, dict) or visual.get("status") in {"unavailable", "error"}:
+                return True
+            if key == "person_visuals" and int(visual.get("crop_schema") or 0) < 2:
                 return True
             normalize = lambda value: " ".join(str(value or "").casefold().split())
             items = {normalize(item.get(label_key)): item
@@ -1643,6 +1656,18 @@ class InteractiveSession(PostWriteRetrievalMixin):
                                "frame_refs": [], "crop_count": 0} for label in labels]}
 
         def run_grounding(kind, labels, label_key, source_key=""):
+            highres_frames, face_detections = [], []
+            face_detection_status, face_detection_error = "not_applicable", ""
+            if kind == "person" and video_path and Path(video_path).is_file():
+                highres_frames = self.media_store.sample_visual_candidates(
+                    video_path, clip_start, clip_end, source_id=dataset_id,
+                    count=7, full_resolution=True)
+                try:
+                    face_detections = detect_faces(highres_frames) if highres_frames else []
+                    face_detection_status = "completed"
+                except Exception as face_exc:
+                    face_detection_status = "unavailable"
+                    face_detection_error = str(face_exc)[:400]
             if not labels or not frames:
                 return {"schema": 1, "status": "no_visual_evidence", "items": [],
                         "message": "没有可用于定位的画面"}
@@ -1650,7 +1675,7 @@ class InteractiveSession(PostWriteRetrievalMixin):
             cache_labels = labels
             if kind == "person":
                 cache_labels = [
-                    "person-crop-v1: " + str(row.get("entity") or "").strip()
+                    "person-crop-v2-source-resolution-face: " + str(row.get("entity") or "").strip()
                     + " | " + str(row.get("appearance") or "").strip() for row in labels]
             cache_key = self.grounding_cache.key(dataset_id, cache_labels, frames)
             if result is None:
@@ -1699,30 +1724,79 @@ class InteractiveSession(PostWriteRetrievalMixin):
                 indices = list(dict.fromkeys(
                     [index for index in item.get("frame_indices") or []
                      if isinstance(index, int)] + list(boxes)))
+                if kind == "person" and highres_frames:
+                    def face_frame_rank(index):
+                        if index not in boxes or not (1 <= index <= len(frames)):
+                            return (-1.0, -1.0)
+                        low_frame = frames[index - 1]
+                        ts = float(low_frame.get("at_s") or 0)
+                        hi = min(range(len(highres_frames)),
+                                 key=lambda j: abs(float(highres_frames[j].get("at_s") or 0)-ts))
+                        detections = face_detections[hi] if hi < len(face_detections) else []
+                        face = select_face_for_person(boxes[index], detections)
+                        if not face:
+                            return (0.0, 0.0)
+                        fb = face.get("bbox") or [0,0,0,0]
+                        area = max(0.0,(fb[2]-fb[0])*(fb[3]-fb[1]))
+                        return (1.0, float(face.get("confidence") or 0) * max(0.0001, area ** 0.5))
+                    indices.sort(key=face_frame_rank, reverse=True)
                 refs = []
                 for index in indices:
                     if index not in boxes:
                         continue
                     frame, bbox = frames[index - 1], boxes[index]
+                    if kind == "person":
+                        sample_time = float(frame.get("at_s") or 0)
+                        hi_index = min(range(len(highres_frames)),
+                                       key=lambda j: abs(float(highres_frames[j].get("at_s") or 0)-sample_time)) if highres_frames else -1
+                        if hi_index < 0:
+                            continue
+                        source_frame = highres_frames[hi_index]
+                        person_image_bbox = list(bbox)
+                        candidate_face = select_face_for_person(
+                            bbox, face_detections[hi_index] if hi_index < len(face_detections) else [])
+                        if candidate_face:
+                            fb = candidate_face.get("bbox") or bbox
+                            person_image_bbox = [min(float(bbox[0]),float(fb[0])),
+                                                 min(float(bbox[1]),float(fb[1])),
+                                                 max(float(bbox[2]),float(fb[2])),
+                                                 max(float(bbox[3]),float(fb[3]))]
+                        crop = self.media_store.crop_visual_original(source_frame.get("bytes"), person_image_bbox, face=False)
+                        crop_ref = self.media_store._put("visual", crop, "jpg", len(crop or b"") + 1)
+                        if not crop_ref or not crop_ref.get("asset"):
+                            continue
+                        ref = {"asset": crop_ref["asset"], "bytes": int(crop_ref.get("bytes") or 0),
+                               "at_s": source_frame.get("at_s"),
+                               "source_id": source_frame.get("source_id") or dataset_id,
+                               "visual_role": "person_crop",
+                               "crop_bbox": [round(float(value), 5) for value in person_image_bbox],
+                               "grounding_bbox": [round(float(value), 5) for value in bbox],
+                               "image_quality": "source_resolution_jpeg_q96"}
+                        face_rows = face_detections[hi_index] if hi_index < len(face_detections) else []
+                        face_row = select_face_for_person(bbox, face_rows)
+                        if face_row:
+                            face_bbox = face_row.get("bbox")
+                            face_data = self.media_store.crop_visual_original(source_frame.get("bytes"), face_bbox, face=True)
+                            face_ref = self.media_store._put("visual", face_data, "jpg", len(face_data or b"") + 1)
+                            if face_ref and face_ref.get("asset"):
+                                refs.append({"asset": face_ref["asset"], "bytes": int(face_ref.get("bytes") or 0),
+                                             "at_s": source_frame.get("at_s"),
+                                             "source_id": source_frame.get("source_id") or dataset_id,
+                                             "visual_role": "face_crop",
+                                             "face_bbox": [round(float(value), 5) for value in face_bbox],
+                                             "detector": "YOLOv8n-Face",
+                                             "detector_confidence": round(float(face_row.get("confidence") or 0), 5),
+                                             "image_quality": "source_resolution_jpeg_q96"})
+                        refs.append(ref)
+                        break
                     crop = self.media_store.crop_visual_candidate(frame.get("bytes"), bbox, 12_000)
                     crop_ref = self.media_store._put("visual", crop, "webp", 12_000)
                     if not crop_ref or not crop_ref.get("asset"):
                         continue
-                    source_bytes = self.media_store.fit_visual_candidate(frame.get("bytes"), 6_000)
-                    source_ref = self.media_store._put("visual", source_bytes, "webp", 6_000)
-                    if source_ref:
-                        source_ref.update({"mime": "image/webp", "dhash": frame.get("dhash") or "",
-                                           "at_s": frame.get("at_s"),
-                                           "source_id": frame.get("source_id") or dataset_id,
-                                           "quality_tier": "recent"})
-                    refs.append({"asset": crop_ref["asset"],
-                                 "bytes": int(crop_ref.get("bytes") or 0),
-                                 "at_s": frame.get("at_s"),
-                                 "source_id": frame.get("source_id") or dataset_id,
-                                 "visual_role": "person_crop" if kind == "person" else "object_crop",
-                                 "crop_bbox": [round(float(value), 5) for value in bbox],
-                                 **({"source_asset": source_ref["asset"]}
-                                    if source_ref and source_ref.get("asset") else {})})
+                    refs.append({"asset": crop_ref["asset"], "bytes": int(crop_ref.get("bytes") or 0),
+                                 "at_s": frame.get("at_s"), "source_id": frame.get("source_id") or dataset_id,
+                                 "visual_role": "object_crop",
+                                 "crop_bbox": [round(float(value), 5) for value in bbox]})
                     break
                 item["frame_refs"], item["crop_count"] = refs, len(refs)
                 item.pop("frame_indices", None)
@@ -1731,11 +1805,17 @@ class InteractiveSession(PostWriteRetrievalMixin):
                     item["status"] = "grounded"
                 elif item.get("status") not in {"not_visible", "uncertain"}:
                     item["status"] = "uncertain"
-                    item["error"] = "本地裁剪器未找到达到置信阈值的边界框；已保留来源画面"
-            result["crop_schema"] = 1
-            result["crop_method"] = ("OpenCV HOG and local CLIP-ranked person region with padded WebP crop"
+                    item["error"] = "本地裁剪器未能生成局部画面；已保留来源画面"
+            result["crop_schema"] = 2 if kind == "person" else 1
+            if kind == "person":
+                result["face_detection_model"] = "YOLOv8n-Face"
+                result["face_detection_device"] = os.environ.get("MEMORY_FACE_GPU", "cuda:0")
+                result["face_detection_status"] = face_detection_status
+                if face_detection_error:
+                    result["face_detection_error"] = face_detection_error
+            result["crop_method"] = ("local person proposal + source-resolution JPEG; GPU YOLOv8n-Face face crop"
                                      if kind == "person" else
-                                     "OpenCV HOG and local CLIP-ranked object region with padded WebP crop")
+                                     "grid proposal + best-ranked CLIP region (no score gate) with padded WebP crop")
             return result
 
         object_labels = [
@@ -2174,7 +2254,7 @@ class InteractiveSession(PostWriteRetrievalMixin):
             self._set_step_progress(completed_item=self._progress_text(m, info))
             finish_timing(info)
             return None, info
-        f = dict(r["fields"])
+        f = _retain_episode_objects(dict(r["fields"]))
         update("write_memory", "感知结果已生成，正在写入记忆", self._progress_text(m, {"qwen": f}))
         multimodal = None
         media_error = None
@@ -2283,7 +2363,13 @@ class InteractiveSession(PostWriteRetrievalMixin):
                     source_provenance=source_provenance,
                 )
                 record_duration("video_decode_and_multimodal_capture_ms", media_capture_started)
-                object_labels = f.get("objects") or []
+                object_labels, skipped_object_crops = select_object_crop_candidates(
+                    f.get("objects") or [], f.get("temporal_facts") or [])
+                multimodal["object_crop_policy"] = {
+                    "version": "personal-or-source-linked-v1",
+                    "eligible": list(object_labels),
+                    "skipped": skipped_object_crops,
+                }
                 visual_refs = multimodal.get("visual_frames") or (
                     [multimodal.get("visual")] if multimodal.get("visual") else [])
                 if object_labels and visual_refs:
@@ -2332,7 +2418,7 @@ class InteractiveSession(PostWriteRetrievalMixin):
                     operation_ms["object_grounding_cache_hit"] = grounding is not None
                     if grounding is not None:
                         update("object_grounding_cache_hit",
-                               f"物品画面对照命中缓存（{grounding_lookup_ms} ms），跳过视觉推理")
+                               f"物品画面对照命中缓存（{grounding_lookup_ms} ms），跳过本地 CLIP 匹配")
                     else:
                         update("object_visual_grounding",
                                "缓存未命中，正在逐件核对物品与关键帧")
@@ -2350,7 +2436,7 @@ class InteractiveSession(PostWriteRetrievalMixin):
                         except Exception as exc:
                             grounding_error = str(exc)[:500]
                             grounding = {
-                                "schema": 1, "status": "unavailable", "model": "Qwen3-VL",
+                                "schema": 1, "status": "unavailable", "model": "opencv-hog+clip-grid-v1",
                                 "message": grounding_error,
                                 "items": [{"object": str(label), "status": "unavailable",
                                            "error": grounding_error, "frame_refs": [],
@@ -2362,6 +2448,8 @@ class InteractiveSession(PostWriteRetrievalMixin):
                             self.grounding_cache.put_source(source_grounding_key, grounding)
 
                     object_crop_started = time.perf_counter()
+                    update("object_crop_materialization",
+                           "正在抽取关键帧并生成物品局部画面附件")
                     saved_by_index = {}
                     if candidate_frames and grounding.get("status") == "completed":
                         coverage = {}
@@ -2497,11 +2585,11 @@ class InteractiveSession(PostWriteRetrievalMixin):
                         item.pop("frame_boxes", None)
                         if item.get("status") in {"grounded", "visible_unlabeled"} and not item["frame_refs"]:
                             item["status"] = "uncertain"
-                            item["error"] = "本地裁剪器未能保存可靠局部框；已保留来源画面"
+                            item["error"] = "本地裁剪器未能生成局部画面；已保留来源画面"
                     for item in grounding.get("items") or []:
                         item["appearance"] = _remove_visual_age_guess(item.get("appearance"))
                     grounding["crop_schema"] = 1
-                    grounding["crop_method"] = "OpenCV HOG and local CLIP-ranked object region with padded WebP crop"
+                    grounding["crop_method"] = "grid proposal + best-ranked CLIP region (no score gate) with padded WebP crop"
                     multimodal["object_visuals"] = grounding
                     record_duration("object_crop_generation_and_asset_write_ms", object_crop_started)
                     record_duration("object_grounding_pipeline_wall_ms", object_pipeline_started)
@@ -2523,6 +2611,17 @@ class InteractiveSession(PostWriteRetrievalMixin):
                     if not person_frames:
                         person_frames = self.media_store.sample_visual_candidates(
                             video_path, clip_start, clip_end, source_id=dataset_id, count=7)
+                    person_highres_frames = self.media_store.sample_visual_candidates(
+                        video_path, clip_start, clip_end, source_id=dataset_id,
+                        count=7, full_resolution=True)
+                    try:
+                        person_face_detections = detect_faces(person_highres_frames) if person_highres_frames else []
+                        face_detection_status = "completed"
+                        face_detection_error = ""
+                    except Exception as face_exc:
+                        person_face_detections = []
+                        face_detection_status = "unavailable"
+                        face_detection_error = str(face_exc)[:400]
                     record_duration("person_candidate_frame_sampling_ms", person_frame_sample_started)
                     operation_ms["person_candidate_frames_reused_from_objects"] = reused_object_frames
                     if not person_frames:
@@ -2569,7 +2668,7 @@ class InteractiveSession(PostWriteRetrievalMixin):
                         except Exception as exc:
                             grounding_error = str(exc)[:500]
                             person_grounding = {
-                                "schema": 1, "status": "unavailable", "model": "Qwen3-VL",
+                                "schema": 1, "status": "unavailable", "model": "opencv-hog+clip-grid-v1",
                                 "message": grounding_error,
                                 "items": [{"person": str(row.get("entity") or ""),
                                            "status": "unavailable",
@@ -2595,50 +2694,88 @@ class InteractiveSession(PostWriteRetrievalMixin):
                         for index in boxes:
                             if index not in requested:
                                 requested.append(index)
-                        frame_refs = []
-                        for index in requested[:1]:
+                        candidates = []
+                        for index in requested[:7]:
                             if not (1 <= index <= len(person_frames)):
                                 continue
-                            frame = person_frames[index - 1]
                             bbox = boxes.get(index)
                             if not bbox:
                                 continue
-                            crop_bytes = self.media_store.crop_visual_candidate(
-                                frame.get("bytes"), bbox, 12_000)
-                            crop_ref = self.media_store._put(
-                                "visual", crop_bytes, "webp", 12_000)
-                            if not crop_ref or not crop_ref.get("asset"):
+                            frame = person_frames[index - 1]
+                            ground_time = float(frame.get("at_s") or 0)
+                            highres_index = min(
+                                range(len(person_highres_frames)),
+                                key=lambda j: abs(float(person_highres_frames[j].get("at_s") or 0)-ground_time),
+                            ) if person_highres_frames else -1
+                            if highres_index < 0:
                                 continue
-                            source_bytes = self.media_store.fit_visual_candidate(
-                                frame.get("bytes"), 6_000)
-                            source_ref = self.media_store._put(
-                                "visual", source_bytes, "webp", 6_000)
-                            if source_ref:
-                                source_ref.update({
-                                    "mime": "image/webp",
-                                    "dhash": frame.get("dhash") or "",
-                                    "at_s": frame.get("at_s"),
-                                    "source_id": frame.get("source_id") or dataset_id,
-                                })
-                            frame_ref = {
-                                "asset": crop_ref["asset"],
-                                "at_s": frame.get("at_s"),
-                                "source_id": frame.get("source_id") or dataset_id,
-                                "visual_role": "person_crop",
-                                "crop_bbox": [round(float(value), 5) for value in bbox],
-                            }
-                            if source_ref and source_ref.get("asset"):
-                                frame_ref["source_asset"] = source_ref["asset"]
-                            frame_refs.append(frame_ref)
+                            source_frame = person_highres_frames[highres_index]
+                            face_rows = (person_face_detections[highres_index]
+                                         if highres_index < len(person_face_detections) else [])
+                            face_row = select_face_for_person(bbox, face_rows)
+                            face_rank = 0.0
+                            if face_row:
+                                fb = face_row.get("bbox") or [0,0,0,0]
+                                face_rank = float(face_row.get("confidence") or 0) * max(
+                                    0.0001, ((fb[2]-fb[0])*(fb[3]-fb[1])) ** 0.5)
+                            candidates.append((bool(face_row), face_rank, source_frame, bbox, face_row))
+                        frame_refs = []
+                        if candidates:
+                            candidates.sort(key=lambda row: (row[0], row[1]), reverse=True)
+                            _has_face, _face_rank, source_frame, bbox, face_row = candidates[0]
+                            person_image_bbox = list(bbox)
+                            if face_row:
+                                fb = face_row.get("bbox") or bbox
+                                person_image_bbox = [min(float(bbox[0]),float(fb[0])),
+                                                     min(float(bbox[1]),float(fb[1])),
+                                                     max(float(bbox[2]),float(fb[2])),
+                                                     max(float(bbox[3]),float(fb[3]))]
+                            crop_bytes = self.media_store.crop_visual_original(
+                                source_frame.get("bytes"), person_image_bbox, face=False)
+                            crop_ref = self.media_store._put(
+                                "visual", crop_bytes, "jpg", len(crop_bytes or b"") + 1)
+                            if crop_ref and crop_ref.get("asset"):
+                                frame_ref = {
+                                    "asset": crop_ref["asset"], "bytes": int(crop_ref.get("bytes") or 0),
+                                    "at_s": source_frame.get("at_s"),
+                                    "source_id": source_frame.get("source_id") or dataset_id,
+                                    "visual_role": "person_crop",
+                                    "crop_bbox": [round(float(value), 5) for value in person_image_bbox],
+                                    "grounding_bbox": [round(float(value), 5) for value in bbox],
+                                    "image_quality": "source_resolution_jpeg_q96",
+                                }
+                                if face_row:
+                                    face_bbox = face_row.get("bbox")
+                                    face_bytes = self.media_store.crop_visual_original(
+                                        source_frame.get("bytes"), face_bbox, face=True)
+                                    face_ref = self.media_store._put(
+                                        "visual", face_bytes, "jpg", len(face_bytes or b"") + 1)
+                                    if face_ref and face_ref.get("asset"):
+                                        frame_refs.append({
+                                            "asset": face_ref["asset"], "bytes": int(face_ref.get("bytes") or 0),
+                                            "at_s": source_frame.get("at_s"),
+                                            "source_id": source_frame.get("source_id") or dataset_id,
+                                            "visual_role": "face_crop",
+                                            "face_bbox": [round(float(value), 5) for value in face_bbox],
+                                            "detector": "YOLOv8n-Face",
+                                            "detector_confidence": round(float(face_row.get("confidence") or 0), 5),
+                                            "image_quality": "source_resolution_jpeg_q96",
+                                        })
+                                frame_refs.append(frame_ref)
                         item["frame_refs"] = frame_refs
                         item["crop_count"] = len(frame_refs)
                         item.pop("frame_boxes", None)
                         if not frame_refs and item.get("status") not in {"uncertain", "not_visible"}:
                             item["status"] = "uncertain"
-                            item["error"] = "本地裁剪器未找到达到置信阈值的边界框；已保留来源画面"
-                    person_grounding["crop_schema"] = 1
+                            item["error"] = "本地裁剪器未能生成局部画面；已保留来源画面"
+                    person_grounding["crop_schema"] = 2
+                    person_grounding["face_detection_model"] = "YOLOv8n-Face"
+                    person_grounding["face_detection_device"] = os.environ.get("MEMORY_FACE_GPU", "cuda:0")
+                    person_grounding["face_detection_status"] = face_detection_status
+                    if face_detection_error:
+                        person_grounding["face_detection_error"] = face_detection_error
                     person_grounding["crop_method"] = (
-                        "OpenCV HOG and local CLIP-ranked person region with padded WebP crop")
+                        "local person proposal + source-resolution JPEG; GPU YOLOv8n-Face face crop")
                     multimodal["person_visuals"] = person_grounding
                     record_duration("person_crop_generation_and_asset_write_ms", person_crop_started)
                     record_duration("person_grounding_pipeline_wall_ms", person_pipeline_started)
@@ -2730,8 +2867,29 @@ class InteractiveSession(PostWriteRetrievalMixin):
                         if source_audio_text else [])
         if source_audio_text:
             f["source_evidence"] = source_audio_text
+        entity_labels_before_identity = [
+            str(row.get("entity") or "").strip() for row in person_observations
+            if isinstance(row, dict)
+        ]
         identity_links = attach_spoken_identity(
             person_observations, speech_facts, temporal_facts)
+        spoken_alias_map = {
+            old.casefold(): str(row.get("entity") or "").strip()
+            for old, row in zip(entity_labels_before_identity, person_observations)
+            if old and str(row.get("entity") or "").strip()
+            and old.casefold() != str(row.get("entity") or "").strip().casefold()
+        }
+        if spoken_alias_map:
+            def remap_spoken_media_labels(value):
+                if isinstance(value, str):
+                    return spoken_alias_map.get(value.strip().casefold(), value)
+                if isinstance(value, list):
+                    return [remap_spoken_media_labels(item) for item in value]
+                if isinstance(value, dict):
+                    return {key: remap_spoken_media_labels(item)
+                            for key, item in value.items()}
+                return value
+            multimodal = remap_spoken_media_labels(multimodal)
         f["people"] = person_labels_from_observations(
             f.get("people") or [], person_observations)
         if speech_facts:
@@ -2739,6 +2897,10 @@ class InteractiveSession(PostWriteRetrievalMixin):
             f["temporal_facts"] = temporal_facts
         normalize_object_transition_facts(f)
         temporal_facts = f.get("temporal_facts") or temporal_facts
+        f, person_observations, temporal_facts = translate_structured_fields(
+            f, person_observations, temporal_facts, self._structured_translator)
+        f["person_observations"] = person_observations
+        f["temporal_facts"] = temporal_facts
         if cancel_event is not None and cancel_event.is_set():
             info = {"error": "当前片段处理已终止", "source": "cancelled", "cancelled": True}
             finish_timing(info)
@@ -2805,23 +2967,74 @@ class InteractiveSession(PostWriteRetrievalMixin):
     # ------------------------------------------------------------------
 
     def _build(self):
-        mem_dir = RUNS / "interactive_mem" / self.key
+        # Interactive sessions share one persistent accumulation pool. Dataset
+        # selectors control the next steps, not the lifetime of stored memories.
+        mem_dir = RUNS / "interactive_mem" / "current"
         mem_dir.mkdir(parents=True, exist_ok=True)
         resuming = self._resume_state is not None
-        if any(mem_dir.iterdir()) and not resuming:
-            # 归档前先剥离旧会话的原始音频，只保留已有转写文字。
-            old_mem = PersonMemory(memory_dir=str(mem_dir))
-            if strip_audio_assets(old_mem.memory):
-                old_mem._save()
-            old_store = MultimodalAssetStore(mem_dir)
-            old_store.release_unreferenced(
-                old_mem.memory.get("layer7", {}).get("moments", {}))
-            # 旧会话数据改名归档（os.rename 不触发 safe-delete 钩子，避免 trash 权限问题）
-            trash_dir = RUNS / "interactive_mem" / "_trash"
-            trash_dir.mkdir(exist_ok=True)
-            os.rename(mem_dir, trash_dir / f"{self.key}_{time.time_ns()}")
-            mem_dir.mkdir(parents=True, exist_ok=True)
+        memory_path = mem_dir / "memory.json"
+        if not memory_path.exists():
+            # Seed the new shared pool with existing interactive L7 events while
+            # leaving the scenario-specific source directories untouched.
+            sources = []
+            for name in ("short_term", "long_term", "custom_test"):
+                source_dir = RUNS / "interactive_mem" / name
+                source_file = source_dir / "memory.json"
+                if source_file.is_file():
+                    try:
+                        loaded = json.loads(source_file.read_text(encoding="utf-8"))
+                    except (OSError, ValueError, TypeError):
+                        continue
+                    if isinstance(loaded, dict):
+                        sources.append((name, source_dir, loaded))
+            if sources:
+                seeded = copy.deepcopy(sources[0][2])
+                moments = {}
+                for name, source_dir, data in sources:
+                    for moment_id, moment in ((data.get("layer7") or {}).get("moments") or {}).items():
+                        if moment_id not in moments:
+                            moments[moment_id] = copy.deepcopy(moment)
+                    asset_dir = source_dir / "assets"
+                    if asset_dir.is_dir():
+                        shutil.copytree(asset_dir, mem_dir / "assets", dirs_exist_ok=True)
+                    corrections = source_dir / "person_identity_corrections.json"
+                    if corrections.is_file() and not (mem_dir / corrections.name).exists():
+                        shutil.copy2(corrections, mem_dir / corrections.name)
+                seeded["layer1"], seeded["layer2"], seeded["layer3"] = [], [], []
+                seeded["layer4"] = {
+                    "summary": "", "current_tasks": [], "stated_plans": [],
+                    "life_trajectory": "", "last_updated": None,
+                    "source_moment_count": 0, "source_moment_ids": [],
+                    "source_link_coverage": "unknown",
+                }
+                seeded["layer5"] = {
+                    "summary": "", "key_events": [], "long_term_patterns": [],
+                    "last_updated": None, "source_moment_count": 0,
+                    "source_moment_ids": [], "source_link_coverage": "unknown",
+                }
+                seeded["layer6"] = {
+                    "summary": "", "profile": {}, "last_updated": None,
+                    "source_moment_count": 0, "source_moment_ids": [],
+                    "source_link_coverage": "unknown",
+                }
+                seeded["layer7"] = {
+                    "people": {}, "locations": {}, "time_nodes": {},
+                    "activity_events": {}, "environments": {}, "objects": {},
+                    "moments": moments,
+                }
+                metadata = seeded.setdefault("metadata", {})
+                metadata["total_moments"] = len(moments)
+                metadata["nightly_processed_days"] = {}
+                metadata["accumulation_seed_sources"] = [name for name, _, _ in sources]
+                temporary = memory_path.with_suffix(".tmp")
+                temporary.write_text(json.dumps(seeded, ensure_ascii=False), encoding="utf-8")
+                os.replace(temporary, memory_path)
         self.mem = PersonMemory(memory_dir=str(mem_dir))
+        translate_url = os.environ.get("QWEN_TRANSLATE_API_URL", "http://127.0.0.1:8001")
+        self._structured_translator = make_translator(
+            qwen_api_url=translate_url,
+            cache_path=mem_dir / "structured_translation_cache.json",
+        )
         self.media_store = MultimodalAssetStore(mem_dir)
         if strip_audio_assets(self.mem.memory):
             self.mem._save()
@@ -3196,6 +3409,7 @@ class InteractiveSession(PostWriteRetrievalMixin):
                     force=force,
                     use_cache=use_cache,
                     progress_callback=on_progress,
+                    all_accumulated=True,
                 )
             except Exception as exc:
                 self.nightly_progress = {
@@ -3230,7 +3444,7 @@ class InteractiveSession(PostWriteRetrievalMixin):
             "kind": "nightly",
             "title": title or "场景结束，夜间归纳",
             "detail": {"note": note or (
-                "复用记忆流动中的夜间流程：从当前会话已写入的记忆建立分类索引、"
+                "复用记忆流动中的夜间流程：从跨视频、跨测试集累积的记忆建立分类索引、"
                 "归纳 L4/L5，并尝试更新 L6 用户画像。只按已有记忆和明确证据归纳；"
                 "若测试片段没有指向同一用户的稳定信息，画像保持为空是正常结果。"
             )},

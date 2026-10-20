@@ -14,12 +14,13 @@ _STAGE_LABELS = {
     "complete": "全部完成",
     "reconciling": "核对剩余缓存",
     "person_grounding": "人物定位与裁剪",
+    "person_profile": "语音人物关系缓存",
     "waiting_for_gpu": "等待可用 GPU",
     "stopped": "已停止",
 }
 _PERCEPTION = re.compile(
     r"perception cache pass (\d+)/(\d+): hit (\d+), refreshed (\d+), "
-    r"new (\d+), repaired (\d+), failed (\d+)"
+    r"new (\d+), repaired (\d+), (?:quality-warning (\d+), )?failed (\d+)"
 )
 _PERCEPTION_LEGACY = re.compile(
     r"perception quality pass (\d+)/(\d+): (\d+) repaired, (\d+) failed"
@@ -34,6 +35,13 @@ _AUDIO = re.compile(
 )
 _PERSON_GROUNDING = re.compile(
     r"person-frame cache (\d+)/(\d+): hit (\d+), new (\d+), failed (\d+)"
+)
+_CROP_ONLY = re.compile(
+    r"crop-only cache (\d+)/(\d+): object hit/new/failed=(\d+)/(\d+)/(\d+), "
+    r"person hit/new/failed=(\d+)/(\d+)/(\d+)"
+)
+_PERSON_PROFILE = re.compile(
+    r"person-profile cache (\d+)/(\d+): hit (\d+), new (\d+), failed (\d+), skipped (\d+)"
 )
 _COMPLETE = re.compile(r"multimodal cache pass complete: (\{.*\})")
 _QUEUE_COMPLETE = re.compile(r"v7\.\d+ cache refresh complete and audited: (\d+) clips")
@@ -59,6 +67,7 @@ def parse_multimodal_prewarm_log(text: str, *, running: bool = False,
         "new": None,
         "inferred": None,
         "failed": 0,
+        "failed_by_stage": {},
         "updated_at": None,
         "perception": {"done": 0, "total": 0, "cache_hits": None,
                        "refreshed": None, "new": None, "unknown_success": 0,
@@ -68,6 +77,7 @@ def parse_multimodal_prewarm_log(text: str, *, running: bool = False,
         "audio": {"done": 0, "total": 0, "hit": 0, "new": 0,
                   "failed": 0, "silent": 0},
         "person_grounding": {"done": 0, "total": 0, "hit": 0, "new": 0, "failed": 0},
+        "person_profile": {"done": 0, "total": 0, "hit": 0, "new": 0, "failed": 0, "skipped": 0},
         "final_totals": None,
         "error": None,
     }
@@ -77,11 +87,11 @@ def parse_multimodal_prewarm_log(text: str, *, running: bool = False,
             out["updated_at"] = timestamp.group(1)
         match = _PERCEPTION.search(line)
         if match:
-            done, total, hit, refreshed, new, repaired, failed = map(int, match.groups())
+            done, total, hit, refreshed, new, repaired, quality_warning, failed = (int(x or 0) for x in match.groups())
             out["perception"] = {
                 "done": done, "total": total, "cache_hits": hit,
                 "refreshed": refreshed, "new": new, "unknown_success": 0,
-                "repaired": repaired, "failed": failed,
+                "repaired": repaired, "quality_warning_hits": quality_warning, "failed": failed,
             }
             out.update(stage="perception", done=done, total=total,
                        cache_hits=hit, refreshed=refreshed, new=new,
@@ -95,7 +105,7 @@ def parse_multimodal_prewarm_log(text: str, *, running: bool = False,
                 "done": done, "total": total, "cache_hits": None,
                 "refreshed": None, "new": None,
                 "unknown_success": unknown_success,
-                "repaired": repaired, "failed": failed,
+                "repaired": repaired, "quality_warning_hits": 0, "failed": failed,
             }
             out.update(stage="perception", done=done, total=total,
                        cache_hits=None, refreshed=None, new=None, inferred=None,
@@ -120,6 +130,18 @@ def parse_multimodal_prewarm_log(text: str, *, running: bool = False,
             out.update(stage="audio", done=done, total=total,
                        cache_hits=hit, new=new, failed=failed)
             continue
+        match = _CROP_ONLY.search(line)
+        if match:
+            done, total, obj_hit, obj_new, obj_failed, per_hit, per_new, per_failed = map(
+                int, match.groups())
+            out["grounding"] = {"done": done, "total": total, "hit": obj_hit,
+                                "source_hit": 0, "new": obj_new, "failed": obj_failed}
+            out["person_grounding"] = {"done": done, "total": total, "hit": per_hit,
+                                       "new": per_new, "failed": per_failed}
+            out.update(stage="person_grounding", done=done, total=total,
+                       cache_hits=per_hit, new=per_new,
+                       failed=obj_failed + per_failed)
+            continue
         match = _PERSON_GROUNDING.search(line)
         if match:
             done, total, hit, new, failed = map(int, match.groups())
@@ -127,6 +149,14 @@ def parse_multimodal_prewarm_log(text: str, *, running: bool = False,
                 "done": done, "total": total, "hit": hit, "new": new, "failed": failed,
             }
             out.update(stage="person_grounding", done=done, total=total,
+                       cache_hits=hit, new=new, failed=failed)
+            continue
+        match = _PERSON_PROFILE.search(line)
+        if match:
+            done, total, hit, new, failed, skipped = map(int, match.groups())
+            out["person_profile"] = {"done": done, "total": total, "hit": hit,
+                                     "new": new, "failed": failed, "skipped": skipped}
+            out.update(stage="person_profile", done=done, total=total,
                        cache_hits=hit, new=new, failed=failed)
             continue
         match = _COMPLETE.search(line)
@@ -137,6 +167,15 @@ def parse_multimodal_prewarm_log(text: str, *, running: bool = False,
                 totals = None
             if isinstance(totals, dict):
                 out["final_totals"] = totals
+                failed_by_stage = {
+                    "perception": int(totals.get("perception_failed") or 0),
+                    "object_grounding": int(totals.get("grounding_failed") or 0),
+                    "person_grounding": int(totals.get("person_grounding_failed") or 0),
+                    "audio_transcription": int(totals.get("audio_failed") or 0),
+                    "person_profile": int(totals.get("person_profile_failed") or 0),
+                }
+                out["failed_by_stage"] = failed_by_stage
+                out["failed"] = sum(failed_by_stage.values())
                 out["status"] = "complete"
                 out["stage"] = "complete"
                 out["stage_label"] = _STAGE_LABELS["complete"]
@@ -301,6 +340,8 @@ def multimodal_prewarm_status(root: Path, proc_root: Path = Path("/proc")):
         return out
     candidates = list((root / "logs").glob("prewarm_multimodal_*.log"))
     candidates.extend((root / "logs").glob("prewarm_richer_memory_4gpu_retry_*.log"))
+    candidates.extend((root / "logs").glob("prewarm_local_crop_*.log"))
+    candidates.extend((root / "logs").glob("prewarm_crop_only_*.log"))
     candidates = sorted(candidates, key=lambda p: p.stat().st_mtime, reverse=True)
     if not candidates:
         return None

@@ -82,6 +82,13 @@ def _usage_of(term, quote):
         return "address"
     if re.search(_ADDRESS_EN_RE.pattern + escaped, text, re.I):
         return "address"
+    # English vocatives commonly start a sentence ("Dad, you ...") or are
+    # set off by commas ("..., Dad, ..."). They name the listener.
+    if re.search(r"^\s*" + escaped +
+                 r"(?:\s*[,!:]|\s+you\b)", text, re.I):
+        return "address"
+    if re.search(r"[,;]\s*" + escaped + r"\s*[,!?:]", text, re.I):
+        return "address"
     return "mention"
 
 
@@ -115,6 +122,21 @@ def _candidate_for_term(term, usage, observations, visual_facts):
     if usage == "self":
         # Without diarization or active-speaker evidence, a self-reference can
         # belong to the camera wearer rather than any person shown in the clip.
+        return None, ""
+    if usage == "address":
+        # A vocative names the listener, never the speaking person. Link it only
+        # when an observed approach identifies who received the address.
+        recipients = _approach_recipients(visual_facts)
+        approached = []
+        for row in rows:
+            entity = _clean(row.get("entity"), 120).casefold()
+            if any(entity and (entity in target.casefold()
+                               or target.casefold() in entity)
+                   for targets in recipients.values() for target in targets):
+                approached.append(row)
+        approached = list({id(row): row for row in approached}.values())
+        if len(approached) == 1:
+            return approached[0], "clip 里另一位人物走向/问候的正是这位人物"
         return None, ""
     facing = [row for row in rows if _CAMERA_FACING_RE.search(_person_text(row))]
     if len(facing) == 1:
@@ -152,6 +174,9 @@ def person_labels_from_observations(people, observations):
         if readable and _clean(row.get("name_evidence"), 320):
             labels_by_entity[entity.casefold()] = readable
             continue
+        visual_entity = _clean(row.get("visual_entity"), 120)
+        if visual_entity:
+            labels_by_entity[visual_entity.casefold()] = entity
         spoken = next((item for item in row.get("spoken_aliases") or []
                        if isinstance(item, dict)
                        and _clean(item.get("alias"), 120)
@@ -189,6 +214,56 @@ def _basis(term, usage, quote, why):
             "语音未做说话人分离，此关联按画面唯一线索给出。")[:320]
 
 
+def _visibly_speaking(row):
+    text = _person_text(row)
+    return bool(re.search(
+        r"\b(?:speaking|appears? to speak|mouth (?:is )?moving as if speaking)\b",
+        text, re.I))
+
+
+def _child_role_for_address(term, row):
+    term = str(term or "").casefold()
+    parents = {"dad", "father", "爸爸", "父亲", "爸", "mom", "mother",
+               "妈妈", "母亲", "妈"}
+    if term not in parents:
+        return ""
+    text = " ".join(str(row.get(key) or "") for key in
+                    ("entity", "appearance", "face_features", "evidence"))
+    if re.search(r"\b(?:man|male|boy)\b", text, re.I):
+        return "son"
+    if re.search(r"\b(?:woman|female|girl)\b", text, re.I):
+        return "daughter"
+    return "child"
+
+
+def _attach_speaker_role(row, role, info):
+    quote = _clean(info.get("quote"), _QUOTE_LIMIT)
+    addressed = _clean(info.get("term"), 60) or quote
+    basis = (f"语音原句“{quote}”中说话者称对方为“{addressed}”；"
+             f"画面证据显示该人物正在说话，据此记录其为对方的{role}，置信度中。")
+    aliases = [item for item in (row.get("spoken_aliases") or [])
+               if isinstance(item, dict)
+               and not (str(item.get("alias") or "").casefold() in
+                        {"dad", "father", "mom", "mother", "爸爸", "父亲", "妈妈", "母亲"}
+                        and item.get("status") == "probable_visual_match")]
+    aliases.append({"alias": role, "status": "probable_visual_match",
+                    "confidence": "medium", "basis": basis,
+                    "evidence_ref": dict(info.get("evidence_ref") or {})})
+    row["spoken_aliases"] = aliases[-MAX_ALIASES_PER_PERSON:]
+    row["visual_entity"] = str(row.get("entity") or "")[:120]
+    row["entity"] = role
+    row["profile_context"] = f"画面中的说话者称对方为“{addressed}”；对方未与当前人物合并。"
+    relations = [value for value in (row.get("relationships") or [])
+                if isinstance(value, str)
+                and not re.search(r"(?:father|mother) of the speaker|被称呼为(?:dad|father|mom|mother)",
+                                  value, re.I)]
+    relation = f"说话者被画面定位为{role}；语音称呼对方为“{addressed}”"
+    if relation not in relations:
+        relations.append(relation)
+    row["relationships"] = relations[-MAX_RELATIONSHIPS_PER_PERSON:]
+    row["profile_confidence"] = "medium"
+
+
 def attach_spoken_identity(observations, speech_facts, visual_facts=None):
     """Annotate visible people with evidence-backed spoken terms.
 
@@ -219,7 +294,7 @@ def attach_spoken_identity(observations, speech_facts, visual_facts=None):
             entry = participants.get(term)
             if entry is None or (_USAGE_RANK[usage], spoke_at) < (
                     _USAGE_RANK[entry["usage"]], entry["spoke_at"]):
-                participants[term] = {"usage": usage, "quote": quote,
+                participants[term] = {"term": term, "usage": usage, "quote": quote,
                                       "spoke_at": spoke_at, "evidence_ref": ref}
 
     # One visible person can only answer to one spoken term. Claims compete in order
@@ -228,6 +303,21 @@ def attach_spoken_identity(observations, speech_facts, visual_facts=None):
     # the same card.
     claims = []
     for term, info in participants.items():
+        visible_speakers = [row for row in rows_by_id.values() if _visibly_speaking(row)]
+        if info["usage"] == "address" and len(visible_speakers) == 1:
+            speaker = visible_speakers[0]
+            reverse_role = _child_role_for_address(term, speaker)
+            if reverse_role:
+                _attach_speaker_role(speaker, reverse_role, info)
+                why = "同片画面显示该人物正在说话，语音称呼对方为父/母辈称谓"
+                linked.append({"term": reverse_role,
+                               "entity": _clean(speaker.get("entity"), 120),
+                               "usage": "speaker_role", "confidence": "medium",
+                               "basis": why})
+                unlinked.append({"term": term, "usage": info["usage"],
+                                 "quote": info["quote"],
+                                 "reason": "这是说话者对听者的称呼，听者身份不与说话者合并"})
+                continue
         candidate, why = _candidate_for_term(term, info["usage"],
                                              list(rows_by_id.values()), visual_facts)
         if candidate is None:

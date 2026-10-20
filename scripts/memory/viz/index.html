@@ -90,7 +90,7 @@ input[type=range]{flex:1;min-width:200px;accent-color:var(--brand)}
 .person-memory-section{margin-top:18px;padding-top:16px;border-top:1px solid #e7ebf3}
 .person-memory-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0 0 5px;color:#33415d;font-size:17px}
 .person-memory-intro{margin:0 0 12px;color:#71809a;font-size:13px;line-height:1.55}
-.person-memory-search{width:min(100%,440px);margin:0 0 10px;padding:8px 10px;border:1px solid #dce4f0;border-radius:9px;background:#fff;color:#34435e;font:inherit;font-size:13px}.person-memory-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,480px),1fr));gap:10px}
+.person-memory-search{width:min(100%,440px);margin:0 0 10px;padding:8px 10px;border:1px solid #dce4f0;border-radius:9px;background:#fff;color:#34435e;font:inherit;font-size:13px}.person-memory-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,480px),1fr));gap:10px}.person-memory-card-shell{position:relative;min-width:0}.person-identity-correct{position:absolute;left:14px;bottom:8px;padding:4px 9px;border:1px solid #d5def0;border-radius:8px;background:#f8faff;color:#52658c;font:inherit;font-size:12px;cursor:pointer}.person-identity-correct:hover{background:#edf2ff;border-color:#aebdf0}
 .person-memory-card{display:grid;grid-template-columns:minmax(0,1fr) 150px;gap:10px;width:100%;padding:13px 14px;border:1px solid #dfe6f1;border-radius:12px;background:#fff;color:#34435e;text-align:left;font:inherit;min-width:0}
 .person-memory-card-main{min-width:0}
 .person-memory-card-title{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin:0 0 7px;color:#263752;font-weight:800;font-size:15px}
@@ -280,8 +280,6 @@ td{padding:6px 10px;border-top:1px solid var(--border)}
 .cmp-note{font-size:13px;color:var(--muted);margin:4px 0 6px}
 .prec-sum{font-size:14px;color:#3a4058;margin-bottom:8px;font-weight:600}
 .prec-raw{display:block;max-height:min(55vh,480px);overflow:auto;margin:8px 0 0;padding:8px 0;border:1px solid #333;border-radius:9px;background:#1e1e1e;color:#d4d4d4;font:12px/1.65 "Cascadia Code",Consolas,"SFMono-Regular",monospace;white-space:pre;tab-size:2;scrollbar-color:#5a5a5a #1e1e1e}
-.qstat{font-size:13.5px;color:var(--muted);margin-left:auto}
-.qstat b{color:var(--ok)}
 .mrec{background:#fff;border:1px solid var(--border);border-radius:8px;padding:6px 10px;margin-bottom:5px;font-size:14px}
 .mrec .mid{font-weight:800;color:var(--brand)}.mrec .mscene{display:block;color:#374151;line-height:1.5;margin-top:4px;overflow-wrap:anywhere}
 .mrec .maction{display:block;color:#4b5563;line-height:1.5;margin-top:4px;overflow-wrap:anywhere}.mrec .mtag{display:inline-block;background:#eef;border-radius:4px;padding:1px 6px;margin:1px 2px;font-size:13px}
@@ -317,9 +315,10 @@ body{background:radial-gradient(1000px 380px at 50% -120px,#e7edff 0,transparent
 .flow-arrow{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;color:#697891;font-size:12px;font-weight:700;line-height:1.4}
 .flow-arrow i{font-style:normal;font-size:29px;color:#8394c3;line-height:1.1}
 .flow-foot{border-top:1px solid #edf0f5;margin-top:14px;padding-top:10px;color:#68758d;font-size:13.5px}
-.kpis{grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.kpis{grid-template-columns:repeat(4,minmax(max-content,1fr));gap:10px}
 .kpi{border-radius:12px;background:linear-gradient(180deg,#f9fbff,#f3f6fc);padding:12px}
-.kpi .num{font-size:20px}
+.kpi .num{font-size:20px;white-space:nowrap}
+.kpi .lbl{white-space:nowrap}
 .layer-details{border:1px solid #e4eaf3;border-radius:14px;background:#fff;padding:0 16px;margin:0 0 16px;box-shadow:0 5px 16px rgba(28,45,82,.03)}
 .layer-details>summary{list-style:none;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:15px 2px;color:#273858;font-weight:800}
 .layer-details>summary::-webkit-details-marker{display:none}
@@ -545,13 +544,11 @@ body{height:100vh;height:100dvh;min-height:0;display:flex;flex-direction:column}
 #customFeishuPicker[hidden]{display:none}
 #intControls .btn{flex:none;padding:5px 9px;font-size:13px;white-space:nowrap}
 #intControls #intProgress.step-info{flex:none;min-width:0;font-size:13px;white-space:nowrap}
-#intControls .qstat{flex:none;margin-left:auto;font-size:12px;white-space:nowrap}
 #interactivePane .pbar{height:4px;margin:6px 0 3px}
 #interactivePane #prewarmNote{font-size:12px;line-height:1.3;margin-top:2px}
 #interactivePane #prewarmNote:empty{display:none}
 @media(max-width:760px){
   #intControls{flex-wrap:wrap;gap:6px}
-  #intControls .qstat{margin-left:0}
   .dataset-picker{align-items:flex-start;flex-wrap:wrap}
   .dataset-picker-control{align-items:flex-start;flex-wrap:wrap}
   .dataset-picker select{min-width:min(100%,260px);max-width:100%}
@@ -933,6 +930,9 @@ button:focus-visible,[role=button]:focus-visible{outline:3px solid #a5b4fc;outli
 .layer-details .layer{border-radius:11px;box-shadow:none}
 .layer-details .layer .body{border-radius:9px;border-color:#e6ebf3;background:#fbfcfe;color:#4c5a71}
 #fullMemoryCard{margin-top:12px}
+.memory-detail-heading{display:flex;align-items:center;gap:9px}
+.memory-detail-heading .memory-clear-button{margin-left:auto;border-color:#e7b8bb;color:#a3323c;white-space:nowrap}
+.memory-detail-heading .memory-clear-button:hover{border-color:#c94a55;background:#fff7f7}
 .grid2{gap:14px;align-items:start}
 .grid2>.card{min-width:0}
 .layer-meaning{margin:0 0 10px;color:#7b879c;font-size:13px}
@@ -1282,6 +1282,74 @@ pre,code{font-family:"Cascadia Code","SFMono-Regular",Consolas,"Liberation Mono"
   .entity-evidence-gallery-thumb img{height:42px}
 }
 @media(prefers-reduced-motion:reduce){.memory-photo-album-page{transition:none}.memory-photo-album .album-cover.is-turning{animation:none}}
+
+
+/* Run controls share the top header with the scenario and dataset selectors. */
+.hero{flex-wrap:wrap;row-gap:7px}
+.hero .tabs{order:2}
+#heroFeishuPicker{order:4}
+.hero-dataset-picker{order:3;margin:0;flex:none}
+.hero-dataset-picker .dataset-picker-control{gap:6px}
+.hero-dataset-picker label{font-size:13px;font-weight:800;white-space:nowrap}
+.hero-dataset-picker select{min-width:190px;max-width:300px;padding:4px 26px 4px 8px;border:1px solid #cfd8eb;border-radius:7px;background:#fff;color:#293650;font:inherit;font-size:13px}
+.hero-interactive-controls{
+  order:5;flex:1 0 100%;min-width:0;display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;
+  gap:6px 9px;padding-top:2px
+}
+.hero-interactive-controls[hidden]{display:none}
+.hero-interactive-controls>.btn{padding:4px 9px;font-size:13px;white-space:nowrap}
+.hero-interactive-controls #intProgress{min-width:0;font-size:13px;white-space:nowrap}
+.hero-interactive-controls .pbar{flex:0 1 110px;width:110px;height:5px;margin:0}
+.hero-interactive-controls .interactive-summary{flex:0 1 440px;min-width:300px;margin:0;padding:0;border:0}
+.hero-interactive-controls .interactive-summary-title{display:none}
+.hero-interactive-controls #kpis{display:grid;grid-template-columns:repeat(4,minmax(max-content,1fr));gap:2px;margin:0}
+.hero-interactive-controls #kpis .kpi{display:flex;justify-content:center;align-items:baseline;gap:4px;padding:1px 3px;border:0;border-radius:0;background:transparent}
+.hero-interactive-controls #kpis .num{font-size:13px;line-height:1.2}
+.hero-interactive-controls #kpis .lbl{font-size:12px;margin:0}
+.hero-interactive-controls #prewarmNote{flex-basis:100%;margin:0;text-align:right;font-size:11.5px;line-height:1.25}
+.hero-interactive-controls #prewarmNote:empty{display:none}
+.hero-interactive-controls .interactive-switch-notice{flex-basis:100%;margin:0;padding:4px 8px}
+@media(max-width:1100px){
+  .hero-interactive-controls{justify-content:flex-start}
+  .hero-interactive-controls .interactive-summary{flex:1 1 360px;min-width:min(100%,300px)}
+  .hero-interactive-controls #prewarmNote{text-align:left}
+}
+@media(max-width:760px){
+  .hero{align-items:flex-start}
+  .hero h1{white-space:normal}
+  .hero .tabs{margin-left:0;flex-wrap:wrap}
+  .hero-dataset-picker{flex:1 1 100%;width:100%}
+  .hero-dataset-picker .dataset-picker-control{flex-wrap:wrap}
+  .hero-dataset-picker select{min-width:min(100%,240px);max-width:100%}
+  #heroFeishuPicker{flex:1 1 100%;width:100%}
+  .hero-interactive-controls{justify-content:flex-start}
+  .hero-interactive-controls .interactive-summary{flex-basis:100%;min-width:100%}
+  .hero-interactive-controls #kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .hero-interactive-controls .pbar{flex-basis:80px;width:80px}
+}
+
+/* 2026-10-19 头部精简：去掉标题与预热提示行，交互控件移到顶部左上角 */
+.hero{flex-wrap:wrap}
+.hero>h1{display:none}
+#prewarmNote{display:none !important}
+.hero-interactive-controls{order:-1;flex:0 1 auto;min-width:0;justify-content:flex-start}
+.hero .tabs{margin-left:auto}
+/* 场景按钮字体统一；去掉"当前步骤测试集"标签 */
+.hero .tabs button,.hero .modes button,.hero .tab,.hero .mode{font-size:13px;font-weight:600;font-family:inherit;letter-spacing:0}
+#interactiveDatasetLabel{display:none}
+/* 帧数角标移到卡片右上角 */
+.object-visual-card{position:relative}
+.memory-photo-album-count{top:8px;right:10px;bottom:auto}
+/* 证据对话框：来源信息置顶，长文本在左栏内滚动 */
+.entity-evidence-text{overflow-y:auto;min-height:0}
+@media(min-width:701px){
+  .entity-evidence-body{grid-template-rows:auto minmax(0,1fr)}
+  .entity-evidence-meta{align-self:start}
+  .entity-evidence-text{align-self:stretch}
+}
+@media(max-width:700px){.entity-evidence-text{max-height:34vh}}
+/* 实体卡片不再被同排最高卡撑长 */
+.object-visual-list{align-items:start}
 </style>
 </head>
 <body>
@@ -1295,6 +1363,24 @@ pre,code{font-family:"Cascadia Code","SFMono-Regular",Consolas,"Liberation Mono"
     <select id="heroFeishuDataset" onchange="selectHeroFeishuDataset(this.value)" aria-label="选择测试集分类" disabled>
       <option value="">正在加载测试集…</option>
     </select>
+  </div>
+  <div class="dataset-picker hero-dataset-picker" id="interactiveDatasetPicker">
+    <div class="dataset-picker-control">
+      <label id="interactiveDatasetLabel" for="interactiveDataset">测试集</label>
+      <select id="interactiveDataset" onchange="changeInteractiveDataset(this.value)" aria-label="选择记忆数据集">
+        <option value="">加载测试集…</option>
+      </select>
+    </div>
+  </div>
+  <div class="hero-interactive-controls" id="heroInteractiveControls">
+    <div id="interactiveSwitchNotice" class="interactive-switch-notice" role="status" aria-live="polite" hidden></div>
+    <button class="btn" onclick="newSession(curKey||'short_term', intState&&intState.participant, intState&&intState.dataset_key, true)">↻ 重开会话</button>
+    <div class="step-info" id="intProgress" aria-live="polite">未开始</div>
+    <div class="pbar"><div id="intBar" style="width:0%"></div></div>
+    <div id="intSummary" class="interactive-summary" aria-label="本次运行指标">
+      <div class="interactive-summary-title" hidden>本次运行指标</div>
+    </div>
+    <div class="note" id="prewarmNote" aria-live="polite"></div>
   </div>
 </div>
 
@@ -1332,31 +1418,6 @@ pre,code{font-family:"Cascadia Code","SFMono-Regular",Consolas,"Liberation Mono"
   <main id="viewStage">
   <section class="content-panel" data-view-panel="interactive" role="tabpanel" aria-label="交互执行">
   <div id="interactivePane">
-    <div class="card">
-      <h2><span class="dot"></span>交互执行 · <span id="intName">—</span></h2>
-      <div class="dataset-picker">
-        <div class="dataset-picker-control" id="interactiveDatasetPicker">
-          <label id="interactiveDatasetLabel" for="interactiveDataset">当前步骤测试集</label>
-          <select id="interactiveDataset" onchange="changeInteractiveDataset(this.value)" aria-label="选择当前步骤测试集">
-            <option value="">加载测试集…</option>
-          </select>
-        </div>
-        <span id="interactiveDatasetNote" class="note"></span>
-      </div>
-      <div id="interactiveSwitchNotice" class="interactive-switch-notice" role="status" aria-live="polite" hidden></div>
-      <div class="toolbar" id="intControls">
-        <button class="btn" onclick="newSession(curKey||'short_term', intState&&intState.participant, intState&&intState.dataset_key, true)">🔄 重开当前会话</button>
-        <div class="step-info" id="intProgress">未开始</div>
-        <button class="btn" id="prewarmBtn" onclick="prewarm()" title="补齐当前测试集的视频感知和人物画像缓存">🔎 补齐视频感知缓存</button>
-        <div class="qstat" id="qstat">—</div>
-      </div>
-      <div class="pbar"><div id="intBar" style="width:0%"></div></div>
-      <div class="note" id="prewarmNote"></div>
-      <div id="intSummary" class="interactive-summary" aria-label="本次运行指标">
-        <div class="interactive-summary-title">本次运行指标</div>
-      </div>
-    </div>
-
     <div class="card" id="stepCard">
       <h2><span class="dot"></span>⏭ 当前待执行步骤</h2>
       <div id="stepDetail"><div class="note">点击上方「新建」按钮开始一个会话。</div></div>
@@ -1431,7 +1492,7 @@ pre,code{font-family:"Cascadia Code","SFMono-Regular",Consolas,"Liberation Mono"
 
   <section class="content-panel" data-view-panel="layers" role="tabpanel" aria-label="记忆详情">
   <div class="card memory-detail-card" id="fullMemoryCard">
-    <h2><span class="dot"></span>记忆详情</h2>
+    <h2 class="memory-detail-heading"><span class="dot"></span><span>记忆详情</span><button class="btn memory-clear-button" id="clearAccumulatedMemoryBtn" type="button" onclick="clearAccumulatedMemory()">清空当前所有记忆</button></h2>
     <div class="fullmem open" id="fullMem"></div>
   </div>
   </section>
@@ -1932,7 +1993,7 @@ function renderMemoryPhotoAlbum(refs){
   const middle=n>2?page(frames[(n-2)%n],'album-middle'):'';
   return '<div class="memory-photo-album" data-album-index="0" data-album-frames="'+esc(encodeURIComponent(JSON.stringify(frames)))+'" aria-label="'+n+' 张关联画面，悬停浏览，点击查看相册">'
     +back+middle+page(frames[0],'album-cover')
-    +'<span class="memory-photo-album-count">'+n+' 帧</span></div>';
+    +'</div>';
 }
 function renderVisualEvidenceCards(items,evidenceContext,kind,grounding){
   if(!Array.isArray(items)||!items.length)return '';
@@ -1941,15 +2002,17 @@ function renderVisualEvidenceCards(items,evidenceContext,kind,grounding){
     const refs=(item.frame_refs||[]).filter(ref=>ref&&ref.url);
     const cropRole=kind==='person'?'person_crop':kind==='object'?'object_crop':'context_crop';
     const crops=refs.filter(ref=>ref.visual_role===cropRole);
+    const fallbackRefs=refs.filter(ref=>ref.evidence_fallback_reason);
     const localCropper=/clip-grid|opencv-hog/i.test(String((grounding&&grounding.model)||'')+' '+String((grounding&&grounding.crop_method)||''));
     const unavailable=grounding&&grounding.status==='unavailable'&&!crops.length;
-    const status=crops.length?'':unavailable?(localCropper?'本地裁剪未完成 · 来源画面仍保留':'视觉服务不可用 · 局部画面待重试'):refs.length
+    const status=crops.length?'':fallbackRefs.length?'':unavailable?(localCropper?'本地裁剪未完成 · 来源画面仍保留':'视觉服务不可用 · 局部画面待重试'):refs.length
       ?(kind==='object'?'':kind==='person'?'尚无可靠人物裁剪 · 点击卡片核对来源画面':'尚无局部场景画面 · 点击卡片查看来源')
       :item.status==='no_visual_evidence'?'暂无画面证据':item.status==='uncertain'?'未找到可靠局部框 · 来源画面仍保留':item.status==='not_verified'?'未能可靠定位 · 待复核':'未生成局部画面';
+    const previewFrames=crops.length?crops:fallbackRefs;
     const title=(labels[kind]||'实体')+' · '+String(item.entity||'未命名');
     const description=String(item.description||'');
     const cardAttrs=renderEvidenceCardOpenAttrs(refs,evidenceContext,title,description||title);
-    return '<div class="object-visual-card'+(cardAttrs?' memory-evidence-card-trigger':'')+'"'+(cardAttrs?' '+cardAttrs:'')+'><span class="object-visual-name">'+esc(title)+'</span>'+(status?'<span class="object-visual-status">'+esc(status)+'</span>':'')+(description?'<div class="object-visual-description">'+esc(description)+'</div>':'')+renderMemoryPhotoAlbum(crops)+'</div>';
+    return '<div class="object-visual-card'+(cardAttrs?' memory-evidence-card-trigger':'')+'"'+(cardAttrs?' '+cardAttrs:'')+'><span class="object-visual-name">'+esc(title)+'</span>'+(status?'<span class="object-visual-status">'+esc(status)+'</span>':'')+(description?'<div class="object-visual-description">'+esc(description)+'</div>':'')+(crops.length?'<span class="memory-photo-album-count">'+crops.length+' 帧局部画面</span>':fallbackRefs.length?'<span class="memory-photo-album-count">来源画面</span>':'')+renderMemoryPhotoAlbum(previewFrames)+'</div>';
   }).join('');
   const groupTitle=kind==='person'?'人物对应画面':kind==='object'?'物品对应画面':'地点、环境与活动画面';
   const errorText=String((grounding&&grounding.message)||'');
@@ -2002,7 +2065,7 @@ function renderMultimodalEvidence(x,evidenceContext){
   const objectFrameCount=(media.object_visuals&&media.object_visuals.items||[])
     .reduce((count,item)=>count+(item.frame_refs||[]).filter(ref=>ref&&ref.url&&ref.visual_role==='object_crop').length,0);
   const personFrameCount=(media.person_visuals&&media.person_visuals.items||[])
-    .reduce((count,item)=>count+(item.frame_refs||[]).filter(ref=>ref&&ref.url&&ref.visual_role==='person_crop').length,0);
+    .reduce((count,item)=>count+(item.frame_refs||[]).filter(ref=>ref&&ref.url&&(ref.visual_role==='person_crop'||ref.visual_role==='face_crop')).length,0);
   const contextFrameCount=entityAssets.filter(ref=>ref&&ref.visual_role==='context_crop').length;
   const summaryParts=[
     '<span><b>关联画面</b> '+assets.size+' 张</span>',
@@ -2022,7 +2085,7 @@ function renderMemorySupplements(x, className){
   const personCount=Array.isArray(x.person_observations)?x.person_observations.length:0;
   const hasFacts=!!people;
   const mediaData=x.multimodal||{};
-  const evidenceCount=[...((mediaData.person_visuals&&mediaData.person_visuals.items)||[]),...((mediaData.object_visuals&&mediaData.object_visuals.items)||[])].reduce((sum,item)=>sum+(item.frame_refs||[]).filter(ref=>ref&&ref.url&&(ref.visual_role==='person_crop'||ref.visual_role==='object_crop')).length,0);
+  const evidenceCount=[...((mediaData.person_visuals&&mediaData.person_visuals.items)||[]),...((mediaData.object_visuals&&mediaData.object_visuals.items)||[])].reduce((sum,item)=>sum+(item.frame_refs||[]).filter(ref=>ref&&ref.url&&(ref.visual_role==='person_crop'||ref.visual_role==='face_crop'||ref.visual_role==='object_crop')).length,0);
   let html='';
   if(hasFacts){
     html+='<section class="memory-supplement"><div class="memory-supplement-title">人物画像 · '+personCount+' 人</div><div class="memory-supplement-body">'+people+'</div></section>';
@@ -2209,7 +2272,7 @@ function renderPersonObservations(rows,evidenceContext){
     const cardAttrs=renderEvidenceCardOpenAttrs(row._evidenceRefs,evidenceContext,personTitle+' · 人物画像',details.join('；'));
     return '<span class="memory-person-chip'+(cardAttrs?' memory-evidence-card-trigger':'')+'"'+(cardAttrs?' '+cardAttrs:'')+'><b>'+esc(personTitle)+'</b>'+(details.length?'<small>'+esc(details.join('；'))+'</small>':'')+'</span>';
   }).join('');
-  return '<div><b>人物画像</b><div class="memory-person-row">'+body+'</div></div>';
+  return '<div><div class="memory-person-row">'+body+'</div></div>';
 }
 function renderObjectObservations(rows){
   if(!Array.isArray(rows)||!rows.length)return '';
@@ -2528,6 +2591,37 @@ function renderFullMemory(full){
   document.getElementById('fullMem').innerHTML = html;
   bindClips();
 }
+async function clearAccumulatedMemory(){
+  if(!intState||!['short_term','long_term','custom_test'].includes(intState.scenario)){
+    alert('请先创建交互会话，再清空当前累积记忆。'); return;
+  }
+  if(!confirm('清空当前累积记忆？已写入的记忆、夜间归纳、实体索引和关联画面会被移入可恢复归档；视频、预热缓存和执行进度会保留。')){
+    return;
+  }
+  const button=document.getElementById('clearAccumulatedMemoryBtn');
+  if(button){button.disabled=true;button.textContent='正在清空…';}
+  try{
+    const response=await fetch(API+'/api/interactive/clear_memory',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({scenario:intState.scenario})
+    });
+    const result=await response.json();
+    if(!response.ok||!result.ok)throw new Error(result.error||'清空失败');
+    const stateResponse=await fetch(API+'/api/interactive/state',{cache:'no-store'});
+    const state=await stateResponse.json();
+    if(!stateResponse.ok||state.error)throw new Error(state.error||'读取清空后的状态失败');
+    intState=state; memory={layer1:[],layer2:[],layer3:[],layer4:{},layer5:{},layer6:{},layer7:{moments:{}}};
+    snaps=[];cur=0;personMemoryData=null;personMemoryKey='';personMemoryLoading=false;
+    renderInt();
+    renderFullMemory(memory);
+    loadPersonMemoryRecords(true);
+    alert('当前累积记忆已清空。此前数据已保存在可恢复归档中。');
+  }catch(error){
+    alert('清空当前记忆失败：'+(error.message||error));
+  }finally{
+    if(button){button.disabled=false;button.textContent='清空当前所有记忆';}
+  }
+}
 function renderCurrentMemory(){
   const snapshot=snaps[cur];
   if(snapshot&&snapshot.full){ renderFullMemory(snapshot.full); return; }
@@ -2667,6 +2761,8 @@ function renderProfile(){
     '<p class="person-memory-intro">仅汇总有证据支持的稳定用户画像；多人测试视频中的出镜角色不会自动混为同一位用户。</p>'+
     renderProfileFromFull(layer.profile||{},layer.summary||'',layer)+'</section>';
   const records=personData&&Array.isArray(personData.items)?personData.items:[];
+  const identityStatus=personData&&personData.identity_link_status;
+  const identityNote=identityStatus?'<small class="person-identity-status">人脸关联：'+esc(identityStatus.status||'unknown')+' · 模型 '+esc(identityStatus.model||'')+' · 已关联 '+esc(identityStatus.matches||0)+'</small>':'';
   const list=personMemoryLoading&&personMemoryKey===scenario
     ?'<div class="person-memory-loading">正在读取已保存的人物记忆…</div>'
     :renderPersonMemoryCards(records,personData||{});
@@ -2674,7 +2770,7 @@ function renderProfile(){
   return profile+'<section class="person-memory-section"><h3 class="person-memory-heading"><span>视频人物记忆 · L7</span>'+
     '<small>'+(personData?esc(personData.total||0)+' 个记录':'')+'</small></h3>'+
     '<p class="person-memory-intro">以人物为主体，将画面特征、口述中明确的身份关系和有意义的个人背景合并到同一画像；原始口述不单独入库。无法可靠对应人物时保留为身份待确认，不从外貌猜测身份或年龄。</p>'+
-    search+list+'</section>';
+    search+identityNote+list+'</section>';
 }
 function loadPersonMemoryRecords(force=false){
   const scenario=(mode==='interactive'&&intState&&intState.scenario)||curKey||'custom_test';
@@ -2744,6 +2840,7 @@ function renderPersonMemoryCards(records,data){
     const video=provenance.source_video_id||'';
     const clipStart=provenance.clip_start_s;
     const clipEnd=provenance.clip_end_s;
+    const identityScore=(record.identity_matches||[]).length?' · 人脸相似关联 '+(record.identity_matches||[]).map(item=>Math.round(Number(item.score||0)*100)+'%').join('、'):'';
     const evidenceParts=[];
     if(scenes.length)evidenceParts.push('场景：'+scenes.join('；'));
     appearance.forEach(text=>evidenceParts.push('外观观察：'+text));
@@ -2755,6 +2852,7 @@ function renderPersonMemoryCards(records,data){
       return [source.source_segment_id,event.recorded_at].filter(Boolean).join(' · ');
     }).filter(Boolean);
     if(otherSources.length)evidenceParts.push('其他来源：'+otherSources.join('；'));
+    if(identityScore)evidenceParts.push('跨片段人脸匹配：'+identityScore.replace(/^ · /,''));
     const ev={title:title+' · 人物记忆',segment,video,clipStart,clipEnd,
       times:images.map(image=>image.at_s),evidence:evidenceParts.join('\n'),images};
     const attrs='data-evidence="'+esc(encodeURIComponent(JSON.stringify(ev)))+'"';
@@ -2772,13 +2870,49 @@ function renderPersonMemoryCards(records,data){
       relationships.map(text=>'<span class="person-memory-fact"><b>关系</b> '+esc(text)+'</span>').join('')+
       profileContexts.map(text=>'<span class="person-memory-fact"><b>人物背景</b> '+esc(text)+'</span>').join('')+
       '</span><span class="person-memory-images">'+(imageHtml||'<span class="person-memory-empty">暂无关联裁剪图</span>')+'</span>';
-    return '<button type="button" class="person-memory-card memory-evidence-card-trigger" aria-haspopup="dialog" '+searchAttr+' '+attrs+'>'+content+'</button>';
+    return '<div class="person-memory-card-shell"><button type="button" class="person-memory-card memory-evidence-card-trigger" aria-haspopup="dialog" '+searchAttr+' '+attrs+'>'+content+'</button>'+
+      '<button type="button" class="person-identity-correct" data-record-id="'+esc(record.id)+'" onclick="event.stopPropagation();correctPersonIdentity(this.dataset.recordId)">纠正身份关联</button></div>';
   }).join('')+'</div>';
+}
+async function correctPersonIdentity(recordId){
+  const rows=(personMemoryData&&personMemoryData.items||[]).filter(row=>row&&row.kind==='person');
+  const current=rows.find(row=>row.id===recordId); if(!current)return;
+  const members=row=>(row.identity_members&&row.identity_members.length?row.identity_members:
+    [{id:row.id,name:row.name,source_segment_id:((row.events||[])[0]||{}).moment_id||'未知来源'}]);
+  const sourceOptions=members(current);
+  let sourceMember=sourceOptions[0];
+  if(sourceOptions.length>1){
+    const sourceText=sourceOptions.map((m,i)=>(i+1)+'. '+(m.name||current.name)+' · '+(m.source_segment_id||'未知来源')).join('\n');
+    const choice=Number(prompt('选择要纠正的当前人物成员：\n'+sourceText,''));
+    if(!Number.isInteger(choice)||choice<1||choice>sourceOptions.length)return;
+    sourceMember=sourceOptions[choice-1];
+  }
+  const targets=rows.flatMap(row=>members(row).map(member=>({row,member})))
+    .filter(item=>item.member.id!==sourceMember.id);
+  if(!targets.length){alert('当前没有其他人物成员可供纠正。');return;}
+  const choices=targets.map((item,index)=>(index+1)+'. '+(item.member.name||item.row.name)+' · '+(item.member.source_segment_id||'未知来源')).join('\n');
+  const selected=Number(prompt('选择需要合并或拆分的另一位人物成员：\n'+choices,''));
+  if(!Number.isInteger(selected)||selected<1||selected>targets.length)return;
+  const targetMember=targets[selected-1].member;
+  const action=prompt('输入 merge 表示两条记录是同一人；输入 separate 表示系统误把不同人关联。','merge');
+  if(!action)return;
+  const normalized=String(action).trim().toLowerCase();
+  if(!['merge','separate'].includes(normalized)){alert('请输入 merge 或 separate。');return;}
+  if(!confirm(normalized==='merge'?'确认把这两组记忆关联为同一个人？':'确认拆开这两组人物记忆，并阻止它们再次自动关联？'))return;
+  try{
+    const response=await fetch(API+'/api/interactive/person_identity',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({scenario:personMemoryKey,source_member_id:sourceMember.id,
+        target_member_id:targetMember.id,action:normalized})});
+    const result=await response.json();
+    if(!response.ok||!result.ok)throw new Error(result.error||result.message||'保存纠错失败');
+    loadPersonMemoryRecords(true);
+  }catch(error){alert('人物身份纠错未保存：'+error.message);}
 }
 function filterPersonMemoryCards(value){
   personMemorySearchText=String(value||'').trim().toLowerCase();
   document.querySelectorAll('.person-memory-card[data-person-search]').forEach(card=>{
     card.hidden=!!personMemorySearchText&&!String(card.dataset.personSearch||'').includes(personMemorySearchText);
+    const shell=card.closest('.person-memory-card-shell'); if(shell)shell.hidden=card.hidden;
   });
 }
 
@@ -2815,6 +2949,8 @@ function updateModeChrome(m){
   const intSummary=document.getElementById('intSummary');
   const kpis=document.getElementById('kpis');
   const replayNote=document.getElementById('replayNote');
+  const heroInteractiveControls=document.getElementById('heroInteractiveControls');
+  if(heroInteractiveControls) heroInteractiveControls.hidden=m!=='interactive';
   if(m==='interactive'){
     intSummary.append(kpis);
     replayCard.hidden=true;
@@ -3125,8 +3261,9 @@ async function runStep(force, automatic=false, continuousKind=null){
       +'<div style="height:5px;background:#e6eaf2;border-radius:8px;margin-top:9px;overflow:hidden"><div style="height:100%;width:'+barWidth+';background:#5965e8;transition:width .25s;'+barMotion+'"></div></div>'
       +(p.message?'<div style="margin-top:7px">'+esc(p.message)+'</div>':'')
       +(p.stage==='object_visual_grounding_lookup'?'<div style="margin-top:5px;color:#667085">正在按片段、物品名称和关键帧检查持久缓存。</div>':'')
-      +(p.stage==='object_grounding_cache_hit'?'<div style="margin-top:5px;color:#667085">物品与画面对照已命中缓存，本次跳过视觉模型推理。</div>':'')
-      +(p.stage==='object_visual_grounding'?'<div style="margin-top:5px;color:#667085">物品画面对照缓存未命中，正在调用视觉模型；完成后会保存供相同片段复用。</div>':'')
+      +(p.stage==='object_grounding_cache_hit'?'<div style="margin-top:5px;color:#667085">物品与画面对照已命中缓存，本次跳过本地 CLIP 匹配；仍需抽取关键帧并保存裁剪附件。</div>':'')
+      +(p.stage==='object_visual_grounding'?'<div style="margin-top:5px;color:#667085">物品画面对照缓存未命中：本地 HOG + CLIP 正在核对物品与关键帧，不调用 Qwen；完成后会保存供相同片段复用。</div>':'')
+      +(p.stage==='object_crop_materialization'?'<div style="margin-top:5px;color:#667085">物品定位结果已就绪，正在从视频抽帧并写入局部画面附件。</div>':'')
       +(isNightProgress?'<div style="margin-top:5px;color:#667085">缓存命中 '+(Number(p.cache_hits)||0)+' 项 · 模型调用 '+(Number(p.model_calls)||0)+' 次</div>':'')
       +outputHtml;
   });
@@ -3214,7 +3351,7 @@ async function prewarm(){
   if(intState && intState.participant) params.set('participant',intState.participant);
   const b=document.getElementById('prewarmBtn');
   const note=document.getElementById('prewarmNote');
-  b.disabled=true; b.textContent='检查中…';
+  if(b){b.disabled=true;b.textContent='检查中…';}
   note.textContent='核对并补齐所选范围的缓存；同版本结果会复用，旧版本或缺失项会重新分析。';
   await fetch(API+'/api/interactive/prewarm?'+params.toString());
   pollPrewarm();
@@ -3292,7 +3429,6 @@ function pollPrewarm(){
         clearInterval(t);
         if(b){b.disabled=false;b.textContent='🔎 补齐视频感知缓存';}
         if(note) note.textContent=externalPrewarmStatusText(p);
-        updateQstat();
       }
       return;
     }
@@ -3304,20 +3440,10 @@ function pollPrewarm(){
       b.disabled=false; b.textContent='🔎 补齐视频感知缓存';
       note.textContent = p.error ? ('视频感知缓存检查失败：'+p.error)
         : '视频感知缓存完成：命中 '+(p.cache_hits||0)+' 条 · 新推理 '+(p.inferred||0)+' 条 · 失败 '+(p.failed||0)+' 条';
-      updateQstat();
     }
   },1000);
 }
-function updateQstat(){
-  const el=document.getElementById('qstat');
-  if(!el||!intState||!intState.qwen) return;
-  const q=intState.qwen;
-  const gpu=String(q.gpu||'').replace('NVIDIA GeForce ','');
-  el.title=q.ok?((q.gpu||'GPU')+' · Qwen 视频感知缓存 '+q.cached+' 条；不含物品画面对照、语音转写或场景检索缓存 · 已隔离旧版本 '+(q.legacy_cached||0)+' 条'):'Qwen 服务未就绪';
-  el.innerHTML = q.ok
-    ? 'Qwen3-VL <b>在线</b> · '+esc(gpu||'GPU')+' · 感知缓存 <b>'+(Number(q.cached)||0)+'</b>'
-    : '<span style="color:#e5484d">Qwen 服务未就绪</span>';
-}
+
 
 // ===== Qwen 感知产出与自动标签诊断 =====
 function renderMergeCandidateList(candidates){
@@ -3638,7 +3764,7 @@ function renderMemoryAddition(log){
   const structuredPanel=structured?'<section class="memory-supplement memory-person-primary"><div class="memory-supplement-title">人物画像 · '+structuredCount+' 人</div><div class="memory-supplement-body">'+structured+'</div></section>':'';
   const rawStoredPanel='<details class="memory-qwen-raw" data-moment-id="'+esc(moment.id||p.moment_id)+'" ontoggle="loadStoredMemoryRecord(this)"><summary>\u67e5\u770b\u8bb0\u5fc6\u5b9e\u9645\u5b58\u50a8\u683c\u5f0f (JSON)</summary><pre class="prec-raw memory-raw-json-content">\u5c55\u5f00\u540e\u8bfb\u53d6\u5f53\u524d\u8bb0\u5fc6\u5e93\u4e2d\u7684\u539f\u59cb\u8bb0\u5f55</pre></details>';
   const media=renderMultimodalEvidence(moment,moment);
-  const details=media?'<details><summary>查看画面与来源</summary>'+media+'</details>':'';
+  const details=media?'<details open class="media-always-open">'+media+'</details>':'';
   const qwenPerceptionPanel=renderQwenPerceptionOutput(p);
   const resultTitle=p.memory_refreshed?'本片段记忆已更新':'本片段新增记忆';
   box.innerHTML='<article class="memory-added-card"><h3 class="memory-added-head">'+resultTitle+' <span class="memory-added-id">L7 · '+esc(moment.id||p.moment_id)+'</span></h3>'+
@@ -3783,7 +3909,6 @@ function renderInt(){
   }
   const datasetNote=document.getElementById('interactiveDatasetNote');
   if(datasetNote) datasetNote.textContent=isCustomTest?(st.dataset_note||'飞书测试集 · 原片输入 · 按段运行'):(st.dataset_note||'');
-  document.getElementById('intName').textContent=st.name;
   const completedCount=Number.isFinite(Number(st.completed_count))?Number(st.completed_count):(st.current_completed?(Number(st.pos)||0)+1:(Number(st.pos)||0));
   document.getElementById('intProgress').innerHTML = st.finished
     ? '✅ 已执行 <b>'+st.total+'</b> / '+st.total+' 步'
@@ -3804,7 +3929,6 @@ function renderInt(){
   const lastLog = st.current_log || (!isWaitingVideo&&st.log&&st.log.length?st.log[st.log.length-1]:null);
   renderPerception(null);
   renderMemoryAddition(lastLog);
-  updateQstat();
 
   // 接入通用渲染：snaps = 已执行步骤的快照序列
   if(st.snapshots_compact&&st.snapshot){
@@ -4391,7 +4515,7 @@ function openEntityEvidence(button){
     const thumbs=images.length>1?'<div class="entity-evidence-gallery-thumbs" aria-label="选择画面">'+images.map((image,index)=>'<button type="button" class="entity-evidence-gallery-thumb'+(index===0?' active':'')+'" data-gallery-index="'+index+'" aria-label="查看第 '+(index+1)+' 张画面" aria-pressed="'+(index===0?'true':'false')+'"><img loading="lazy" src="'+esc(image.url)+'" alt=""><span>'+Number(image.at_s||0).toFixed(2)+' 秒</span></button>').join('')+'</div>':'';
     visual='<div class="entity-evidence-frames entity-evidence-gallery" data-gallery-count="'+images.length+'">'
       +'<button type="button" class="entity-evidence-gallery-nav" data-gallery-move="-1" aria-label="上一张画面" '+(images.length>1?'':'hidden')+'>‹</button>'
-      +'<figure class="entity-evidence-frame entity-evidence-current"><img loading="eager" src="'+esc(first.url)+'" '+(first.original?'data-original-url="'+esc(first.original)+'"':'')+' alt="来源画面 '+Number(first.at_s||0).toFixed(2)+' 秒"><figcaption>'+caption+' · 点击放大</figcaption></figure>'
+      +'<figure class="entity-evidence-frame entity-evidence-current"><img loading="eager" src="'+esc(first.url)+'" '+(first.original?'data-original-url="'+esc(first.original)+'"':'')+' alt="来源画面 '+Number(first.at_s||0).toFixed(2)+' 秒"><figcaption>'+caption+(first.original?' · 点击显示原始帧':'')+'</figcaption></figure>'
       +'<button type="button" class="entity-evidence-gallery-nav" data-gallery-move="1" aria-label="下一张画面" '+(images.length>1?'':'hidden')+'>›</button>'
       +'<div class="entity-evidence-gallery-status"><span class="entity-evidence-gallery-counter">1 / '+images.length+'</span><span>'+(images.length>1?'用 ← → 或缩略图切换':'关联画面预览')+'</span></div>'+thumbs+'</div>';
   }else{
@@ -4401,13 +4525,29 @@ function openEntityEvidence(button){
   const gallery=body.querySelector('.entity-evidence-gallery');
   if(gallery){
     let index=0;
+    let showingOriginal=false;
+    const captionSuffix=img=>img&&img.dataset.originalUrl
+      ?(showingOriginal?' · 点击显示裁剪后的帧':' · 点击显示原始帧'):'';
+    const setCaption=image=>{
+      const cap=gallery.querySelector('.entity-evidence-current figcaption');
+      if(cap)cap.textContent=evidenceImageCaption(image)+captionSuffix(gallery.querySelector('.entity-evidence-current img'));
+    };
+    gallery.querySelector('.entity-evidence-current').addEventListener('click',event=>{
+      const img=event.target&&event.target.closest?event.target.closest('img'):null;
+      if(!img||!img.dataset.originalUrl)return;
+      event.stopPropagation();event.preventDefault();
+      showingOriginal=!showingOriginal;
+      img.src=showingOriginal?img.dataset.originalUrl:images[index].url;
+      setCaption(images[index]);
+    },true);
     const setImage=next=>{
       index=(next+images.length)%images.length;
       const image=images[index],preview=gallery.querySelector('.entity-evidence-current img');
       preview.src=image.url;
       preview.alt='来源画面 '+Number(image.at_s||0).toFixed(2)+' 秒';
       if(image.original)preview.dataset.originalUrl=image.original;else delete preview.dataset.originalUrl;
-      gallery.querySelector('.entity-evidence-current figcaption').textContent=evidenceImageCaption(image)+' · 点击放大';
+      showingOriginal=false;
+      setCaption(image);
       gallery.querySelector('.entity-evidence-gallery-counter').textContent=(index+1)+' / '+images.length;
       gallery.querySelectorAll('.entity-evidence-gallery-thumb').forEach((thumb,i)=>{
         thumb.classList.toggle('active',i===index);
@@ -4481,15 +4621,12 @@ function openEntityEvidence(button){
       setTimeout(()=>cover?.classList.remove('is-turning'),380);
     },1150);
   };
-  document.addEventListener('pointerover',event=>{
-    if(event.pointerType==='touch')return;
-    const album=event.target.closest?.('.memory-photo-album');
-    if(album&&!album.contains(event.relatedTarget))start(album);
-  });
-  document.addEventListener('pointerout',event=>{
-    const album=event.target.closest?.('.memory-photo-album');
-    if(album&&!album.contains(event.relatedTarget))stop(album);
-  });
+  setInterval(()=>{
+    const hovered=document.querySelector('.memory-photo-album:hover');
+    document.querySelectorAll('.memory-photo-album').forEach(album=>{
+      if(album===hovered)start(album);else stop(album);
+    });
+  },400);
 })();
 
 // Open evidence images at their full stored resolution; Escape, backdrop, or close button dismisses.

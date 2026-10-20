@@ -57,7 +57,7 @@ _SOURCE_FINGERPRINT_LOCK = threading.RLock()
 
 DEFAULT_API = os.environ.get("QWEN_API_URL", "http://127.0.0.1:8001")
 DEFAULT_FRAMES = 6
-PROMPT_VERSION = "memory-v9.0-concise-semantic-entity-labels-2026-10-19"
+PROMPT_VERSION = "memory-v9.2-event-linked-objects-2026-10-19"
 LIST_PARSER_VERSION = "json-arrays-concise-entity-labels-v7-2026-10-19"
 
 
@@ -80,7 +80,7 @@ People: only literal names clearly readable in supplied-frame text and visibly l
 Person Observations: one JSON row per distinct, visually distinguishable person (up to 16); include visible people in the background. Schema: {{"entity":"neighbor 1","appearance":"clothing, accessories, posture, and distinguishing visible traits","face_features":"clear visible face details only; otherwise empty","readable_name":"literal name from legible in-frame text directly linked to this person, or empty","name_evidence":"exact visible name text and where it appears, or empty","age":"exact age only when readable in-frame text links it to this person, or empty","age_basis":"visible_text|unknown","frame_index":1,"evidence":"specific visible evidence for this label and appearance","confidence":"high|medium|low"}}. Keep entity short: use a literal name only with readable-name evidence; use a supported relationship/role such as grandma, friend 2, or neighbor 1 only when clearly established by visible text or explicit interaction; otherwise use a concise visible category such as woman 1/man 1 when clear, or a stable position such as person at doorway. Never infer age from appearance; do not use old/young/elderly labels unless readable text establishes them. Put detailed clothing and face traits in appearance/face_features, not entity. Use the exact same short entity label in Scene, Interaction Details, Temporal Facts, affected_people, and actor. If two people cannot be distinguished from the frames, do not invent identities or separate them. Leave face_features empty when the face is too small, obscured, or unclear. Keep readable_name/name_evidence only for exact visible text linked to this person; age only for exact readable text linked to them.
 User Action: visible actions performed by the camera wearer only; otherwise blank
 Activity: the specific observable activity, participants, supported roles, what each participant is doing, and how it develops; use the same short person labels
-Objects: up to 12 important visible items, using concise canonical nouns only (for example gate, lantern, phone, firewood, bag); do not use a full caption as an object name. If multiple distinct items share a type, distinguish them with short ordinals such as gate 1 and gate 2, and use those exact labels in facts. Keep color, material, position, condition, and printed text in Environment or evidence-linked Temporal Facts, especially for handled/moved items.
+Objects: list only salient items that matter to this episode: items visibly handled, used, moved, transferred, changed, explicitly mentioned, uniquely identifiable/personal, or central to understanding the activity/event. Use concise canonical nouns, at most 8. Do not inventory generic background fixtures or duplicate variants merely because they are visible (for example ordinary doors, floors, walls, chairs, tables, windows, gates, or appliances); keep broad setting details in Location/Environment instead. Include a common item only when the video shows its direct role in an action, interaction, state change, or event. If no item meets this relevance rule, return a blank Objects field. Never infer item ownership; bind an owner only when directly supported by explicit speech or visible interaction. Keep item color, material, position, condition, and printed text in Environment or evidence-linked Temporal Facts, especially for handled/moved items.
 Environment: concise details of indoor/outdoor setting, layout, legible signs or landmarks (quote exact short wording and where it appears), lighting, weather, and background; omit unsupported guesses
 Interaction Details: a chronological account of who did what to whom or to which item, including responses, transfers, and affected people; use the exact short person labels and concise object names
 Temporal Facts: one JSON array of up to 16 separately retrievable facts. If any visible action, interaction, object handling/change, or meaningful change in posture/expression occurs, this array must not be empty. Record every distinct action/state change as its own atomic row with actor, affected entity, before/after state or location when shown, order, and specific frame evidence; do not collapse all actions into one row. A static clip with no separable action may use []. Schema: {{"subject_type":"person|object|place|environment|event","subject":"entity label","predicate":"appearance|state|located_at|moved|held|used|placed|picked_up|handed_over|participated_in|occurred_at|other","value":"one specific supported fact","actor":"person who visibly acted, if known","affected_people":["only people visibly affected by this fact"],"from_location":"only when visually supported","to_location":"only when visually supported","from_state":"only when visually supported","to_state":"only when visually supported","time_scope":"observed clip-time range when supported","time_order":1,"frame_index":1,"modality":"visual","evidence":"short description of visible pixels or legible text","status":"observed|completed|unclear","confidence":"high|medium|low"}}. Include distinct actions/interactions, important object states and transitions, activity, place, environmental conditions, and time context. Preserve actor, affected people, before/after state/location, and order. When a legible document, sign, label, menu, or screen carries important information, add a separate evidence-linked fact quoting the exact visible text and identify the source item; record displayed claims as text shown, not as independently verified truth. Use each person observation’s exact short entity label for person subject, actor, and affected_people; use concise object names. Never replace names with clothing descriptions. Do not repeat unchanged facts across frames. Do not claim an item moved unless the frames show the transition. Keep each fact atomic and evidence-linked. Return up to 16 high-value facts: prioritize actions and interactions, object changes, person details, and place/environment context; cover more than one category when the clip supports it instead of filling the list with repeated appearance facts. Keep each value and evidence phrase short, omit unsupported or empty optional fields, and fit all arrays completely within the response. Use the correct subject type: a moved item is an object, while the person is its actor.
@@ -525,6 +525,78 @@ def _strip_unverified_age_categories(fields: dict) -> dict:
     return clean(fields)
 
 
+def _retain_episode_objects(fields):
+    """Keep object memories only when source-linked evidence ties them to this event.
+
+    Static background objects remain described by scene/environment text, but do not
+    become object-index entries or trigger object crops by themselves.
+    """
+    result = dict(fields or {})
+    objects = result.get("objects") or []
+    facts = [row for row in result.get("temporal_facts") or [] if isinstance(row, dict)]
+    interaction = str(result.get("interaction_details") or "").casefold()
+    action_predicates = {"held", "used", "moved", "placed", "picked_up",
+                         "handed_over", "transferred", "opened", "closed", "changed"}
+    def key(value):
+        value = " ".join(str(value or "").casefold().split())
+        value = re.sub(r"^(?:object\s*[·:]\s*)", "", value)
+        return value
+
+    object_rows = list(objects) if isinstance(objects, list) else []
+    known_keys = {key(row.get("name") or row.get("object") or row.get("entity") or "")
+                  if isinstance(row, dict) else key(row) for row in object_rows}
+    for fact in facts:
+        if (str(fact.get("subject_type") or "").casefold() == "object"
+                and str(fact.get("predicate") or "").casefold() in action_predicates | {"other"}
+                and str(fact.get("evidence") or "").strip()):
+            subject = str(fact.get("subject") or "").strip()
+            if subject and key(subject) not in known_keys:
+                object_rows.append(subject)
+                known_keys.add(key(subject))
+
+    kept, removed, kept_keys = [], [], set()
+    for row in object_rows:
+        label = str(row.get("name") or row.get("object") or row.get("entity") or "").strip() if isinstance(row, dict) else str(row or "").strip()
+        normalized = key(label)
+        if not normalized:
+            continue
+        matching = [fact for fact in facts
+                    if str(fact.get("subject_type") or "").casefold() == "object"
+                    and key(fact.get("subject")) == normalized
+                    and str(fact.get("evidence") or "").strip()]
+        event_linked = any(
+            str(fact.get("predicate") or "").casefold() in action_predicates
+            or (fact.get("from_state") and fact.get("to_state")
+                and fact.get("from_state") != fact.get("to_state"))
+            or (fact.get("from_location") and fact.get("to_location")
+                and fact.get("from_location") != fact.get("to_location"))
+            or str(fact.get("modality") or "").casefold() == "speech"
+            for fact in matching
+        )
+        if not event_linked and re.search(
+                r"(?<!\w)" + re.escape(normalized) + r"(?!\w)", interaction):
+            event_linked = True
+        if event_linked:
+            kept.append(row)
+            kept_keys.add(normalized)
+        else:
+            removed.append(label)
+
+    result["objects"] = kept or None
+    result["temporal_facts"] = [
+        fact for fact in facts
+        if str(fact.get("subject_type") or "").casefold() != "object"
+        or key(fact.get("subject")) in kept_keys
+    ]
+    result["object_relevance_filter"] = {
+        "policy": "source-linked event participation required; static context stays in scene/environment",
+        "kept": [str(row.get("name") or row.get("object") or row.get("entity") or row) if isinstance(row, dict) else str(row) for row in kept],
+        "removed": removed,
+    }
+    return result
+
+
+
 def parse_analysis(text: str, strict: bool = False) -> dict:
     """Qwen 输出 → 结构化记忆条目（对齐 memory.add 的参数）。"""
     location = _empty_scalar(_field(text, "Location"))
@@ -629,9 +701,10 @@ def parse_analysis(text: str, strict: bool = False) -> dict:
     }
     organized = _organize_person_entity_aliases(result)
     organized = _organize_object_entity_labels(organized)
-    return _strip_unverified_age_categories(
+    organized = _strip_unverified_age_categories(
         _normalize_camera_wearer_actor_aliases(organized)
     )
+    return _retain_episode_objects(organized)
 
 
 def _camera_wearer_reference(value: object) -> bool:
@@ -847,34 +920,8 @@ def _person_observation_coverage_error(fields: dict) -> str | None:
     """
     observations = [row for row in fields.get("person_observations") or []
                     if isinstance(row, dict) and str(row.get("entity") or "").strip()]
-    visible_body_part = re.compile(r"\b(?:hand|hands|palm|finger|fingers|forearm|arm|wrist|foot|feet)\b", re.I)
-    narrative = " ".join(str(fields.get(key) or "") for key in
-                         ("scene", "user_action", "interaction_details", "activity"))
-    camera_context_visible = bool(re.search(
-        r"\b(?:camera[- ]wearer|first[- ]person\s+(?:view|perspective|camera|footage|POV)|POV)\b",
-        narrative, re.I,
-    ))
-    camera_wearer_body_visible = (
-        camera_context_visible and bool(visible_body_part.search(narrative))
-    )
-    for fact in fields.get("temporal_facts") or []:
-        if not isinstance(fact, dict) or not _camera_wearer_reference(fact.get("actor")):
-            continue
-        evidence = " ".join(str(fact.get(key) or "") for key in
-                            ("evidence", "value", "from_location", "to_location",
-                             "from_state", "to_state"))
-        if visible_body_part.search(evidence):
-            camera_wearer_body_visible = True
-            break
-    camera_wearer_observed = any(
-        re.match(r"^(?:the\s+)?camera[- ]wearer\b", str(row.get("entity") or ""), re.I)
-        and visible_body_part.search(" ".join(str(row.get(key) or "") for key in
-                                               ("entity", "appearance", "evidence")))
-        for row in observations
-    )
-    if camera_wearer_body_visible and not camera_wearer_observed:
-        return ("The camera wearer's visible hand or other body part performs an action, "
-                "but no source-grounded partial-body observation is stored; inspect the supplied frames.")
+    # First-person hand/arm/foot actions remain in User Action and Temporal Facts;
+    # they are not automatically a separate person-memory entity.
     observed = {" ".join(str(row.get("entity") or "").casefold().split()): row
                 for row in observations}
     missing = []
@@ -920,8 +967,8 @@ def _build_person_repair_prompt(context: dict, reference_labels: list) -> str:
         "frame and enumerate distinct, visually distinguishable people, including background people when "
         "their appearance is clear. An empty person_references_to_resolve list does NOT mean no person is visible. "
         "Create one Person Observations row per distinguishable person across the clip, not one per frame. "
-        "Also record a camera wearer when the first-person view visibly shows their hands, forearms, feet, or "
-        "other body parts doing an action. Use a descriptive alias such as 'camera wearer with a gray-gloved hand' based on the visible body part, not the role alone, and describe "
+        "Record first-person hand/arm/foot actions in User Action and Temporal Facts. Add a separate camera-wearer Person Observation only when the visible body part itself has useful, distinctive appearance evidence; do not create a person entity merely because a first-person body part performs an action. "
+        "Use a descriptive alias only when supported by visible details, and describe "
         "only the visible body parts; explicitly say the face/full body is outside the sampled view when applicable. "
         "Do not turn an off-screen actor with no visible body part into a visual observation. "
         "Verify every match against visible pixels. Use a stable descriptive visual alias based on distinctive "
@@ -2171,7 +2218,8 @@ class QwenPerceiver:
     def perceive(self, m: dict, force: bool = False, cancel_event=None,
                  progress_callback=None, persist_cache: bool = True,
                  allow_legacy_cache: bool = False,
-                 allow_stale_cache_fallback: bool = False):
+                 allow_stale_cache_fallback: bool = False,
+                 allow_quality_warning: bool = False):
         """
         产出一条记忆条目。force=True 强制实时调用真模型（忽略缓存）。
 
@@ -2179,6 +2227,17 @@ class QwenPerceiver:
         source: 'cache' | 'qwen'
         """
         mid = m.get("id", "")
+        cache_lookup_started = time.perf_counter()
+
+        def _cache_return(hit):
+            # Preserve the original inference duration for diagnostics, but report
+            # only this call's lookup time as elapsed_ms.
+            previous_elapsed = hit.get("elapsed_ms")
+            if previous_elapsed is not None:
+                hit.setdefault("cached_inference_elapsed_ms", previous_elapsed)
+            hit["elapsed_ms"] = round((time.perf_counter() - cache_lookup_started) * 1000)
+            hit["cache_lookup_ms"] = hit["elapsed_ms"]
+            return hit
         # Keep valid scene/fact caches usable even when optional appearance detail is
         # incomplete; unsupported object-movement transitions still require repair.
         validate_source_fact_quality = True
@@ -2201,9 +2260,14 @@ class QwenPerceiver:
             and (cached_entry or {}).get("source_input_fingerprint") == input_fingerprint
         )
 
-        reusable_label_only_prompts = {
-            "memory-v8.0-visible-text-atomic-evidence-2026-10-19",
-        }
+        # This compatibility shortcut only applied when v9.0 changed labels.
+        # v9.1 changes which objects enter episodic memory, so old raw answers
+        # must be genuinely re-perceived rather than relabeled as current.
+        reusable_label_only_prompts = (
+            {"memory-v8.0-visible-text-atomic-evidence-2026-10-19"}
+            if PROMPT_VERSION == "memory-v9.0-concise-semantic-entity-labels-2026-10-19"
+            else set()
+        )
         if (cached_entry and cached_entry.get("prompt_version") in reusable_label_only_prompts
                 and cached_entry.get("prompt_version") != PROMPT_VERSION
                 and source_matches and not force):
@@ -2240,6 +2304,18 @@ class QwenPerceiver:
                             self._save_cache()
                 except (ValueError, TypeError, json.JSONDecodeError):
                     hit = None
+            if (hit is not None
+                    and hit.get("prompt_version") in reusable_label_only_prompts):
+                # This compatibility path changes labels/normalization only, as
+                # documented above; mark the upgraded row so focused source
+                # repair can use it without launching a redundant full Qwen pass.
+                hit["prompt_version"] = PROMPT_VERSION
+                hit["prompt_compatibility"] = "label_normalization_only"
+                with self._cache_lock:
+                    self.cache[mid] = dict(hit)
+                    self._dirty_cache_keys.add(mid)
+                    if persist_cache:
+                        self._save_cache()
             if hit is not None and hit.get("list_parser_version") == LIST_PARSER_VERSION:
                 hit["source"] = "cache"
                 hit["label_normalization_only"] = True
@@ -2247,7 +2323,7 @@ class QwenPerceiver:
                 hit["fields"] = dict(hit.get("fields") or {})
                 hit["fields"]["source_evidence"] = ""
                 emit("cache_reparse", "已复用视频感知缓存，整理人物与物品短名称；未重新调用视觉模型")
-                return hit
+                return _cache_return(hit)
 
         def stale_cache_fallback(reason):
             if (not allow_stale_cache_fallback or force or not cached_entry
@@ -2283,7 +2359,7 @@ class QwenPerceiver:
                 "cache_stale_fallback",
                 "已临时显示同一视频的旧缓存，并标记为待复核",
             )
-            return hit
+            return _cache_return(hit)
 
         if (cached_entry and cached_entry.get("prompt_version") != PROMPT_VERSION
                 and source_matches and allow_stale_cache_fallback and not force):
@@ -2293,7 +2369,7 @@ class QwenPerceiver:
                 "同一视频已有缓存，但感知提示词版本较旧；等待 GPU 预热复核。")
             if fast_old:
                 emit("cache_stale_fallback", "同源旧版缓存已即时读取，当前结果会标记为待复核")
-                return fast_old
+                return _cache_return(fast_old)
 
         if cached_entry and (cached_entry.get("prompt_version") != PROMPT_VERSION or not source_matches):
             legacy_fields = cached_entry.get("fields") or {}
@@ -2312,7 +2388,7 @@ class QwenPerceiver:
                 emit("cache_legacy", "使用旧版场景缓存快速返回；新版细节缓存完成后自动切换")
                 if hit.get("raw_model_output"):
                     hit["raw"] = hit["raw_model_output"]
-                return hit
+                return _cache_return(hit)
             emit("cache_outdated", "感知版本或源视频内容已变化，正在按当前视频重新提取")
             # Retain the old entry until a new, validated result replaces it.
             # It is not returned as a current-version hit, but a failed refresh
@@ -2361,7 +2437,7 @@ class QwenPerceiver:
                 if hit.get("raw_model_output"):
                     hit["raw"] = hit["raw_model_output"]
                 emit("cache_quality_warning", "缓存已即时命中；该片段有质量缺口，等待预热任务按完整门槛复核")
-                return hit
+                return _cache_return(hit)
 
             if (hit.get("list_parser_version") == LIST_PARSER_VERSION
                     and not _contains_cjk(fields_text) and not _contains_cjk(hit.get("raw", ""))
@@ -2461,7 +2537,7 @@ class QwenPerceiver:
                     emit("cache", "命中 Qwen 缓存，直接读取已有场景事实")
                 if hit.get("raw_model_output"):
                     hit["raw"] = hit["raw_model_output"]
-                return hit
+                return _cache_return(hit)
             if move_error:
                 emit("cache_quality", "缓存中的物品移动缺少前后状态证据，将重新核验")
             if fact_error:
@@ -3215,6 +3291,26 @@ class QwenPerceiver:
                             f"{str(fallback_exc)[:120]}"
                         )
 
+            quality_warning = None
+            if (fields is None and allow_quality_warning
+                    and candidate_fields is not None
+                    and validation_error_kind == "scene_fact_quality"
+                    and not _person_observation_coverage_error(candidate_fields)
+                    and not _object_move_evidence_error(candidate_fields)
+                    and _has_usable_english_memory(candidate_fields)):
+                # Keep the source-grounded scene result reusable when only the
+                # number/coverage of atomic facts is incomplete. Identity references
+                # and object transitions remain hard gates above.
+                fields = candidate_fields
+                quality_warning = validation_error or _temporal_fact_coverage_error(fields)
+                validation_error = None
+                validation_error_kind = None
+                quality_repair_metadata = {
+                    **(quality_repair_metadata or {}),
+                    "non_blocking_temporal_coverage_warning": quality_warning[:500],
+                }
+                emit("quality_warning", "已保存当前版本的场景缓存；事件事实覆盖不足已标记待复核")
+
             if fields is None:
                 fallback = stale_cache_fallback(
                     validation_error or "current analysis did not pass validation"
@@ -3255,6 +3351,8 @@ class QwenPerceiver:
             "temporal_fact_repair": temporal_fact_repair_metadata,
             "quality_repair": quality_repair_metadata,
         }
+        if quality_warning:
+            out["quality_warning"] = quality_warning
         if raw_model_output is not None and raw_model_output != raw:
             out["raw_model_output"] = raw_model_output
         with self._cache_lock:

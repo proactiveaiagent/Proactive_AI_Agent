@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sys
 import threading
 import time
@@ -29,7 +30,12 @@ from profile_extractor import (
     validate_profile,
 )
 
-DEFAULT_QWEN_API_URL = "http://localhost:8000"
+DEFAULT_QWEN_API_URL = (
+    os.environ.get("QWEN_API_URL", "").strip().rstrip("/")
+    or next((item.strip().rstrip("/") for item in
+             os.environ.get("QWEN_API_URLS", "").split(",") if item.strip()), "")
+    or "http://127.0.0.1:8001"
+)
 DEFAULT_CHUNK_CHARS = 18000
 _INDEX_FIELDS = {
     "people": ("people", "list"),
@@ -72,16 +78,16 @@ class NightlyProcessor:
             except (TypeError, ValueError):
                 return None
 
-    def _moments(self, day):
-        """Layer 7 is the source of truth; Layer 1-3 are compatibility fallback."""
+    def _moments(self, day, all_accumulated=False):
+        """Layer 7 is the source of truth; optionally consolidate the full accumulation pool."""
         result = {}
         archive = self.memory.memory.get("layer7", {}).get("moments", {})
         for mid, item in archive.items() if isinstance(archive, dict) else []:
-            if isinstance(item, dict) and self._moment_day(item) == day:
+            if isinstance(item, dict) and (all_accumulated or self._moment_day(item) == day):
                 result[str(mid)] = item
         for layer in ("layer1", "layer2", "layer3"):
             for item in self.memory.memory.get(layer, []):
-                if isinstance(item, dict) and self._moment_day(item) == day:
+                if isinstance(item, dict) and (all_accumulated or self._moment_day(item) == day):
                     mid = str(item.get("id") or "")
                     if mid:
                         result.setdefault(mid, item)
@@ -91,6 +97,11 @@ class NightlyProcessor:
     @staticmethod
     def _brief(item):
         out = {"id": item.get("id", ""), "timestamp": item.get("timestamp", "")}
+        provenance = item.get("source_provenance") or {}
+        if provenance.get("source_video_id"):
+            out["source_video_id"] = str(provenance["source_video_id"])[:300]
+        if provenance.get("source_segment_id"):
+            out["source_segment_id"] = str(provenance["source_segment_id"])[:240]
         for key, limit in (("scene", 500), ("user_action", 500),
                            ("interaction_details", 1200),
                            ("location", 200), ("activity", 200),
@@ -143,12 +154,15 @@ class NightlyProcessor:
 
     def _chunks(self, moments):
         chunks, current, size = [], [], 2
+        current_source = None
         for item in moments:
             brief = self._brief(item)
+            source = str(brief.get("source_video_id") or "")
             n = len(json.dumps(brief, ensure_ascii=False))
-            if current and size + n > self.chunk_chars:
+            if current and (source != current_source or size + n > self.chunk_chars):
                 chunks.append(current)
                 current, size = [], 2
+            current_source = source
             current.append(brief)
             size += n
         if current:
@@ -218,13 +232,14 @@ Slice {i}/{total}:
         value["profile_evidence"] = str(value.get("profile_evidence") or "")
         return value, cache_hit
 
-    def _sort_analysis(self, day, moments):
+    def _sort_analysis(self, day, moments, all_accumulated=False):
         result = {key: {} for key in _INDEX_FIELDS}
         for item in moments:
             mid = str(item.get("id") or "")
             if not mid:
                 continue
-            result["time_nodes"].setdefault(day, []).append(mid)
+            time_key = (self._moment_day(item) or day) if all_accumulated else day
+            result["time_nodes"].setdefault(time_key, []).append(mid)
             for key, (field, kind) in _INDEX_FIELDS.items():
                 if key == "time_nodes":
                     continue
@@ -245,48 +260,115 @@ Slice {i}/{total}:
 
     def _rollup(self, day, summaries, sort_data, cache, cache_path, use_cache):
         old = self.memory.memory
-        prior = {"layer4": old.get("layer4", {}),
-                 "layer5": old.get("layer5", {}),
-                 "layer6_summary": old.get("layer6", {}).get("summary", ""),
-                 "profile": old.get("layer6", {}).get("profile", {})}
-        tags = {k: sorted(v)[:80] for k, v in sort_data.items() if k in _COMBINABLE}
+        old_l4 = old.get("layer4", {}) or {}
+        old_l5 = old.get("layer5", {}) or {}
+        old_l6 = old.get("layer6", {}) or {}
+        prior = {
+            "layer4_summary": str(old_l4.get("summary") or "")[:1200],
+            "life_trajectory": str(old_l4.get("life_trajectory") or "")[:800],
+            "layer5_summary": str(old_l5.get("summary") or "")[:1400],
+            "layer5_key_events": (old_l5.get("key_events") or [])[:8],
+            "layer5_patterns": str(old_l5.get("long_term_patterns") or "")[:800],
+            "layer6_summary": str(old_l6.get("summary") or "")[:800],
+        }
+        # Keep the roll-up context bounded. Source moments and the six indices
+        # are already stored separately; sending all tags and the full profile
+        # caused the model to expand alias maps until its JSON was truncated.
+        compact_summaries = []
+        for item in summaries:
+            compact_summaries.append({
+                "summary": str(item.get("summary") or "")[:1000],
+                "key_events": [str(x)[:220] for x in (item.get("key_events") or [])[:5]],
+                "patterns": [str(x)[:220] for x in (item.get("patterns") or [])[:4]],
+                "profile_evidence": str(item.get("profile_evidence") or "")[:800],
+                "source_video_ids": item.get("source_video_ids") or [],
+                "source_moment_ids": item.get("source_moment_ids") or [],
+            })
         prompt = f"""TASK: NIGHTLY_ROLLUP
-Update recent and long-term factual memory using {day}'s summaries. Keep
-supported prior long-term facts. Layer 4 is the recent daily view; Layer 5
-retains durable events and patterns. Profile is extracted separately.
-Exclude downstream recommendations, inferred needs/solutions, diagnoses,
-reminders, and suggested actions. A current task may be retained only when a
-person explicitly stated it in the source memory; do not create tasks.
-Return one valid JSON object only; do not add markdown or repeat source data.
-Keep the response concise to avoid truncation:
-- layer4.summary: at most 100 words; current_tasks: at most 5 short items;
-  life_trajectory: at most 80 words.
-- layer5.summary: at most 120 words; key_events: at most 8 short items;
-  long_term_patterns: at most 5 short items.
-- layer6_summary: at most 80 words; profile_evidence: at most 250 words.
-- combine must contain the five maps shown below, with no more than 10 alias
-  pairs total. Leave maps empty unless an alias is clearly supported.
-Do not echo the tag lists or enumerate source memories.
+Update factual recent and long-term memory for {day} from the compact summaries.
+Preserve supported prior long-term information. Do not infer identity or merge
+people/places; entity aliases are handled by the evidence-backed entity layer.
+Each summary carries source_video_ids and source_moment_ids. Keep event facts attached
+to those sources; do not combine unrelated videos into one event or shared life history.
+Label source-specific key events with their source video when more than one source exists.
+Exclude diagnoses, recommendations, inferred needs, reminders, and actions.
+Return exactly one concise JSON object, no markdown or source-memory dump:
 {{
- "layer4":{{"summary":"...","current_tasks":["..."],"life_trajectory":"..."}},
- "layer5":{{"summary":"...","key_events":["..."],"long_term_patterns":"..."}},
- "layer6_summary":"brief stable profile overview",
- "profile_evidence":"brief evidence-grounded text for profile extraction",
- "combine":{{"people":{{}},"locations":{{}},"activity_events":{{}},"environments":{{}},"objects":{{}}}}
+ "layer4_summary":"at most 90 words",
+ "layer5_summary":"at most 100 words",
+ "key_events":["at most 6 short evidence-grounded events"],
+ "long_term_patterns":["at most 4 repeated patterns; [] if unsupported"],
+ "layer6_summary":"at most 60 words; preserve prior if no new stable evidence",
+ "profile_evidence":"at most 120 words for separate profile validation"
 }}
-Never merge distinct people or places.
-Prior memory: {json.dumps(prior, ensure_ascii=False, separators=(',', ':'))}
-Today's summaries: {json.dumps(summaries, ensure_ascii=False, separators=(',', ':'))}
-Today's tags: {json.dumps(tags, ensure_ascii=False, separators=(',', ':'))}
+Prior: {json.dumps(prior, ensure_ascii=False, separators=(',', ':'))}
+Today's chunk summaries: {json.dumps(compact_summaries, ensure_ascii=False, separators=(',', ':'))}
 """
-        raw, cache_hit = self._call(prompt, cache, cache_path, use_cache)
-        data = self._json(raw)
-        if not isinstance(data.get("layer4"), dict) or not isinstance(data.get("layer5"), dict):
-            raise ValueError("Rollup must contain layer4 and layer5 objects")
-        for key in ("layer4", "layer5"):
-            if not str((data.get(key) or {}).get("summary") or "").strip():
-                raise ValueError(f"Rollup has no {key} summary; refusing to replace layer lineage")
-        return data, cache_hit
+        try:
+            raw, cache_hit = self._call(prompt, cache, cache_path, use_cache)
+            output = self._json(raw)
+            if not isinstance(output, dict):
+                raise ValueError("roll-up output is not an object")
+            data = {
+                "layer4": {
+                    "summary": str(output.get("layer4_summary") or "").strip(),
+                    "current_tasks": [],
+                    "life_trajectory": prior["life_trajectory"],
+                },
+                "layer5": {
+                    "summary": str(output.get("layer5_summary") or "").strip(),
+                    "key_events": output.get("key_events") if isinstance(output.get("key_events"), list) else [],
+                    "long_term_patterns": "; ".join(str(x) for x in
+                        (output.get("long_term_patterns") or [])[:4] if str(x).strip()),
+                },
+                "layer6_summary": str(output.get("layer6_summary") or prior["layer6_summary"]).strip(),
+                "profile_evidence": str(output.get("profile_evidence") or "").strip(),
+                "combine": {key: {} for key in _COMBINABLE},
+            }
+            if not data["layer4"]["summary"] or not data["layer5"]["summary"]:
+                raise ValueError("roll-up omitted required recent/long-term summary")
+            return data, cache_hit
+        except ValueError as exc:
+            # The chunk summaries have already passed JSON validation and remain
+            # cached. Preserve their evidence and complete the night run without
+            # trusting malformed/truncated roll-up output.
+            def words(text, limit):
+                return " ".join(str(text or "").split()[:limit])
+            def unique(values, limit):
+                result, seen = [], set()
+                for value in values:
+                    value = " ".join(str(value or "").split())
+                    key = value.casefold()
+                    if value and key not in seen:
+                        seen.add(key)
+                        result.append(value)
+                    if len(result) >= limit:
+                        break
+                return result
+            current_summary = words(" ".join(x.get("summary", "") for x in compact_summaries), 90)
+            key_events = unique([event for x in compact_summaries
+                                 for event in x.get("key_events", [])], 6)
+            patterns = unique([item for x in compact_summaries
+                               for item in x.get("patterns", [])], 4)
+            profile_evidence = words(" ".join(x.get("profile_evidence", "")
+                                                for x in compact_summaries), 120)
+            prior_summary = words(prior["layer5_summary"], 50)
+            new_events = words(" ".join(key_events), 50)
+            data = {
+                "layer4": {"summary": current_summary or words(prior["layer4_summary"], 90),
+                           "current_tasks": [], "life_trajectory": prior["life_trajectory"]},
+                "layer5": {"summary": words((prior_summary + " " + new_events).strip(), 100)
+                           or current_summary,
+                           "key_events": key_events,
+                           "long_term_patterns": "; ".join(patterns)},
+                "layer6_summary": prior["layer6_summary"],
+                "profile_evidence": profile_evidence,
+                "combine": {key: {} for key in _COMBINABLE},
+                "_rollup_fallback": str(exc)[:240],
+            }
+            if not data["layer4"]["summary"] or not data["layer5"]["summary"]:
+                raise ValueError("roll-up invalid and no validated summary fallback exists") from exc
+            return data, False
 
     @staticmethod
     def _compress_payload(data, source_moment_ids, coverage, moments=None):
@@ -342,7 +424,7 @@ Today's tags: {json.dumps(tags, ensure_ascii=False, separators=(',', ':'))}
         return accepted
 
     def run(self, day=None, daytime_processor=None, force=False, use_cache=True,
-            progress_callback=None):
+            progress_callback=None, all_accumulated=False):
         """Run once per day, resuming completed model calls from a prompt cache."""
         cache = {"responses": {}, "hits": 0, "misses": 0}
         def report(stage, label, current=0, total=0, message=""):
@@ -362,7 +444,7 @@ Today's tags: {json.dumps(tags, ensure_ascii=False, separators=(',', ':'))}
                 report("translations", "等待白天翻译任务完成", message="最多等待 30 秒")
                 translation_flushed = daytime_processor.flush_translations(timeout=30)
 
-            moments = self._moments(day)
+            moments = self._moments(day, all_accumulated=all_accumulated)
             if not moments:
                 report("done", "夜间整理已跳过", 1, 1, "当天没有可整理的记忆")
                 return {"ok": True, "day": day, "skipped": "no_moments",
@@ -401,31 +483,53 @@ Today's tags: {json.dumps(tags, ensure_ascii=False, separators=(',', ':'))}
             for i, chunk in enumerate(chunks, 1):
                 report("summarize", "分批归纳当天记忆", i - 1, len(chunks), f"正在处理第 {i}/{len(chunks)} 批")
                 summary, hit = self._summarize(day, i, len(chunks), chunk, cache, cache_path, use_cache)
+                summary["source_video_ids"] = sorted({
+                    str(item.get("source_video_id") or "")
+                    for item in chunk if item.get("source_video_id")
+                })
+                summary["source_moment_ids"] = [
+                    str(item.get("id") or "") for item in chunk if item.get("id")
+                ]
                 summaries.append(summary)
                 report("summarize", "分批归纳当天记忆", i, len(chunks),
                        f"第 {i}/{len(chunks)} 批完成（{'缓存命中' if hit else '模型生成'}）")
             report("sort", "建立六维分类索引", 0, 1, f"整理 {len(moments)} 条记忆")
-            sort_data = self._sort_analysis(day, moments)
+            sort_data = self._sort_analysis(
+                day, moments, all_accumulated=all_accumulated
+            )
             report("sort", "建立六维分类索引", 1, 1, "六个索引维度已整理")
             report("rollup", "合并近期与长期摘要", 0, 1, "调用整理模型")
             rollup, rollup_hit = self._rollup(day, summaries, sort_data, cache, cache_path, use_cache)
             report("rollup", "合并近期与长期摘要", 1, 1,
-                   "完成（缓存命中）" if rollup_hit else "模型生成完成")
-            evidence = str(rollup.get("profile_evidence") or "").strip()
-            if not evidence:
-                evidence = "\n".join(x["profile_evidence"] for x in summaries
-                                     if x.get("profile_evidence"))
-            profile_prompt = "TASK: NIGHTLY_PROFILE_EXTRACTION\n" + \
-                build_profile_extraction_prompt(evidence or json.dumps(summaries, ensure_ascii=False))
-            report("profile", "抽取并校验长期画像", 0, 1, "分析稳定偏好和行为模式")
-            profile_raw, profile_hit = self._call(profile_prompt, cache, cache_path, use_cache)
-            parsed = parse_profile_output(profile_raw)
-            if parsed is None:
-                raise ValueError(f"Profile response is invalid: {profile_raw[:240]}")
-            profile, rejected = validate_profile(parsed)
+                   ("模型格式无效，已基于通过校验的分块摘要安全回退"
+                    if rollup.get("_rollup_fallback") else
+                    ("完成（缓存命中）" if rollup_hit else "模型生成完成")))
+            source_videos = {
+                str(((item.get("source_provenance") or {}).get("source_video_id") or ""))
+                for item in moments
+                if ((item.get("source_provenance") or {}).get("source_video_id"))
+            }
+            mixed_video_scope = len(source_videos) > 1
+            if mixed_video_scope:
+                profile, rejected, profile_hit = {}, ["本次整理包含多个源视频，未将其合并为单一用户画像"], False
+                report("profile", "跳过跨视频用户画像", 1, 1,
+                       "保留事件归纳；不同源视频不直接合并成同一用户画像")
+            else:
+                evidence = str(rollup.get("profile_evidence") or "").strip()
+                if not evidence:
+                    evidence = "\n".join(x["profile_evidence"] for x in summaries
+                                         if x.get("profile_evidence"))
+                profile_prompt = "TASK: NIGHTLY_PROFILE_EXTRACTION\n" + \
+                    build_profile_extraction_prompt(evidence or json.dumps(summaries, ensure_ascii=False))
+                report("profile", "抽取并校验长期画像", 0, 1, "分析稳定偏好和行为模式")
+                profile_raw, profile_hit = self._call(profile_prompt, cache, cache_path, use_cache)
+                parsed = parse_profile_output(profile_raw)
+                if parsed is None:
+                    raise ValueError(f"Profile response is invalid: {profile_raw[:240]}")
+                profile, rejected = validate_profile(parsed)
+                report("profile", "抽取并校验长期画像", 1, 1,
+                       "校验通过（缓存命中）" if profile_hit else "模型生成并校验通过")
             combine = self._combine_map(rollup.get("combine"), sort_data)
-            report("profile", "抽取并校验长期画像", 1, 1,
-                   "校验通过（缓存命中）" if profile_hit else "模型生成并校验通过")
 
             # Finish all model calls and validation before persistent mutations.
             report("apply", "写入整理结果", 0, 4, "更新六维索引")

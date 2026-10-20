@@ -8,6 +8,7 @@ import hashlib
 import re
 
 from memory import normalize_object_transition_facts, object_visual_observations
+from face_identity import link_records
 
 
 def memory_facts(moment):
@@ -45,7 +46,7 @@ def _speech_placeholder(name):
 
 
 class EntityRecordIndex:
-    def __init__(self, layer7):
+    def __init__(self, layer7, asset_root=None, identity_correction_path=None):
         groups = {}
         active = [m for m in (layer7.get('moments') or {}).values()
                   if isinstance(m, dict) and not m.get('merged_into') and not m.get('stale')]
@@ -134,10 +135,9 @@ class EntityRecordIndex:
             for entity_kind, label in sorted(labels):
                 if entity_kind == 'person' and _speech_placeholder(label):
                     continue
-                # Textual similarity is not proof that two visible people are the same
-                # person. Keep person labels local to their source clip unless the
-                # observation carries a directly linked readable name, or the label is
-                # one of the fixed identities in the long-term participant dataset.
+                # Name similarity alone is not identity evidence. Candidate records
+                # remain clip-scoped here; face_identity later links only reliable
+                # person-crop embeddings or explicit user corrections.
                 named_in_frame = any(
                     _name(row.get('readable_name')).casefold() == label.casefold()
                     and bool(str(row.get('name_evidence') or '').strip())
@@ -191,7 +191,10 @@ class EntityRecordIndex:
                 person_crops = [deepcopy(ref) for item in visual_people
                                 if person_label(item.get('person')).casefold() == label.casefold()
                                 for ref in item.get('frame_refs') or []
-                                if ref.get('visual_role') == 'person_crop']
+                                if ref.get('visual_role') in {'face_crop', 'person_crop'}]
+                person_crops.sort(key=lambda ref: (
+                    0 if ref.get('visual_role') == 'face_crop' else 1,
+                    float(ref.get('at_s') or 0)))
                 object_crops = [deepcopy(ref) for item in visual_objects
                                 if _name(item.get('object')).casefold() == label.casefold()
                                 for ref in item.get('frame_refs') or []
@@ -202,7 +205,7 @@ class EntityRecordIndex:
                     'person_observations': selected_people,
                     'temporal_facts': selected_facts,
                     'object_observations': selected_objects,
-                    'images': crops[:3],
+                    'images': crops[:6],
                     'image_kind': 'person_crop' if person_crops else ('object_crop' if object_crops else 'none'),
                 })
                 record['events'].append(event)
@@ -217,6 +220,7 @@ class EntityRecordIndex:
             record['_search_text'] = None
         records.sort(key=lambda record: (
             -record['fact_count'], -record['event_count'], record['name'].casefold(), record['id']))
+        self.identity_link_status = link_records(records, asset_root=asset_root, correction_path=identity_correction_path)
         self.records = records
 
     def query(self, kind='all', query='', offset=0, limit=12):
@@ -240,7 +244,8 @@ class EntityRecordIndex:
             item.pop('_search_text', None)
         return {'items': items, 'total': len(selected), 'offset': offset, 'limit': limit,
                 'source_moments': self.source_moments,
-                'structured_moments': self.structured_moments}
+                'structured_moments': self.structured_moments,
+                'identity_link_status': self.identity_link_status}
 
 
 def entity_records(layer7, kind='all', query='', offset=0, limit=12):

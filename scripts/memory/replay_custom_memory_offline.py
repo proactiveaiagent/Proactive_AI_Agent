@@ -137,7 +137,7 @@ def main() -> int:
         done += 1
         print(f"[{done}] {message}", flush=True)
 
-    memory = json.loads((runs / "interactive_mem" / "custom_test" / "memory.json")
+    memory = json.loads((runs / "interactive_mem" / "current" / "memory.json")
                         .read_text(encoding="utf-8"))
     report = summarize(memory)
     out = scratch / "summary.json"
