@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -118,6 +119,36 @@ class NightlyProcessor:
         # which visible person spoke from transcript text alone.
         if item.get("source_evidence"):
             out["source_evidence"] = str(item["source_evidence"])[:4000]
+        # Include compact asset identities in the nightly digest. A changed crop
+        # or newly available Qwen input frame must invalidate stale curation.
+        media = item.get("multimodal") or {}
+        refs = list(media.get("visual_frames") or [])
+        if isinstance(media.get("visual"), dict):
+            refs.append(media["visual"])
+        for group_key in ("person_visuals", "object_visuals", "entity_visuals"):
+            group = media.get(group_key) or {}
+            for visual in group.get("items") or []:
+                if isinstance(visual, dict):
+                    refs.extend(visual.get("frame_refs") or [])
+            if group_key == "entity_visuals":
+                refs.extend(group.get("assets") or [])
+        visual_evidence = []
+        seen_refs = set()
+        for ref in refs:
+            if not isinstance(ref, dict) or not ref.get("asset"):
+                continue
+            stamp = (str(ref.get("asset")), str(ref.get("visual_role") or ""),
+                     str(ref.get("at_s", ref.get("frame_time_s", ""))))
+            if stamp in seen_refs:
+                continue
+            seen_refs.add(stamp)
+            visual_evidence.append({
+                "asset": stamp[0], "role": stamp[1], "at_s": stamp[2],
+                "identity_verified": ref.get("identity_verified") is True,
+                "quality_tier": str(ref.get("quality_tier") or ""),
+            })
+        if visual_evidence:
+            out["visual_evidence_refs"] = visual_evidence[:24]
         # Roll up observed entities, not downstream inference outputs.
         for key in ("people", "environments", "objects"):
             if item.get(key):
@@ -258,80 +289,319 @@ Slice {i}/{total}:
                             ids.append(mid)
         return result
 
-    def _rollup(self, day, summaries, sort_data, cache, cache_path, use_cache):
+    def _rollup(self, day, summaries, sort_data, cache, cache_path, use_cache, moments=None, progress=None):
         old = self.memory.memory
-        old_l4 = old.get("layer4", {}) or {}
-        old_l5 = old.get("layer5", {}) or {}
-        old_l6 = old.get("layer6", {}) or {}
+        old_l4, old_l5, old_l6 = (old.get(key, {}) or {} for key in ("layer4", "layer5", "layer6"))
         prior = {
             "layer4_summary": str(old_l4.get("summary") or "")[:1200],
             "life_trajectory": str(old_l4.get("life_trajectory") or "")[:800],
-            "layer5_summary": str(old_l5.get("summary") or "")[:1400],
-            "layer5_key_events": (old_l5.get("key_events") or [])[:8],
-            "layer5_patterns": str(old_l5.get("long_term_patterns") or "")[:800],
+            "layer5_summary": str(old_l5.get("summary") or "")[:1600],
+            "layer5_key_events": [],
+            "layer5_patterns": str(old_l5.get("long_term_patterns") or "")[:1000],
             "layer6_summary": str(old_l6.get("summary") or "")[:800],
         }
-        # Keep the roll-up context bounded. Source moments and the six indices
-        # are already stored separately; sending all tags and the full profile
-        # caused the model to expand alias maps until its JSON was truncated.
-        compact_summaries = []
-        for item in summaries:
-            compact_summaries.append({
-                "summary": str(item.get("summary") or "")[:1000],
-                "key_events": [str(x)[:220] for x in (item.get("key_events") or [])[:5]],
-                "patterns": [str(x)[:220] for x in (item.get("patterns") or [])[:4]],
-                "profile_evidence": str(item.get("profile_evidence") or "")[:800],
-                "source_video_ids": item.get("source_video_ids") or [],
-                "source_moment_ids": item.get("source_moment_ids") or [],
+        # Keep prior event citations but remove verbose generated prose before
+        # passing them back to the consolidator.
+        prior_events = []
+        for raw_event in (old_l5.get("key_events") or [])[:40]:
+            text = str(raw_event or "").strip()
+            if not text:
+                continue
+            cited = list(dict.fromkeys(re.findall(
+                r"\[(?:moment|moments):([^\]]+)\]", text)))
+            cited = [mid for value in cited for mid in value.split(",") if mid]
+            summary = re.sub(r"^(?:\[(?:source|moment|moments):[^\]]+\]\s*)+", "", text)
+            prior_events.append({"summary": summary[:520],
+                                 "source_moment_ids": cited[:12]})
+        prior["layer5_key_events"] = prior_events
+        compact_summaries = [{
+            "summary": str(item.get("summary") or "")[:1000],
+            "key_events": [str(x)[:220] for x in (item.get("key_events") or [])[:6]],
+            "patterns": [str(x)[:220] for x in (item.get("patterns") or [])[:5]],
+            "profile_evidence": str(item.get("profile_evidence") or "")[:800],
+            "source_video_ids": item.get("source_video_ids") or [],
+            "source_moment_ids": item.get("source_moment_ids") or [],
+        } for item in summaries]
+        from nightly_curation import NightlyCurator
+        # First consolidate each source family independently. This keeps the
+        # visual/person evidence together where clip continuity exists, while
+        # bounding the Qwen context even when a full custom dataset is large.
+        families = {}
+        for moment in moments or []:
+            provenance = moment.get("source_provenance") or {}
+            video = str(provenance.get("source_video_id") or "")
+            family = video.rsplit("/", 1)[0] if "/" in video else video
+            families.setdefault(family or "unscoped", []).append(moment)
+        family_rows = []
+        group_identity = []
+        group_moment_highlights = []
+        group_image_highlights = []
+        summaries_by_moment = {}
+        for summary in summaries:
+            for mid in summary.get("source_moment_ids") or []:
+                summaries_by_moment[str(mid)] = summary
+
+        for group_index, (family, family_moments) in enumerate(sorted(families.items()), 1):
+            family_ids = {str(item.get("id") or "") for item in family_moments}
+            evidence = NightlyCurator.evidence_bundle(family_moments)
+            compact_rows = []
+            for row in evidence["moments"]:
+                compact = dict(row)
+                compact["scene"] = str(compact.get("scene") or "")[:360]
+                compact["interaction_details"] = str(compact.get("interaction_details") or "")[:240]
+                compact["source_evidence"] = str(compact.get("source_evidence") or "")[:650]
+                compact["speech_and_person_facts"] = [
+                    {key: (str(value)[:200] if isinstance(value, str) else value)
+                     for key, value in fact.items()}
+                    for fact in (compact.get("speech_and_person_facts") or [])[:8]
+                ]
+                compact["person_observations"] = [
+                    {key: (str(value)[:180] if isinstance(value, str) else value)
+                     for key, value in person.items()}
+                    for person in (compact.get("person_observations") or [])[:6]
+                ]
+                compact_rows.append(compact)
+            # The archive retains every frame. For curation, expose a bounded
+            # representative set: verified entity crops first, then all six
+            # Qwen inputs (when present).
+            image_rows = []
+            for mid in sorted(family_ids):
+                candidates = [item for item in evidence["image_candidates"]
+                              if item["ref_id"].startswith(mid + "#image:")]
+                candidates.sort(key=lambda item: (
+                    0 if item.get("identity_verified") else 1,
+                    0 if item.get("visual_role") in {"face_crop", "person_crop", "object_crop"} else 1,
+                    float(item.get("at_s") or 0), item["ref_id"]))
+                image_rows.extend(candidates[:12])
+            chunk_rows = []
+            for mid in sorted(family_ids):
+                summary = summaries_by_moment.get(mid) or {}
+                if summary:
+                    chunk_rows.append({
+                        "moment_id": mid,
+                        "summary": str(summary.get("summary") or "")[:260],
+                        "key_events": [str(value)[:180] for value in
+                                       (summary.get("key_events") or [])[:3]],
+                        "profile_evidence": str(summary.get("profile_evidence") or "")[:220],
+                    })
+            group_prompt = f"""TASK: NIGHTLY_SOURCE_FAMILY_CURATION
+Consolidate this related source-video family, not each clip independently.
+Use the evidence below to connect recurring people across its clips, preserve
+distinct events with citations, compress repeated descriptions, and select only
+the most useful source memories and representative images.
+Resolve a visible person to a spoken family name only when introduction/kinship
+speech is tied to that visible person or matching person evidence supports it.
+Never merge clip-local labels by gender, clothing, or label alone. Preserve
+uncertainty. Do not attribute undiarized speech to a face. Keep Qwen input frames
+and source moments as audit evidence; this stage only marks curation importance.
+
+Return JSON only:
+{{"summary":"one concise family-level synthesis, <=80 words",
+ "key_events":[{{"summary":"concise event","source_moment_ids":["valid IDs"]}}],
+ "profile_evidence":"stable repeated facts with source IDs, <=100 words",
+ "identity_resolutions":[{{"moment_id":"target ID","observed_entity":"current label",
+   "canonical_entity":"supported name","confidence":0.0,"evidence_moment_ids":["IDs"],
+   "reason":"evidence"}}],
+ "highlight_moments":[{{"moment_id":"...","score":0.0,"reason":"...","evidence_moment_ids":["..."]}}],
+ "highlight_images":[{{"ref_id":"exact image candidate ID","score":0.0,"reason":"..."}}]}}
+Use only IDs in this family. Every key event needs a source ID. Keep at most 8
+events, 4 memory highlights, and 6 image highlights. Return representative
+person/relationship/object evidence, not every frame.
+Family: {family}
+Chunk summaries: {json.dumps(chunk_rows, ensure_ascii=False, separators=(',', ':'))}
+Source evidence: {json.dumps(compact_rows, ensure_ascii=False, separators=(',', ':'))}
+Image candidates: {json.dumps(image_rows, ensure_ascii=False, separators=(',', ':'))}
+"""
+            if progress:
+                progress(group_index - 1, len(families) + 1,
+                         f"正在整理来源组 {group_index}/{len(families)}：{family}")
+            raw_group, _group_hit = self._call(group_prompt, cache, cache_path, use_cache)
+            group = self._json(raw_group)
+            valid_images = {item["ref_id"] for item in image_rows}
+            local_events = []
+            for event in group.get("key_events") or []:
+                if not isinstance(event, dict):
+                    continue
+                refs = list(dict.fromkeys(str(mid) for mid in event.get("source_moment_ids") or []
+                                          if str(mid) in family_ids))
+                text = " ".join(str(event.get("summary") or "").split())[:260]
+                if refs and text:
+                    local_events.append({"summary": text, "source_moment_ids": refs})
+            local_identity = [item for item in (group.get("identity_resolutions") or [])
+                              if isinstance(item, dict)
+                              and str(item.get("moment_id") or "") in family_ids]
+            local_moments = [item for item in (group.get("highlight_moments") or [])
+                             if isinstance(item, dict)
+                             and str(item.get("moment_id") or "") in family_ids]
+            local_images = [item for item in (group.get("highlight_images") or [])
+                            if isinstance(item, dict)
+                            and str(item.get("ref_id") or "") in valid_images]
+            group_identity.extend(local_identity[:12])
+            group_moment_highlights.extend(local_moments[:4])
+            group_image_highlights.extend(local_images[:6])
+            family_rows.append({
+                "family": family,
+                "source_moment_ids": sorted(family_ids),
+                "summary": " ".join(str(group.get("summary") or "").split())[:420],
+                "key_events": local_events[:8],
+                "profile_evidence": str(group.get("profile_evidence") or "")[:500],
+                "identity_resolutions": local_identity[:12],
+                "highlight_moments": local_moments[:4],
+                "highlight_images": local_images[:6],
             })
+            if progress:
+                progress(group_index, len(families) + 1,
+                         f"已完成来源组 {group_index}/{len(families)}：{family}")
+
         prompt = f"""TASK: NIGHTLY_ROLLUP
-Update factual recent and long-term memory for {day} from the compact summaries.
-Preserve supported prior long-term information. Do not infer identity or merge
-people/places; entity aliases are handled by the evidence-backed entity layer.
-Each summary carries source_video_ids and source_moment_ids. Keep event facts attached
-to those sources; do not combine unrelated videos into one event or shared life history.
-Label source-specific key events with their source video when more than one source exists.
-Exclude diagnoses, recommendations, inferred needs, reminders, and actions.
-Return exactly one concise JSON object, no markdown or source-memory dump:
+You are performing actual cross-memory consolidation for {day}, not writing one
+summary per clip. Integrate the new evidence with retained prior memory:
+compress repeated descriptions, merge recurring people/relations and stable
+patterns, remove low-value duplicate items from the compact Layer 5 event list,
+and identify a small number of durable, high-utility memories and source images.
+Layer 7 source moments remain the audit trail and must not be deleted by this
+summary step.
+
+IDENTITY RESOLUTION:
+- Resolve clip-local person labels only when the evidence supports the same
+  visible person. A spoken introduction / kinship alias linked to a visual person,
+  a validated identity match, or a consistent sequence with matching appearance
+  and scene can support a link. Cite the source moment IDs.
+- Do not join people just because both are called woman 1/person 1, have the same
+  gender/clothing, or appear in the same broad category. Keep uncertain links
+  unresolved. Never mix two visible people from a group image.
+- Keep distinct events and source citations even when the same person appears
+  across several videos. Never attribute undiarized speech to a face without
+  explicit visual/person evidence.
+- Layer 6 profile evidence must come from repeated or explicit stable facts.
+  Cross-clip event continuity is allowed; unsupported ownership, location,
+  identity, or intent is not.
+- Global index alias maps are unsafe for clip-local labels; leave combine.people
+  empty. Per-moment identity_resolutions are the safe way to link those labels.
+- A highlight is a curation/importance mark, not a claim that a user confirmed
+  the fact. Choose only standout, reusable memories/images (score >= 0.82);
+  do not mark every item.
+
+Return JSON only:
 {{
- "layer4_summary":"at most 90 words",
- "layer5_summary":"at most 100 words",
- "key_events":["at most 6 short evidence-grounded events"],
- "long_term_patterns":["at most 4 repeated patterns; [] if unsupported"],
+ "layer4_summary":"current/recent compressed summary, at most 100 words",
+ "layer5_summary":"compact durable summary across new and retained evidence, at most 120 words",
+ "key_events":[{{"summary":"concise event","source_moment_ids":["valid source IDs"]}}],
+ "replace_key_events":true,
+ "retained_source_moment_ids":["IDs supporting the retained Layer 5 summary/events/patterns"],
+ "long_term_patterns":["only repeated patterns with source support; at most 6"],
  "layer6_summary":"at most 60 words; preserve prior if no new stable evidence",
- "profile_evidence":"at most 120 words for separate profile validation"
+ "profile_evidence":"at most 180 words for separate validated profile extraction",
+ "combine":{{"people":{{}},"locations":{{}},"activity_events":{{}},"environments":{{}},"objects":{{}}}},
+ "identity_resolutions":[{{"moment_id":"target moment","observed_entity":"clip-local label",
+   "canonical_entity":"stable identity","confidence":0.0,
+   "evidence_moment_ids":["source moments"],"reason":"short evidence explanation"}}],
+ "highlight_moments":[{{"moment_id":"...","score":0.0,"reason":"why this is unusually reusable",
+   "evidence_moment_ids":["..."]}}],
+ "highlight_images":[{{"ref_id":"exact image ref_id from candidates","score":0.0,
+   "reason":"why this is the representative frame"}}]
 }}
-Prior: {json.dumps(prior, ensure_ascii=False, separators=(',', ':'))}
-Today's chunk summaries: {json.dumps(compact_summaries, ensure_ascii=False, separators=(',', ':'))}
+For key_events, retain at most 24 after removing semantic duplicates and low-value
+one-off details. Every retained event must include its source_moment_ids. Preserve
+important relationship changes, explicit plans, object-location transitions,
+safety/health events, and recurring meaningful interactions. Do not combine
+different events into a single event. Patterns and Layer 5 summary may consolidate
+across source videos, but remain source-grounded. Retain at most 8 highlighted
+memories and 12 highlighted images; usually fewer. Select image refs only from the
+provided list. Output valid source IDs and image IDs exactly as given.
+
+Prior compact memory: {json.dumps(prior, ensure_ascii=False, separators=(',', ':'))}
+Source-family consolidations: {json.dumps(family_rows, ensure_ascii=False, separators=(',', ':'))}
+Only select global highlight candidates from these source-family candidates. Identity
+resolutions from source-family evidence will be preserved with their citations.
 """
         try:
             raw, cache_hit = self._call(prompt, cache, cache_path, use_cache)
             output = self._json(raw)
             if not isinstance(output, dict):
                 raise ValueError("roll-up output is not an object")
+            # The family pass carries the detailed evidence-backed identity
+            # decisions and candidate marks; the global pass only chooses a
+            # compact durable subset and may add equally cited links.
+            output["identity_resolutions"] = (
+                group_identity + (output.get("identity_resolutions")
+                                  if isinstance(output.get("identity_resolutions"), list) else []))
+            if not output.get("highlight_moments"):
+                output["highlight_moments"] = group_moment_highlights
+            if not output.get("highlight_images"):
+                output["highlight_images"] = group_image_highlights
+            if not output.get("profile_evidence"):
+                output["profile_evidence"] = " ".join(
+                    row["profile_evidence"] for row in family_rows if row.get("profile_evidence"))[:1800]
+
+            l4 = output.get("layer4") if isinstance(output.get("layer4"), dict) else {}
+            l5 = output.get("layer5") if isinstance(output.get("layer5"), dict) else {}
+            archive = self.memory.memory.get("layer7", {}).get("moments", {})
+            valid_ids = {str(mid) for mid in archive}
+            valid_ids.update(str(item.get("id")) for item in moments or [] if item.get("id"))
+
+            def event_text(event):
+                if isinstance(event, dict):
+                    summary = " ".join(str(event.get("summary") or "").split())[:360]
+                    refs = list(dict.fromkeys(str(mid) for mid in
+                        (event.get("source_moment_ids") or []) if str(mid) in valid_ids))
+                else:
+                    summary = " ".join(str(event or "").split())[:520]
+                    raw_refs = re.findall(r"\[(?:moment|moments):([^\]]+)\]", summary)
+                    refs = list(dict.fromkeys(mid for value in raw_refs
+                                              for mid in value.split(",") if mid in valid_ids))
+                    summary = re.sub(r"^(?:\[(?:source|moment|moments):[^\]]+\]\s*)+", "", summary)
+                # Keep only compact events traceable to source moments.
+                if not summary or not refs:
+                    return ""
+                return "[moments:" + ",".join(refs) + "] " + summary
+
+            raw_events = output.get("key_events", l5.get("key_events", []))
+            if not isinstance(raw_events, list):
+                raw_events = []
+            events = [value for value in (event_text(item) for item in raw_events) if value][:24]
+            raw_patterns = output.get("long_term_patterns", l5.get("long_term_patterns", []))
+            if isinstance(raw_patterns, str):
+                patterns = [x.strip() for x in raw_patterns.split(";") if x.strip()][:6]
+            elif isinstance(raw_patterns, list):
+                patterns = [str(x).strip()[:240] for x in raw_patterns[:6] if str(x).strip()]
+            else:
+                patterns = []
+            summary4 = str(output.get("layer4_summary") or l4.get("summary") or "").strip()
+            summary5 = str(output.get("layer5_summary") or l5.get("summary") or "").strip()
             data = {
                 "layer4": {
-                    "summary": str(output.get("layer4_summary") or "").strip(),
-                    "current_tasks": [],
-                    "life_trajectory": prior["life_trajectory"],
+                    "summary": summary4,
+                    "current_tasks": output.get("current_tasks", l4.get("current_tasks", []))
+                        if isinstance(output.get("current_tasks", l4.get("current_tasks", [])), list) else [],
+                    "life_trajectory": str(output.get("life_trajectory") or l4.get("life_trajectory")
+                                            or prior["life_trajectory"]),
                 },
                 "layer5": {
-                    "summary": str(output.get("layer5_summary") or "").strip(),
-                    "key_events": output.get("key_events") if isinstance(output.get("key_events"), list) else [],
-                    "long_term_patterns": "; ".join(str(x) for x in
-                        (output.get("long_term_patterns") or [])[:4] if str(x).strip()),
+                    "summary": summary5, "key_events": events,
+                    "long_term_patterns": "; ".join(patterns),
                 },
                 "layer6_summary": str(output.get("layer6_summary") or prior["layer6_summary"]).strip(),
                 "profile_evidence": str(output.get("profile_evidence") or "").strip(),
-                "combine": {key: {} for key in _COMBINABLE},
+                "combine": output.get("combine") if isinstance(output.get("combine"), dict) else {},
+                "identity_resolutions": output.get("identity_resolutions")
+                    if isinstance(output.get("identity_resolutions"), list) else [],
+                "highlight_moments": output.get("highlight_moments")
+                    if isinstance(output.get("highlight_moments"), list) else [],
+                "highlight_images": output.get("highlight_images")
+                    if isinstance(output.get("highlight_images"), list) else [],
+                "_replace_key_events": (output.get("replace_key_events") is True and bool(events)),
+                "_retained_source_moment_ids": list(dict.fromkeys(
+                    [str(mid) for mid in (output.get("retained_source_moment_ids") or [])
+                     if str(mid) in valid_ids]
+                    + [mid for event in events
+                       for value in re.findall(r"\[moments:([^\]]+)\]", event)
+                       for mid in value.split(",") if mid in valid_ids])),
             }
             if not data["layer4"]["summary"] or not data["layer5"]["summary"]:
                 raise ValueError("roll-up omitted required recent/long-term summary")
             return data, cache_hit
         except ValueError as exc:
-            # The chunk summaries have already passed JSON validation and remain
-            # cached. Preserve their evidence and complete the night run without
-            # trusting malformed/truncated roll-up output.
             def words(text, limit):
                 return " ".join(str(text or "").split()[:limit])
             def unique(values, limit):
@@ -345,25 +615,24 @@ Today's chunk summaries: {json.dumps(compact_summaries, ensure_ascii=False, sepa
                     if len(result) >= limit:
                         break
                 return result
-            current_summary = words(" ".join(x.get("summary", "") for x in compact_summaries), 90)
+            current_summary = words(" ".join(x.get("summary", "") for x in compact_summaries), 100)
             key_events = unique([event for x in compact_summaries
-                                 for event in x.get("key_events", [])], 6)
+                                 for event in x.get("key_events", [])], 24)
             patterns = unique([item for x in compact_summaries
-                               for item in x.get("patterns", [])], 4)
+                               for item in x.get("patterns", [])], 6)
             profile_evidence = words(" ".join(x.get("profile_evidence", "")
-                                                for x in compact_summaries), 120)
-            prior_summary = words(prior["layer5_summary"], 50)
-            new_events = words(" ".join(key_events), 50)
+                                                for x in compact_summaries), 180)
+            prior_summary = words(prior["layer5_summary"], 60)
             data = {
-                "layer4": {"summary": current_summary or words(prior["layer4_summary"], 90),
+                "layer4": {"summary": current_summary or words(prior["layer4_summary"], 100),
                            "current_tasks": [], "life_trajectory": prior["life_trajectory"]},
-                "layer5": {"summary": words((prior_summary + " " + new_events).strip(), 100)
-                           or current_summary,
-                           "key_events": key_events,
+                "layer5": {"summary": words((prior_summary + " " + " ".join(key_events)).strip(), 120)
+                           or current_summary, "key_events": key_events,
                            "long_term_patterns": "; ".join(patterns)},
-                "layer6_summary": prior["layer6_summary"],
-                "profile_evidence": profile_evidence,
-                "combine": {key: {} for key in _COMBINABLE},
+                "layer6_summary": prior["layer6_summary"], "profile_evidence": profile_evidence,
+                "combine": {}, "identity_resolutions": [], "highlight_moments": [],
+                "highlight_images": [], "_replace_key_events": False,
+                "_retained_source_moment_ids": [],
                 "_rollup_fallback": str(exc)[:240],
             }
             if not data["layer4"]["summary"] or not data["layer5"]["summary"]:
@@ -406,6 +675,10 @@ Today's chunk summaries: {json.dumps(compact_summaries, ensure_ascii=False, sepa
         available = {k: set(l7.get(k, {})) | set(sort_data.get(k, {})) for k in _COMBINABLE}
         accepted = {}
         for key in _COMBINABLE:
+            # Person aliases are source-scoped; only per-moment, cited identity
+            # resolutions may connect them across clips.
+            if key == "people":
+                continue
             values = raw.get(key)
             if not isinstance(values, dict):
                 continue
@@ -498,48 +771,69 @@ Today's chunk summaries: {json.dumps(compact_summaries, ensure_ascii=False, sepa
                 day, moments, all_accumulated=all_accumulated
             )
             report("sort", "建立六维分类索引", 1, 1, "六个索引维度已整理")
-            report("rollup", "合并近期与长期摘要", 0, 1, "调用整理模型")
-            rollup, rollup_hit = self._rollup(day, summaries, sort_data, cache, cache_path, use_cache)
-            report("rollup", "合并近期与长期摘要", 1, 1,
-                   ("模型格式无效，已基于通过校验的分块摘要安全回退"
+            report("rollup", "跨片段压缩与合并", 0, 1,
+                   "同时核对来源片段、人物关系、重复事件和可保留的重点")
+            rollup, rollup_hit = self._rollup(
+                day, summaries, sort_data, cache, cache_path, use_cache, moments=moments,
+                progress=lambda current, total, message: report(
+                    "rollup", "跨片段压缩与合并", current, total, message)
+            )
+            report("rollup", "跨片段压缩与合并", 1, 1,
+                   ("模型格式无效，已基于有效分块摘要回退"
                     if rollup.get("_rollup_fallback") else
-                    ("完成（缓存命中）" if rollup_hit else "模型生成完成")))
-            source_videos = {
-                str(((item.get("source_provenance") or {}).get("source_video_id") or ""))
-                for item in moments
-                if ((item.get("source_provenance") or {}).get("source_video_id"))
-            }
-            mixed_video_scope = len(source_videos) > 1
-            if mixed_video_scope:
-                profile, rejected, profile_hit = {}, ["本次整理包含多个源视频，未将其合并为单一用户画像"], False
-                report("profile", "跳过跨视频用户画像", 1, 1,
-                       "保留事件归纳；不同源视频不直接合并成同一用户画像")
-            else:
-                evidence = str(rollup.get("profile_evidence") or "").strip()
-                if not evidence:
-                    evidence = "\n".join(x["profile_evidence"] for x in summaries
-                                         if x.get("profile_evidence"))
-                profile_prompt = "TASK: NIGHTLY_PROFILE_EXTRACTION\n" + \
-                    build_profile_extraction_prompt(evidence or json.dumps(summaries, ensure_ascii=False))
-                report("profile", "抽取并校验长期画像", 0, 1, "分析稳定偏好和行为模式")
-                profile_raw, profile_hit = self._call(profile_prompt, cache, cache_path, use_cache)
-                parsed = parse_profile_output(profile_raw)
-                if parsed is None:
-                    raise ValueError(f"Profile response is invalid: {profile_raw[:240]}")
-                profile, rejected = validate_profile(parsed)
-                report("profile", "抽取并校验长期画像", 1, 1,
-                       "校验通过（缓存命中）" if profile_hit else "模型生成并校验通过")
+                    ("完成（缓存命中）" if rollup_hit else "完成")))
+
+            evidence = str(rollup.get("profile_evidence") or "").strip()
+            if not evidence:
+                evidence = "\n".join(x["profile_evidence"] for x in summaries
+                                     if x.get("profile_evidence"))
+            profile_prompt = "TASK: NIGHTLY_PROFILE_EXTRACTION\n" + build_profile_extraction_prompt(
+                evidence or json.dumps(summaries, ensure_ascii=False))
+            report("profile", "抽取并校验长期画像", 0, 1, "合并当前批次的稳定事实证据")
+            profile_raw, profile_hit = self._call(profile_prompt, cache, cache_path, use_cache)
+            parsed = parse_profile_output(profile_raw)
+            if parsed is None:
+                raise ValueError(f"Profile response is invalid: {profile_raw[:240]}")
+            profile, rejected = validate_profile(parsed)
+            report("profile", "抽取并校验长期画像", 1, 1,
+                   "校验通过（缓存命中）" if profile_hit else "模型生成并校验通过")
+
+            from nightly_curation import NightlyCurator
+            curator = NightlyCurator(self.memory)
+            curation = curator.validate(rollup, moments)
+            report("curation", "核验跨片段人物关联", 0,
+                   len(curation["identity_resolutions"]), "只应用带来源证据的身份关联")
+            identity_rewrites = curator.apply_identity_resolutions(
+                curation["identity_resolutions"])
+            curator.remove_old_index_memberships(identity_rewrites)
+            # Identity labels have changed on the source moments; rebuild the
+            # current six-way index from those canonicalized records.
+            sort_data = self._sort_analysis(
+                day, moments, all_accumulated=all_accumulated
+            )
+            report("curation", "核验跨片段人物关联", len(identity_rewrites),
+                   len(identity_rewrites), "来源片段与人物图像保持原样可回查")
             combine = self._combine_map(rollup.get("combine"), sort_data)
 
             # Finish all model calls and validation before persistent mutations.
-            report("apply", "写入整理结果", 0, 4, "更新六维索引")
+            report("apply", "写入整理结果", 0, 6, "更新六维索引")
             self.memory.sort(sort_data)
-            report("apply", "写入整理结果", 1, 4, "更新实体合并关系")
+            report("apply", "写入整理结果", 1, 6, "更新可安全合并的地点、活动和物品标签")
             # Call both APIs even when there are no aliases/new profile fields:
             # the operation audit should record the attempted maintenance action,
             # and update_profile also recomputes confidence decay / stale flags.
             self.memory.combine(combine)
-            report("apply", "写入整理结果", 2, 4, "压缩近期与长期摘要")
+            duplicate_pairs = curator.exact_duplicate_pairs(moments)
+            merged_duplicate_count = 0
+            for source_id, target_id in duplicate_pairs:
+                result = self.memory.merge_moments(
+                    source_id, target_id, confirmed_duplicate=True,
+                    reason="nightly exact duplicate from the same source segment",
+                )
+                if result.get("status") in {"merged", "already_merged"}:
+                    merged_duplicate_count += 1
+            report("apply", "写入整理结果", 2, 6,
+                   f"完全重复事件已归并 {merged_duplicate_count} 条，源记录和附件保留")
             source_moment_ids = [str(item.get("id")) for item in moments if item.get("id")]
             def has_content(value):
                 if isinstance(value, dict):
@@ -566,10 +860,23 @@ Today's chunk summaries: {json.dumps(compact_summaries, ensure_ascii=False, sepa
             }
             self.memory.compress(self._compress_payload(
                 rollup, source_moment_ids, coverage, moments=moments))
-            report("apply", "写入整理结果", 3, 4, "更新长期画像")
+            if rollup.get("_replace_key_events"):
+                layer5 = self.memory.memory.get("layer5", {})
+                layer5["key_events"] = (rollup.get("layer5") or {}).get("key_events", [])[:24]
+                retained_ids = rollup.get("_retained_source_moment_ids") or []
+                if retained_ids:
+                    layer5["source_moment_ids"] = list(dict.fromkeys(retained_ids))
+                    layer5["source_moment_count"] = len(layer5["source_moment_ids"])
+                    layer5["source_link_coverage"] = "complete"
+                self.memory._save()
+            report("apply", "写入整理结果", 3, 6, "更新长期画像")
             self.memory.update_profile(
                 profile, moment_id=f"nightly:{day}",
                 timestamp=datetime.now().astimezone().isoformat())
+            report("apply", "写入整理结果", 4, 6, "标注重要记忆和代表画面")
+            importance_marked = curator.apply_importance(
+                curation["highlight_moments"], curation["highlight_images"],
+                curation["image_ref_map"])
 
             completed = self.memory.memory["metadata"].setdefault(
                 "nightly_processed_days", {})
@@ -591,8 +898,9 @@ Today's chunk summaries: {json.dumps(compact_summaries, ensure_ascii=False, sepa
                 if not isinstance(old_day, str) or old_day < cutoff:
                     del completed[old_day]
             self.memory._save()
-            report("apply", "写入整理结果", 4, 4, "保存整理结果")
+            report("apply", "写入整理结果", 5, 6, "整理重复附件并保护重点图像")
             media_compaction = self.memory.compact_multimodal_assets()
+            report("apply", "写入整理结果", 6, 6, "保存整理结果")
             elapsed = time.perf_counter() - start
             after = file.stat().st_size if file and file.exists() else 0
             return {
@@ -600,6 +908,10 @@ Today's chunk summaries: {json.dumps(compact_summaries, ensure_ascii=False, sepa
                 "chunk_count": len(chunks),
                 "indices_written": {k: len(v) for k, v in sort_data.items()},
                 "aliases_combined": sum(len(v) for v in combine.values()),
+                "identity_resolutions": len(identity_rewrites),
+                "duplicate_events_merged": merged_duplicate_count,
+                "importance_marks_added": importance_marked,
+                "key_events_replaced": bool(rollup.get("_replace_key_events")),
                 "profile_updated": has_any_value(profile),
                 "profile_rejected": rejected,
                 "translation_flushed": translation_flushed,

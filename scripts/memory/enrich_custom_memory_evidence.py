@@ -343,7 +343,7 @@ def main() -> int:
             )
             if person_frames:
                 labels = [
-                    "person-crop-v1: " + str(row.get("entity") or "").strip()
+                    "person-crop-v3-multiframe-yolo: " + str(row.get("entity") or "").strip()
                     + " | " + str(row.get("appearance") or "").strip()
                     for row in person_rows[:8]
                 ]

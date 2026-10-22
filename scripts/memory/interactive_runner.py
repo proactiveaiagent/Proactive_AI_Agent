@@ -43,14 +43,17 @@ import run_scenarios as rs               # noqa: E402  复用 snapshot / 夜间�
 from qwen_perceive import (QwenPerceiver, golden_eval, clip_range, video_path_of,
                            PROMPT_VERSION, LIST_PARSER_VERSION,
                            _organize_person_entity_aliases,
-                           _retain_episode_objects)   # noqa: E402
+                           _retain_episode_objects, extract_frames)   # noqa: E402
 from advice_cache import PersistentAdviceCache  # noqa: E402
 from grounding_cache import PersistentObjectGroundingCache  # noqa: E402
-from speech_identity import (attach_spoken_identity, person_labels_from_observations,
-                             terms_in_text)  # noqa: E402
+from speech_identity import (attach_spoken_identity,
+                             person_labels_from_observations)  # noqa: E402
+from speech_facts import (_AUDIO_EVIDENCE_LINE_RE, _extract_explicit_speech_facts,
+                          _sanitize_social_context)  # noqa: E402
 from audio_transcript_cache import PersistentTranscriptCache  # noqa: E402
 from object_crop_policy import select_object_crop_candidates  # noqa: E402
-from face_detection import detect_faces, select_face_for_person  # noqa: E402
+from face_detection import (detect_faces, assign_faces_to_people,
+                            expanded_face_sample_times)  # noqa: E402
 from scene_retrieval import PostWriteRetrievalMixin  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -58,26 +61,140 @@ TESTSET = ROOT / "data" / "egolife" / "testset"
 RUNS = ROOT / "data" / "egolife" / "runs"
 VIDEO_ROOT = (ROOT / "data" / "egolife").resolve()
 
-_AGE_AS_PERSON_RE = re.compile(
-    r"\b(a|an|the)\s+(baby|infant|toddler|newborn|child|children|boy|girl)\b"
-    r"(?=\s+(?:is|was|who|with|wearing|holding|holds|sits|stands|playing|smiling|"
-    r"appears|in|on|at)\b|[.,;]|$)",
+_AGE_CLAIM_RE = re.compile(
+    r"\b(?:(?P<article>a|an|the)\s+)?"
+    r"(?:(?:elderly|older|younger|young|old|middle[- ]aged|senior)\s+"
+    r"(?P<qualified>woman|man|person|adult|individual|child|children|boy|girl)|"
+    r"(?P<noun>baby|infant|toddler|newborn|child|children|boy|girl|adult))\b",
     re.I,
 )
-_AGE_ADJECTIVE_PERSON_RE = re.compile(
-    r"\b(?:elderly|older|younger|young|old)\s+(?:woman|man|person|adult|individual)\b",
-    re.I,
-)
+
+
+PERSON_PROFILE_CACHE_VERSION = "person-profile-from-speech-v12-event-level-summary-2026-10-23"
+CONTENT_SUMMARY_VERSION = "joint-visual-speech-event-summary-v1-2026-10-23"
+
+
+def _person_anchor_cache_suffix(row):
+    payload = {}
+    for key in ("frame_index", "frame_time_s", "evidence_ref", "evidence_refs"):
+        value = row.get(key) if isinstance(row, dict) else None
+        if value is not None:
+            payload[key] = value
+    return json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+
+
+def _grounded_face_assignments(items, lowres_frames, highres_frames, detections):
+    """Map Qwen-anchored people to faces without guessing in group frames.
+
+    Prefer a mutual, unique match between a person proposal and a detected face.
+    If proposal geometry misses, allow a direct one-to-one association only when
+    exactly one Qwen-anchored person and exactly one confident face occur at that
+    anchor frame. This handles close-ups while keeping multi-person frames out
+    of identity galleries.
+    """
+    grouped = {}
+    anchored_by_frame = {}
+    for item_index, item in enumerate(items or []):
+        if not isinstance(item, dict):
+            continue
+        anchors = set()
+        for raw_index in item.get("anchor_frame_indices") or []:
+            try:
+                frame_index = int(raw_index)
+            except (TypeError, ValueError):
+                continue
+            if 1 <= frame_index <= len(lowres_frames):
+                anchors.add(frame_index)
+                anchored_by_frame.setdefault(frame_index - 1, set()).add(item_index)
+        for row in item.get("frame_boxes") or []:
+            if not isinstance(row, dict):
+                continue
+            try:
+                frame_index = int(row.get("frame_index"))
+                bbox = row.get("bbox")
+                if (frame_index not in anchors or not isinstance(bbox, list)
+                        or len(bbox) != 4):
+                    continue
+                low_time = float(lowres_frames[frame_index - 1].get("at_s") or 0)
+                high_index = min(range(len(highres_frames)), key=lambda j: abs(
+                    float(highres_frames[j].get("at_s") or 0) - low_time))
+            except (TypeError, ValueError):
+                continue
+            score = float(row.get("score") or item.get("score") or 0)
+            previous = grouped.setdefault(high_index, {}).get(item_index)
+            if previous is None or score > previous[1]:
+                grouped[high_index][item_index] = (bbox, score)
+
+    assignments = {}
+    for high_index, people in grouped.items():
+        faces = detections[high_index] if high_index < len(detections) else []
+        unique = assign_faces_to_people(
+            [{"key": index, "bbox": value[0]} for index, value in people.items()], faces)
+        for item_index, face in unique.items():
+            assignments[(item_index, high_index)] = {
+                **face, "_identity_assignment": "mutual_unique_face_geometry"}
+
+    # A sole face on a sole Qwen-anchored person frame is enough to crop that
+    # face directly; no group image or cross-frame identity propagation occurs.
+    for low_index, candidate_indices in anchored_by_frame.items():
+        if len(candidate_indices) != 1 or not highres_frames:
+            continue
+        low_time = float(lowres_frames[low_index].get("at_s") or 0)
+        high_index = min(range(len(highres_frames)), key=lambda j: abs(
+            float(highres_frames[j].get("at_s") or 0) - low_time))
+        if abs(float(highres_frames[high_index].get("at_s") or 0) - low_time) > 0.35:
+            continue
+        item_index = next(iter(candidate_indices))
+        if (item_index, high_index) in assignments:
+            continue
+        faces = detections[high_index] if high_index < len(detections) else []
+        confident_faces = [face for face in faces if isinstance(face, dict)
+                           and float(face.get("confidence") or 0) >= 0.25
+                           and isinstance(face.get("bbox"), list)
+                           and len(face["bbox"]) == 4]
+        if len(confident_faces) == 1:
+            assignments[(item_index, high_index)] = {
+                **confident_faces[0],
+                "_identity_assignment": "single_person_single_face_qwen_anchor"}
+    return assignments
+
+def person_profile_cache_key(source_segment_id, transcript, observations, frames, visual_facts=None):
+    """Build one shared cache key for runtime enrichment and cache prewarming."""
+    speech = str(transcript or "").strip()[:4000]
+    image_frames = [frame for frame in (frames or [])
+                    if isinstance(frame, dict) and frame.get("bytes")][:7]
+    payload = {
+        "source": str(source_segment_id or ""),
+        "transcript": hashlib.sha256(speech.encode("utf-8")).hexdigest(),
+        "people": [(str(row.get("entity") or ""), str(row.get("appearance") or ""))
+                   for row in (observations or []) if isinstance(row, dict)],
+        "frame_times": [round(float(frame.get("at_s") or 0), 3)
+                        for frame in image_frames],
+        "visual_facts": [
+            {key: row.get(key) for key in ("actor", "subject", "predicate", "value",
+                                            "affected_people", "frame_index", "evidence")}
+            for row in (visual_facts or []) if isinstance(row, dict)
+        ][:32],
+        "version": PERSON_PROFILE_CACHE_VERSION,
+    }
+    return hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True)
+                          .encode("utf-8")).hexdigest()
 
 
 def _remove_visual_age_guess(value):
-    """Do not encode an age category inferred from a person’s appearance."""
+    """Remove age labels inferred from appearance while preserving the person reference."""
     text = str(value or "")
-    text = _AGE_AS_PERSON_RE.sub(
-        lambda match: ("the person" if match.group(1).casefold() == "the" else "a person"),
-        text,
-    )
-    return _AGE_ADJECTIVE_PERSON_RE.sub("person", text)
+    def neutral_person(match):
+        article = str(match.group("article") or "").casefold()
+        noun = str(match.group("qualified") or match.group("noun") or "").casefold()
+        if noun == "children":
+            return "the people" if article == "the" else "people"
+        if article == "the":
+            return "the person"
+        if article in {"a", "an"}:
+            return "a person"
+        return "person"
+    return _AGE_CLAIM_RE.sub(neutral_person, text)
 
 
 def _source_video_id(moment, video_path=None):
@@ -127,13 +244,19 @@ def site_perceiver():
         cache_path = RUNS / "qwen_cache_memory_prompt_v3.json"
         if not cache_path.exists():
             cache_path = RUNS / "qwen_cache.json"
-    return QwenPerceiver(cache_file=cache_path)
+    configured_pool = os.environ.get("QWEN_API_URLS", "").strip()
+    single_override = os.environ.get("QWEN_API_URL", "").strip()
+    api_urls = ([value.strip() for value in configured_pool.split(",") if value.strip()]
+                if configured_pool else
+                ([single_override] if single_override else
+                 [f"http://127.0.0.1:{port}" for port in (8001, 8002, 8003, 8004)]))
+    return QwenPerceiver(api_urls=api_urls, cache_file=cache_path)
 
 
 SCENARIO_META = {
     "short_term": {"name": "短期记忆场景", "desc": "不连续视频片段 · 验证 Layer1~7 完整 CRUD"},
     "long_term": {"name": "长期记忆场景", "desc": "完整一天 · 验证记忆流转与夜间整理"},
-    "custom_test": {"name": "自定义测试集", "desc": "按场景分类逐段写入与检索，全部片段完成后可执行夜间归纳"},
+    "custom_test": {"name": "自定义测试集", "desc": "按场景分类逐段写入与检索；有累积记忆时可随时执行夜间归纳"},
 }
 
 
@@ -155,514 +278,6 @@ def _intra_hour_offset(mid):
         t = parts[3]
         return int(t[2:4]) * 60 + int(t[4:6])
     return 0
-
-
-_AUDIO_EVIDENCE_LINE_RE = re.compile(
-    r"^\[audio\s+(?P<start>\d+(?:\.\d+)?)\s*[–-]\s*"
-    r"(?P<end>\d+(?:\.\d+)?)\s*s;\s*(?P<language>[^\]]+)\]\s*(?P<text>.+)$",
-    re.I,
-)
-_EXPLICIT_ENGLISH_AGE_RE = re.compile(
-    r"\b(?:i am|i'm)\s+(\d{1,3})\s+(?:years? old|yo)\b", re.I)
-_EXPLICIT_CHINESE_AGE_RE = re.compile(r"(?:我|本人)(?:今年)?\s*(\d{1,3})\s*岁")
-
-_ENGLISH_PERSON_SUBJECT = (
-    r"(?:[A-Z][A-Za-z'’.-]*(?:\s+[A-Z][A-Za-z'’.-]*){0,2}"
-    r"|(?i:(?:my|his|her|their)\s+(?:mother|mom|mum|father|dad|daughter|son|"
-    r"wife|husband|sister|brother|friend|colleague|doctor))"
-    r"|(?i:he|she|they))"
-)
-_CHINESE_PERSON_SUBJECT = (
-    r"(?:我(?:们)?(?:的)?(?:妈妈|母亲|妈|爸爸|父亲|爸|奶奶|爷爷|女儿|儿子|"
-    r"妻子|丈夫|姐妹|兄弟|朋友|同事)?|他(?:们)?|她(?:们)?|[\u4e00-\u9fff]{2,4})"
-)
-_EXPLICIT_ENGLISH_OTHER_AGE_RE = re.compile(
-    rf"\b(?P<subject>{_ENGLISH_PERSON_SUBJECT})\s+(?:(?:is|are)\s+)?"
-    r"(?P<age>\d{1,3})\s+(?:years? old|yo)\b"
-)
-_EXPLICIT_CHINESE_OTHER_AGE_RE = re.compile(
-    rf"(?P<subject>{_CHINESE_PERSON_SUBJECT})\s*"
-    r"(?:(?:今年|现在|目前)\s*)?(?P<age>\d{1,3})\s*岁"
-)
-_EXPLICIT_ENGLISH_OTHER_PLAN_RE = re.compile(
-    rf"\b(?P<subject>{_ENGLISH_PERSON_SUBJECT})\s+"
-    r"(?:(?:is|are)\s+)?(?:planning to|plans to|going to|will|shall|gonna)\b(?!\s+(?:not|never)\b)"
-)
-_EXPLICIT_CHINESE_OTHER_PLAN_RE = re.compile(
-    rf"(?P<subject>{_CHINESE_PERSON_SUBJECT})\s*"
-    r"(?P<time_scope>未来几天|这几天|今天|今晚|明天|后天|本周|这周|下周(?:[一二三四五六日天])?|"
-    r"周[一二三四五六日天]|月底|最近)?\s*"
-    r"(?<!没有)(?<!不)(?<!没)(?<!未)(?:打算|计划|准备|将要|将|会|要)"
-)
-_ENGLISH_HEALTH_CONDITION = (
-    r"(?:type\s+\d+\s+diabetes|high blood pressure|heart disease|heart condition|heart attack|"
-    r"kidney disease|blood clot|diabetes|asthma|hypertension|epilepsy|cancer|stroke|"
-    r"arthritis|dementia|allerg(?:y|ies))"
-)
-_EXPLICIT_ENGLISH_OTHER_HEALTH_RE = re.compile(
-    rf"\b(?P<subject>{_ENGLISH_PERSON_SUBJECT})\s+(?:"
-    rf"(?:(?:has|had|suffers? from|was diagnosed with|has been diagnosed with|"
-    rf"is diagnosed with)\s+(?:a\s+|an\s+)?(?P<condition>{_ENGLISH_HEALTH_CONDITION})\b)"
-    rf"|(?:(?:takes?|is taking)\s+(?:medication|medicine|insulin|pills?)\s+for\s+"
-    rf"(?P<med_condition>{_ENGLISH_HEALTH_CONDITION})\b)"
-    rf"|(?:(?:is|are)\s+allergic to\s+(?P<allergen>[^.!?,;]{{1,40}}))"
-    rf"|(?:(?:had|has had|underwent)\s+(?P<surgery>surgery|a surgery)\b)"
-    rf")",
-    re.I,
-)
-_CHINESE_HEALTH_CONDITION = (
-    r"(?:糖尿病|高血压|哮喘|心脏病|心肌梗死|心梗|心脏病发作|癫痫|癌症|中风|关节炎|痴呆|老年痴呆|"
-    r"血栓|肾病|过敏|手术|降压药|胰岛素|药物)"
-)
-_EXPLICIT_CHINESE_OTHER_HEALTH_RE = re.compile(
-    rf"(?P<subject>{_CHINESE_PERSON_SUBJECT})\s*(?:曾经|以前|目前|现在|一直)?"
-    rf"(?<!没)(?<!不)(?<!未)(?:患有|患过|得过|有|被诊断为|被诊断出|"
-    rf"确诊(?:患有)?|正在服用|服用|做过)"
-    rf"[^。！？.!?]{{0,16}}?(?P<condition>{_CHINESE_HEALTH_CONDITION})"
-)
-_EXPLICIT_CHINESE_OTHER_ALLERGY_RE = re.compile(
-    rf"(?P<subject>{_CHINESE_PERSON_SUBJECT})\s*对"
-    rf"(?P<allergen>[^。！？.!?]{{1,20}}?)(?<!不)过敏"
-)
-_EXPLICIT_PLAN_TIME_RE = re.compile(
-    r"\b(?:the day after tomorrow|tomorrow|today|tonight|this week|this weekend|"
-    r"next week|next month|in a few days|in \d{1,2} days|on "
-    r"(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b"
-    r"|(?:未来几天|这几天|今天|今晚|明天|后天|本周|这周|下周(?:[一二三四五六日天])?|"
-    r"周[一二三四五六日天]|月底|最近)",
-    re.I,
-)
-
-_EXPLICIT_ENGLISH_PLAN_RE = re.compile(
-    r"\b(?:i(?:'m| am) planning to|i plan to|i(?:'m| am) going to|"
-    r"i(?:'m| am) gonna|i(?:'ll| will)|we(?:'re| are) planning to|"
-    r"we plan to|we(?:'re| are) going to|we(?:'re| are) gonna|we(?:'ll| will))\b(?!\s+(?:not|never)\b)",
-    re.I,
-)
-_EXPLICIT_CHINESE_PLAN_RE = re.compile(
-    r"(?:我|我们)(?:打算|计划|准备)(?:要)?[^。！？.!?]{1,180}")
-_EXPLICIT_ENGLISH_HEALTH_RE = re.compile(
-    r"\b(?:i have(?!\s+(?:no|not|never)\b)|i've had(?!\s+(?:no|not|never)\b)|i had(?!\s+(?:no|not|never)\b)|i was diagnosed with(?!\s+(?:no|not|never)\b)|i have been diagnosed with(?!\s+(?:no|not|never)\b)|"
-    r"i suffer from|i take (?:medication|medicine|insulin|pills?) for|"
-    r"i am taking (?:medication|medicine|insulin|pills?) for)\b.{0,100}"
-    r"\b(?:diabetes|asthma|hypertension|high blood pressure|heart disease|"
-    r"heart condition|heart attack|epilepsy|cancer|stroke|arthritis|dementia|allerg(?:y|ies)|"
-    r"blood clot|kidney disease|medication|insulin|surgery)\b"
-    r"|\b(?:i'm|i am) allergic to [\w-]+(?:\s+[\w-]+){0,4}\b", re.I)
-_EXPLICIT_CHINESE_HEALTH_RE = re.compile(
-    r"(?:我|本人)(?:(?:曾经|以前|目前|现在|一直)?(?:患有|患过|得过|有|被诊断为|"
-    r"被诊断出|确诊(?:患有)?|正在服用|服用|做过))[^。！？.!?]{0,80}"
-    r"(?:糖尿病|高血压|哮喘|心脏病|心肌梗死|心梗|心脏病发作|癫痫|癌症|中风|关节炎|痴呆|老年痴呆|"
-    r"血栓|肾病|过敏|手术|降压药|胰岛素|药物)|"
-    r"(?:我|本人)对[^。！？.!?]{1,20}(?<!没有)(?<!不)(?<!没)过敏")
-
-
-_EXPLICIT_ENGLISH_SELF_NAME_RE = re.compile(
-    r"(?i:\b(?:my name is|you can call me|please call me)\s+)"
-    r"(?P<name>[A-Za-z][A-Za-z'’.-]{1,40}(?:\s+[A-Z][A-Za-z'’.-]{1,40}){0,2})\b")
-_EXPLICIT_CHINESE_SELF_NAME_RE = re.compile(
-    r"(?:我的名字是|我叫)(?P<name>[\u4e00-\u9fff]{2,4})(?=\s|[,，。！？.!?]|$)")
-_EXPLICIT_ENGLISH_OTHER_NAME_RE = re.compile(
-    r"\b(?P<subject>(?i:he|she|they)|"
-    r"(?i:my|our|his|her|their)\s+(?:mother|mom|mum|father|dad|daughter|son|wife|husband|"
-    r"sister|brother|friend|colleague|partner|boyfriend|girlfriend|roommate))"
-    r"(?i:'s name is|\s+is called|\s+goes by)\s+"
-    r"(?P<name>[A-Za-z][A-Za-z'’.-]{1,40}(?:\s+[A-Z][A-Za-z'’.-]{1,40}){0,2})\b")
-_EXPLICIT_CHINESE_OTHER_NAME_RE = re.compile(
-    r"(?P<subject>他|她|他们|她们|我(?:的)?(?:妈妈|母亲|爸爸|父亲|奶奶|爷爷|女儿|儿子|妻子|丈夫|"
-    r"姐妹|兄弟|朋友|同事|伴侣|男朋友|女朋友|室友))"
-    r"(?:的名字是|的名字叫|叫)(?P<name>[\u4e00-\u9fff]{2,4})(?=\s|[,，。！？.!?]|$)")
-_EXPLICIT_ENGLISH_PREFERENCE_RE = re.compile(
-    r"\b(?:I|we)(?:\s+really)?\s+(?:(?:do not|don't|never)\s+)?"
-    r"(?:like|love|enjoy|prefer|hate|dislike)\s+[^.!?;]{2,140}", re.I)
-_EXPLICIT_CHINESE_PREFERENCE_RE = re.compile(
-    r"(?:我|我们)(?:最|更|比较|非常)?(?:喜欢|爱|享受|偏好|讨厌|不喜欢|不爱)"
-    r"[^。！？.!?;]{2,100}")
-_EXPLICIT_ENGLISH_OTHER_PREFERENCE_RE = re.compile(
-    r"\b(?P<subject>(?i:he|she|they)|"
-    r"[A-Z][A-Za-z'’.-]*(?:\s+[A-Z][A-Za-z'’.-]*){0,2}|"
-    r"(?i:(?:my|our|his|her|their)\s+(?:mother|mom|mum|father|dad|daughter|son|"
-    r"wife|husband|sister|brother|friend|colleague|partner|boyfriend|girlfriend|roommate)))"
-    r"\s+(?:(?i:really)\s+)?(?i:likes|loves|enjoys|prefers|hates|dislikes)\s+"
-    r"[^.!?;]{2,140}")
-_EXPLICIT_CHINESE_OTHER_PREFERENCE_RE = re.compile(
-    r"(?P<subject>他|她|他们|她们|我(?:们)?(?:的)?(?:妈妈|母亲|爸爸|父亲|奶奶|爷爷|"
-    r"女儿|儿子|妻子|丈夫|朋友|同事|伴侣|男朋友|女朋友|室友)|[\u4e00-\u9fff]{2,4})"
-    r"(?:最|更|比较)?(?:喜欢|爱|偏好|讨厌|不喜欢)[^。！？.!?;]{2,100}")
-_EXPLICIT_ENGLISH_RELATION_RE = re.compile(
-    r"\b(?:my|our)\s+(?:mother|mom|mum|father|dad|daughter|son|wife|husband|"
-    r"sister|brother|friend|colleague|partner|boyfriend|girlfriend|roommate|doctor)\b|"
-    r"\b(?:I(?:'m| am)|we(?:'re| are))\s+your\s+neighbou?r\b", re.I)
-_EXPLICIT_CHINESE_RELATION_RE = re.compile(
-    r"(?:我|我们)(?:的)?(?:妈妈|母亲|妈|爸爸|父亲|爸|奶奶|爷爷|女儿|儿子|妻子|丈夫|"
-    r"姐妹|兄弟|朋友|同事|伴侣|男朋友|女朋友|室友|医生)")
-_SPOKEN_VOCATIVE_NAME_RE = re.compile(
-    r"^\s*(?i:hi|hello|hey|welcome|good\s+(?:morning|afternoon|evening))"
-    r"\b[,!\s]+(?P<name>[A-Z][a-zA-Z'’-]*(?:\s+[A-Z][a-zA-Z'’-]*){0,2})\b")
-_EXPLICIT_SELF_NEIGHBOR_RE = re.compile(
-    r"\b(?:I(?:'m| am)|we(?:'re| are))\s+your\s+neighbou?r\b", re.I)
-_EXPLICIT_SELF_ROLE_RE = re.compile(
-    r"\b(?:I(?:'m| am)|we(?:'re| are))\s+your\s+"
-    r"(?P<role>grandma|grandmother|grandpa|grandfather|mother|mom|mum|"
-    r"father|dad|aunt|uncle|sister|brother|friend|neighbou?r|coworker|colleague)\b",
-    re.I)
-_EXPLICIT_CHINESE_SELF_ROLE_RE = re.compile(
-    r"(?:我是|我就是|我们是|我们就是)(?:你|你们)的?"
-    r"(?P<role>奶奶|外婆|爷爷|外公|妈妈|母亲|爸爸|父亲|朋友|邻居|同事|姐妹|兄弟)")
-_EXPLICIT_SPOKEN_GREETING_RE = re.compile(
-    r"^\s*(?:hi|hello|hey|good\s+(?:morning|afternoon|evening))\b", re.I)
-_EXPLICIT_WELLBEING_QUESTION_RE = re.compile(
-    r"\bhow\s+(?:are|have)\s+you(?:\s+today)?\b|"
-    r"\bhow(?:'ve| have)\s+you\s+been\b", re.I)
-_DIRECT_ADDRESSED_HEALTH_RE = re.compile(
-    rf"^\s*(?P<name>[A-Z][A-Za-z'’.-]*(?:\s+[A-Z][A-Za-z'’.-]*){{0,2}})"
-    rf"[,，]\s*(?:your|你|您的)\s+(?:heart disease|heart condition|heart attack|"
-    rf"high blood pressure|diabetes|asthma|癌症|心脏病|心肌梗死|心梗|高血压)", re.I)
-_EXPLICIT_HEALTH_PRODUCT_CLAIM_RE = re.compile(
-    r"\b(?:health|healthcare)\s+product\b.{0,120}\b(?:works?|address(?:es)?|"
-    r"treats?|cures?|prevents?|improves?|keeps?)\b", re.I)
-_EXPLICIT_FIRST_VISIT_RE = re.compile(
-    r"\b(?:I|we)(?:'ve| have)?\s+never\s+(?:been here before|been to|visited)\b", re.I)
-_EXPLICIT_FIRED_RE = re.compile(
-    r"\b(?:you(?:'re| are)\s+fired|leave our company from today)\b", re.I)
-_EXPLICIT_BIRTHDAY_RE = re.compile(r"\bhappy birthday\b", re.I)
-_EXPLICIT_AIRPORT_INSTRUCTION_RE = re.compile(
-    r"\b(?:please\s+(?:proceed|follow|continue|go|head)|passengers?\s+(?:arriving|should|please))\b", re.I)
-_EXPLICIT_TRANSACTION_RE = re.compile(
-    r"\b(?:bill|dollars?|tips?|pay|paid|payment|receipt)\b|\$\s?\d+", re.I)
-
-_EXPLICIT_ENGLISH_BACKGROUND_RE = re.compile(
-    r"\b(?:I(?:'m| am) from|I live in|I lived in|I grew up in|I moved to|I moved from|"
-    r"I recently arrived in|I just arrived in|I came from|I traveled from|I travelled from)\b", re.I)
-_EXPLICIT_CHINESE_BACKGROUND_RE = re.compile(
-    r"(?:我来自|我住在|我住过|我刚从|我最近从|我搬到|我长大在|我出生于)")
-_EXPLICIT_ENGLISH_EXPERIENCE_RE = re.compile(
-    r"\b(?:I|we)(?:'ve| have)?\s+(?:been to|visited|went to|traveled to|travelled to|"
-    r"tried|used|watched|played|ate|worked at|lived in)\b|"
-    r"\b(?:I|we)\s+(?:visited|went to|traveled to|travelled to|tried|used|watched|"
-    r"played|ate|worked at|lived in)\b", re.I)
-_EXPLICIT_CHINESE_EXPERIENCE_RE = re.compile(
-    r"(?:我|我们)(?:以前|曾经)?(?:去过|到过|住过|吃过|看过|玩过|做过|用过)"
-    r"[^。！？.!?;]{0,100}")
-
-
-def _speech_fact_subject(raw_subject):
-    """Keep quoted referents literal; unresolved pronouns never bind to visual people."""
-    subject = " ".join(str(raw_subject or "").strip().split())
-    folded = subject.casefold()
-    if folded in {"i", "me", "we", "myself", "ourselves", "我", "我们", "本人"}:
-        return "unidentified speaker"
-    if folded in {"he", "she", "they", "他", "她", "他们", "她们"}:
-        return f"unidentified person referred to as {folded}"
-    return subject[:120]
-
-
-def _explicit_plan_time_scope(quote):
-    match = _EXPLICIT_PLAN_TIME_RE.search(str(quote or ""))
-    return match.group(0).strip() if match else ""
-
-
-def _extract_explicit_speech_facts(transcript, source_segment_id):
-    """Keep explicit identity, preference, relationship, background, experience, age,
-    plan, and health claims as text facts with audio provenance.
-
-    ASR has no speaker diarization. First-person claims stay attached to an
-    unidentified speaker; third-person referents are stored literally and are
-    never joined to a visually observed person by pronoun or guesswork.
-    """
-    facts = []
-    last_addressed_name = ""
-    last_addressed_end = None
-    for line in str(transcript or "").splitlines():
-        match = _AUDIO_EVIDENCE_LINE_RE.match(line.strip())
-        if not match:
-            continue
-        quote = match.group("text").strip()
-        try:
-            audio_start = round(float(match.group("start")), 3)
-            audio_end = round(float(match.group("end")), 3)
-        except (TypeError, ValueError):
-            continue
-        if not quote or audio_end < audio_start:
-            continue
-
-        evidence_ref = {
-            "source_segment_id": str(source_segment_id or "")[:128],
-            "modality": "speech",
-            "audio_start_s": audio_start,
-            "audio_end_s": audio_end,
-        }
-
-        self_role_match = (_EXPLICIT_SELF_ROLE_RE.search(quote)
-                           or _EXPLICIT_CHINESE_SELF_ROLE_RE.search(quote))
-        neighbor_self_identified = bool(_EXPLICIT_SELF_NEIGHBOR_RE.search(quote))
-        role_aliases = {
-            "grandmother": "grandma", "grandma": "grandma",
-            "grandfather": "grandpa", "grandpa": "grandpa",
-            "mother": "mom", "mom": "mom", "mum": "mom",
-            "father": "dad", "dad": "dad", "neighbour": "neighbor",
-            "neighbor": "neighbor", "colleague": "coworker", "coworker": "coworker",
-            "奶奶": "grandma", "外婆": "grandma", "爷爷": "grandpa", "外公": "grandpa",
-            "妈妈": "mom", "母亲": "mom", "爸爸": "dad", "父亲": "dad",
-            "朋友": "friend", "邻居": "neighbor", "同事": "coworker",
-            "姐妹": "sister", "兄弟": "brother",
-        }
-        self_role = (role_aliases.get(self_role_match.group("role").casefold())
-                     if self_role_match else None)
-        speaker_alias = f"{self_role} 1" if self_role else "unidentified speaker"
-
-        def add_spoken_claim(predicate, value, subject=None,
-                             status="stated", actor=None,
-                             affected_people=None):
-            fact = {
-                "subject_type": "person", "subject": subject or speaker_alias,
-                "predicate": predicate, "value": str(value or "")[:500],
-                "modality": "speech", "status": status,
-                "confidence": "medium", "evidence": quote[:500],
-                "evidence_ref": dict(evidence_ref),
-            }
-            # Whisper does not identify voices. Store the utterance source honestly
-            # and link only explicitly named or addressed people as text references.
-            if actor is None:
-                actor = speaker_alias
-            if actor:
-                fact["actor"] = str(actor)[:120]
-            if affected_people:
-                fact["affected_people"] = list(dict.fromkeys(
-                    str(person).strip()[:120] for person in affected_people if str(person).strip()
-                ))
-            facts.append(fact)
-
-        vocative = _SPOKEN_VOCATIVE_NAME_RE.search(quote)
-        directed_health = _DIRECT_ADDRESSED_HEALTH_RE.search(quote)
-        addressed_name = (directed_health.group("name").strip()
-                          if directed_health else
-                          vocative.group("name").strip() if vocative else "")
-        if last_addressed_end is not None and audio_start - last_addressed_end > 3.0:
-            last_addressed_name = ""
-        if addressed_name:
-            last_addressed_name = addressed_name
-        elif last_addressed_name:
-            addressed_name = last_addressed_name
-        last_addressed_end = audio_end
-        if addressed_name and (directed_health or vocative):
-            add_spoken_claim(
-                "addressed_person", f"A speaker addresses the listener as {addressed_name}.",
-                subject=_speech_fact_subject(addressed_name),
-                actor=speaker_alias,
-                affected_people=[_speech_fact_subject(addressed_name)])
-
-        greeting_target = (_speech_fact_subject(addressed_name) if addressed_name
-                           else "unidentified addressee")
-        greeting_target_label = addressed_name or "the listener"
-        if _EXPLICIT_SPOKEN_GREETING_RE.search(quote):
-            add_spoken_claim(
-                "greeted", f"{speaker_alias} greeted {greeting_target_label}.",
-                subject=speaker_alias, status="spoken_event", actor=speaker_alias,
-                affected_people=[greeting_target])
-        if _EXPLICIT_WELLBEING_QUESTION_RE.search(quote):
-            add_spoken_claim(
-                "asked_about_wellbeing",
-                f"{speaker_alias} asked {greeting_target_label} how they were.",
-                subject=speaker_alias, status="spoken_event", actor=speaker_alias,
-                affected_people=[greeting_target])
-        for spoken_term in terms_in_text(quote):
-            # One row per spoken participant: the term itself becomes retrievable and
-            # keeps the verbatim quote as evidence, instead of hiding behind
-            # "unidentified speaker" as its only subject.
-            add_spoken_claim(
-                "spoken_family_reference", quote,
-                subject=spoken_term, status="quoted_relationship_term",
-                actor=speaker_alias, affected_people=[spoken_term])
-        if _EXPLICIT_HEALTH_PRODUCT_CLAIM_RE.search(quote):
-            add_spoken_claim(
-                "quoted_product_claim", quote, status="quoted_unverified_claim")
-        if _EXPLICIT_FIRED_RE.search(quote):
-            add_spoken_claim(
-                "reported_employment_event", quote,
-                subject="unidentified addressee",
-                affected_people=["unidentified addressee"])
-        if _EXPLICIT_BIRTHDAY_RE.search(quote):
-            birthday_person = (_speech_fact_subject(addressed_name) if addressed_name
-                               else "unidentified addressee")
-            add_spoken_claim(
-                "stated_birthday_event", quote,
-                subject=birthday_person, affected_people=[birthday_person])
-        if _EXPLICIT_AIRPORT_INSTRUCTION_RE.search(quote):
-            add_spoken_claim("spoken_travel_instruction", quote,
-                             subject="public-address announcement",
-                             actor="public-address announcement",
-                             affected_people=["passengers"])
-        if _EXPLICIT_TRANSACTION_RE.search(quote):
-            add_spoken_claim(
-                "spoken_transaction_detail", quote,
-                affected_people=["unidentified addressee"])
-
-        name_match = (_EXPLICIT_ENGLISH_SELF_NAME_RE.search(quote)
-                      or _EXPLICIT_CHINESE_SELF_NAME_RE.search(quote))
-        if name_match:
-            add_spoken_claim("stated_name", name_match.group("name").strip())
-        other_name = (_EXPLICIT_ENGLISH_OTHER_NAME_RE.search(quote)
-                      or _EXPLICIT_CHINESE_OTHER_NAME_RE.search(quote))
-        if other_name:
-            add_spoken_claim(
-                "stated_name", other_name.group("name").strip(),
-                subject=_speech_fact_subject(other_name.group("subject")))
-        if (_EXPLICIT_ENGLISH_PREFERENCE_RE.search(quote)
-                or _EXPLICIT_CHINESE_PREFERENCE_RE.search(quote)):
-            add_spoken_claim("stated_preference", quote)
-        other_preference = (_EXPLICIT_ENGLISH_OTHER_PREFERENCE_RE.search(quote)
-                            or _EXPLICIT_CHINESE_OTHER_PREFERENCE_RE.search(quote))
-        if other_preference:
-            add_spoken_claim(
-                "stated_preference", quote,
-                subject=_speech_fact_subject(other_preference.group("subject")))
-        if (_EXPLICIT_ENGLISH_RELATION_RE.search(quote)
-                or _EXPLICIT_CHINESE_RELATION_RE.search(quote)
-                or self_role_match):
-            relationship_value = quote
-            relationship_status = "stated"
-            if self_role:
-                relationship_status = "self_identified"
-            if neighbor_self_identified:
-                target = addressed_name or "the listener"
-                relationship_value = (
-                    f"{speaker_alias} self-identifies as {target}'s neighbor.")
-                relationship_status = "self_identified"
-            add_spoken_claim(
-                "stated_relationship", relationship_value,
-                subject=speaker_alias, status=relationship_status,
-                actor=speaker_alias,
-                affected_people=[_speech_fact_subject(addressed_name)]
-                if addressed_name else None)
-        if (_EXPLICIT_ENGLISH_BACKGROUND_RE.search(quote)
-                or _EXPLICIT_CHINESE_BACKGROUND_RE.search(quote)):
-            add_spoken_claim("stated_background", quote)
-        if (_EXPLICIT_ENGLISH_EXPERIENCE_RE.search(quote)
-                or _EXPLICIT_FIRST_VISIT_RE.search(quote)
-                or _EXPLICIT_CHINESE_EXPERIENCE_RE.search(quote)):
-            add_spoken_claim("stated_experience", quote)
-
-        age_match = _EXPLICIT_ENGLISH_AGE_RE.search(quote)
-        age_subject = speaker_alias if age_match else ""
-        age_is_english = bool(age_match)
-        if not age_match:
-            age_match = _EXPLICIT_CHINESE_AGE_RE.search(quote)
-            age_subject = speaker_alias if age_match else ""
-            age_is_english = False
-        if not age_match:
-            age_match = _EXPLICIT_ENGLISH_OTHER_AGE_RE.search(quote)
-            if age_match:
-                age_subject = _speech_fact_subject(age_match.group("subject"))
-                age_is_english = True
-        if not age_match:
-            age_match = _EXPLICIT_CHINESE_OTHER_AGE_RE.search(quote)
-            if age_match:
-                age_subject = _speech_fact_subject(age_match.group("subject"))
-                age_is_english = False
-
-        if age_match:
-            age = int(age_match.group("age") if age_match.groupdict().get("age")
-                      else age_match.group(1))
-            if 1 <= age <= 120:
-                age_value = f"{age} years old" if age_is_english else f"{age}岁"
-                facts.append({
-                    "subject_type": "person", "subject": age_subject,
-                    "predicate": "stated_age", "value": age_value,
-                    "modality": "speech", "status": "stated",
-                    "confidence": "medium", "evidence": quote[:500],
-                    "evidence_ref": dict(evidence_ref),
-                })
-
-        first_person_plan = (
-            _EXPLICIT_ENGLISH_PLAN_RE.search(quote)
-            or _EXPLICIT_CHINESE_PLAN_RE.search(quote)
-        )
-        non_plan_future = re.search(
-            r"\b(?:I|we)\s+(?:will|shall|'ll)\s+(?:die|be dead|not survive)\b",
-            quote, re.I)
-        if non_plan_future:
-            first_person_plan = None
-        other_plan = None if first_person_plan or non_plan_future else (
-            _EXPLICIT_ENGLISH_OTHER_PLAN_RE.search(quote)
-            or _EXPLICIT_CHINESE_OTHER_PLAN_RE.search(quote)
-        )
-        plan_subject = speaker_alias if first_person_plan else ""
-        if other_plan:
-            plan_subject = _speech_fact_subject(other_plan.group("subject"))
-            if plan_subject in {"今天", "今晚", "明天", "后天", "这几天", "本周", "下周"}:
-                other_plan = None
-                plan_subject = ""
-        if first_person_plan or other_plan:
-            fact = {
-                "subject_type": "person", "subject": plan_subject,
-                "predicate": "stated_plan", "value": quote[:500],
-                "modality": "speech", "status": "stated_plan",
-                "confidence": "medium", "evidence": quote[:500],
-                "evidence_ref": dict(evidence_ref),
-            }
-            time_scope = _explicit_plan_time_scope(quote)
-            if time_scope:
-                fact["time_scope"] = time_scope[:80]
-            facts.append(fact)
-
-        health_match = _EXPLICIT_ENGLISH_HEALTH_RE.search(quote)
-        health_subject = speaker_alias if health_match else ""
-        if not health_match:
-            health_match = _EXPLICIT_CHINESE_HEALTH_RE.search(quote)
-            health_subject = speaker_alias if health_match else ""
-        if not health_match:
-            health_match = _EXPLICIT_ENGLISH_OTHER_HEALTH_RE.search(quote)
-            if health_match:
-                health_subject = _speech_fact_subject(health_match.group("subject"))
-        if not health_match:
-            health_match = (_EXPLICIT_CHINESE_OTHER_HEALTH_RE.search(quote)
-                            or _EXPLICIT_CHINESE_OTHER_ALLERGY_RE.search(quote))
-            if health_match:
-                health_subject = _speech_fact_subject(health_match.group("subject"))
-        if not health_match and directed_health:
-            health_match = directed_health
-            health_subject = _speech_fact_subject(directed_health.group("name"))
-
-        if health_match:
-            urgent_current_report = bool(
-                re.search(r"\b(?:i have|i(?:'m| am) having)\s+(?:a\s+)?(?:heart attack|stroke)\b",
-                          quote, re.I)
-                or re.search(r"\b(?:help me|i will die|i(?:'m| am) dying)\b", quote, re.I)
-                or re.search(r"(?:救命|我快不行了|我要死了)", quote)
-            )
-            explicit_history = bool(
-                re.search(r"\b(?:i had|i have had|i've had|i was diagnosed with|"
-                          r"i have been diagnosed with|i have a history of)\b", quote, re.I)
-                or re.search(r"(?:我以前|我曾经|患过|得过|被诊断为|确诊)", quote)
-            )
-            if directed_health:
-                health_predicate = "spoken_health_claim"
-                health_status = "unverified_claim"
-            elif urgent_current_report:
-                health_predicate = "self_reported_current_health_event"
-                health_status = "self_reported_unverified"
-            elif explicit_history:
-                health_predicate = "self_reported_health_history"
-                health_status = "self_reported"
-            else:
-                health_predicate = "spoken_health_claim"
-                health_status = "self_reported_unverified" if health_subject == "unidentified speaker" else "unverified_claim"
-            health_fact = {
-                "subject_type": "person", "subject": health_subject,
-                "predicate": health_predicate, "value": quote[:500],
-                "modality": "speech", "status": health_status,
-                "confidence": "medium", "evidence": quote[:500],
-                "evidence_ref": dict(evidence_ref),
-                "actor": speaker_alias,
-            }
-            if directed_health and health_subject:
-                health_fact["affected_people"] = [health_subject]
-            facts.append(health_fact)
-
-        if len(facts) >= 16:
-            break
-    return facts
 
 
 def moment_brief(m):
@@ -722,6 +337,18 @@ def feishu_test_moments(dataset):
     category = selector.split(":", 1)[1] if selector.startswith("feishu:") else "all"
     if category != "all":
         files = [row for row in files if row.get("scenario") == category]
+
+    def chapter_order(row):
+        scenario_numbers = tuple(int(value) for value in re.findall(
+            r"\d+", str(row.get("scenario") or "")))
+        clip_numbers = tuple(int(value) for value in re.findall(
+            r"\d+", str(row.get("clip_id") or Path(
+                str(row.get("relative_path") or "")).stem)))
+        return scenario_numbers, clip_numbers, str(row.get("relative_path") or "").casefold()
+
+    # The UI runs the custom set in the Feishu chapter/video sequence even if
+    # the manifest was regenerated from an unordered filesystem traversal.
+    files = sorted(files, key=chapter_order)
     moments = []
     for row in files:
         relative = str(row.get("relative_path") or "")
@@ -745,6 +372,42 @@ def feishu_test_moments(dataset):
     if not moments:
         raise ValueError(f"No usable Feishu videos in dataset: {dataset}")
     return moments
+
+
+def _attach_location_visual_evidence(media, fields):
+    """Link a place to one existing Qwen input frame without storing a duplicate image."""
+    if not isinstance(media, dict):
+        return
+    location = str((fields or {}).get("location") or "").strip()
+    frames = [row for row in media.get("visual_frames") or []
+              if isinstance(row, dict) and row.get("visual_role") == "qwen_input_frame"
+              and row.get("asset")]
+    if not location or not frames:
+        media["location_visuals"] = {"schema": 1, "status": "not_available", "items": []}
+        return
+    facts = [row for row in (fields or {}).get("temporal_facts") or []
+             if isinstance(row, dict) and str(row.get("subject_type") or "").casefold() == "place"]
+    fact = next((row for row in facts if row.get("frame_index")), None)
+    frame_index = None
+    if fact:
+        try:
+            frame_index = int(fact.get("frame_index"))
+        except (TypeError, ValueError):
+            frame_index = None
+    selected = next((row for row in frames
+                     if frame_index and int(row.get("frame_index") or 0) == frame_index), None)
+    if selected is None:
+        selected = frames[len(frames) // 2]
+    ref = dict(selected)
+    ref["visual_role"] = "location_source_frame"
+    ref["place_evidence_basis"] = (
+        str(fact.get("evidence") or "")[:300] if fact
+        else "地点没有独立裁剪框；保留一张代表性 Qwen 输入原帧供回查")
+    media["location_visuals"] = {
+        "schema": 1, "status": "source_frame",
+        "items": [{"location": location, "status": "source_frame",
+                   "evidence": ref["place_evidence_basis"], "frame_refs": [ref]}],
+    }
 
 
 PARTICIPANT_NAMES = {
@@ -1392,6 +1055,7 @@ class InteractiveSession(PostWriteRetrievalMixin):
 
     def _enrich_person_profiles_from_speech(self, observations, transcript,
                                             frames, source_segment_id,
+                                            visual_facts=None,
                                             cancel_event=None, progress=None):
         """Use source-video speech as evidence on person cards; never persist transcript rows."""
         rows = [dict(row) for row in observations or [] if isinstance(row, dict)]
@@ -1400,14 +1064,8 @@ class InteractiveSession(PostWriteRetrievalMixin):
                         if isinstance(frame, dict) and frame.get("bytes")][:7]
         if not rows or not speech or not image_frames:
             return rows, ""
-        transcript_hash = hashlib.sha256(speech.encode("utf-8")).hexdigest()
-        cache_key = hashlib.sha256(json.dumps({
-            "source": str(source_segment_id or ""),
-            "transcript": transcript_hash,
-            "people": [(str(row.get("entity") or ""), str(row.get("appearance") or ""))
-                       for row in rows],
-            "version": "person-profile-from-speech-v1",
-        }, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+        cache_key = person_profile_cache_key(
+            source_segment_id, speech, rows, image_frames, visual_facts)
         cached = self.person_profile_cache.get(cache_key)
         if isinstance(cached, dict) and isinstance(cached.get("people"), list):
             payload = cached
@@ -1417,46 +1075,68 @@ class InteractiveSession(PostWriteRetrievalMixin):
             frame_map = [{"frame": index + 1,
                           "time_s": round(float(frame.get("at_s") or 0), 3)}
                          for index, frame in enumerate(image_frames)]
-            candidates = [{"entity": str(row.get("entity") or "")[:100],
+            candidates = [{"candidate_id": f"person_{index + 1}",
+                           "entity": str(row.get("entity") or "")[:100],
                            "appearance": str(row.get("appearance") or "")[:220],
                            "face_features": str(row.get("face_features") or "")[:160]}
-                          for row in rows[:16]]
+                          for index, row in enumerate(rows[:16])]
             prompt = (
-                "You are enriching a source-grounded person-centered memory. Inspect the attached "
-                "ordered video frames together with the time-coded speech transcript from this SAME "
-                "video. The transcript is noisy ASR evidence, not verified truth. Return one update "
-                "for existing visible candidates only; never invent or merge a person. Use explicit "
-                "introductions, forms of address, replies, turn order, gaze, gestures, and who is "
-                "visibly interacting to map spoken names/roles to a candidate. A vocative/form of "
-                "address (for example, \"Dad, ...\") identifies the listener, never the speaker; do "
-                "not assign that role to a candidate visibly speaking in the same utterance. If the "
-                "visible speaker is clear, record the reverse parent-child relation with medium "
-                "confidence and leave the addressed person unlinked unless that person is separately "
-                "visible and supported by interaction evidence. Do not assume that the speaker is the "
-                "camera wearer, and do not infer age, health, identity, or a family "
-                "role from appearance. A concise display_label may replace a visual alias only when "
-                "the transcript and scene support that match; otherwise keep the exact current entity. "
-                "Put stable or useful personal context (relationship, explicit plans/preferences, "
-                "self-reported background or health history, and meaningful interaction with the "
-                "camera wearer) on that person's card. Also summarize the shared social/event context "
-                "in scene_context (for example, a family visit during a holiday) and cite it with exact "
-                "context_evidence_quotes. Keep greetings only when they establish a relationship, "
-                "identity, or meaningful social context; never save a greeting as an isolated fact. "
-                "Do not return action-by-action facts or the transcript itself. Every update needs "
-                "one or more exact short quotes "
-                "copied from the transcript as evidence. Preserve the language of display labels used "
-                "in the quote (for example 姥姥, 妈妈); profile_context and relationships should be "
-                "concise. If identity-to-person matching is uncertain, leave display_label unchanged, "
-                "set confidence low, and state only the supported relationship without assigning it "
-                "to a visible person. Return JSON only: {\"people\":[{\"entity\":\"exact candidate "
-                "label\",\"display_label\":\"short supported name/role or unchanged label\","
-                "\"relationships\":[\"supported relationship\"],\"profile_context\":\"concise "
-                "person-centered context\",\"evidence_quotes\":[\"exact transcript quote\"],"
-                "\"confidence\":\"high|medium|low\",\"frame\":1}],"
-                "\"scene_context\":\"concise supported shared event context or empty\","
-                "\"context_evidence_quotes\":[\"exact quote\"]}. Candidate people: "
+                "Enrich a source-grounded, person-centered episodic memory by jointly inspecting "
+                "the ordered frames, visual event facts, and time-coded transcript from this same "
+                "clip. ASR may be noisy. Use only evidence in these inputs; do not use filenames, "
+                "benchmark labels, or outside assumptions. Resolve explicit identity and relationship "
+                "statements to an existing visible person when interaction evidence uniquely supports "
+                "the match. A direct self-identification such as 'I am your neighbor' identifies the "
+                "speaker, not the listener; link it to the sole visible person only when frames/event "
+                "facts show that person speaking or directly greeting/approaching the camera. Otherwise "
+                "preserve the unknown speaker. A vocative such as '姥姥过年好' or 'Dad, ...' identifies the "
+                "addressee, never the speaker; when exactly one person is visible, a direct greeting is "
+                "enough to link that visible recipient and does not require a separate thanking/speaker clue. "
+                "When multiple people are visible, link only if the recipient is singled out by a clear visual "
+                "cue such as approach, gaze, response, pointing, or an established face match; otherwise "
+                "preserve the unknown recipient. Do not invert roles. "
+                "Use medium confidence for a unique but non-diarized match, high only for an explicit "
+                "visual/text link. Never infer age, health, identity, or relationship from appearance. "
+                "Never infer mental states, needs, intentions, or advice from silence, hesitation, "
+                "facial expression, or context. Record observable hesitation as hesitation, without "
+                "claiming the person does not know what to say. You may summarize an explicitly spoken "
+                "occasion (such as a New Year greeting or '拜年') together with visible interaction. "
+                "Residential architecture, a gate, or decorations do not establish whose home a place "
+                "is; describe only the visible courtyard/doorway unless the transcript explicitly states "
+                "ownership. Keep personal context attached to the relevant person's card. "
+                "Candidate IDs are unique even when generic entity labels repeat: return the exact "
+                "candidate_id from the list for every person update; never identify someone by a repeated "
+                "label alone. Do not invent age descriptors such as elderly, old, or young. Return scene_context "
+                "as the user-facing content summary: one concise, natural, high-level sentence describing "
+                "the event or social purpose supported jointly by this clip's visuals and speech. It should "
+                "complement the detailed visual scene instead of repeating its play-by-play. Include an "
+                "explicit occasion or relationship when the transcript and visible interaction support it, "
+                "such as a family New Year visit or a neighbor greeting. Do not enumerate extracted facts, "
+                "repeat each utterance, or mention audio analysis, diarization, uncertainty bookkeeping, "
+                "or verification. If the evidence only supports a simple interaction, summarize that "
+                "interaction once in natural prose. Do not return a transcript dump or isolated greetings. "
+                "Every update and non-empty summary must cite exact short transcript quotes. Preserve "
+                "the quote's language in labels (姥姥, 妈妈, neighbor). Candidate people: "
                 + json.dumps(candidates, ensure_ascii=False)
                 + ". Frame map: " + json.dumps(frame_map, ensure_ascii=False)
+                + ". Visual event facts (not identity ground truth): "
+                + json.dumps([
+                    {key: row.get(key) for key in ("actor", "subject", "predicate", "value",
+                                                    "affected_people", "frame_index", "evidence")}
+                    for row in (visual_facts or []) if isinstance(row, dict)
+                ][:32], ensure_ascii=False)
+                + ". Return JSON only: {\"people\":[{\"candidate_id\":\"person_1\","
+                "\"entity\":\"exact candidate label\","
+                "\"display_label\":\"supported name/role or unchanged label\","
+                "\"relationships\":[\"supported relationship\"],"
+                "\"profile_context\":\"concise person-centered context\","
+                "\"evidence_quotes\":[\"exact quote\"],"
+                "\"confidence\":\"high|medium|low\",\"frame\":1}],"
+                "\"scene_context\":\"concise supported shared event context or empty\","
+                "\"context_evidence_quotes\":[\"exact quote\"]}. "
+                "A self-introduction assigns its role to the speaker only with unique visual "
+                "alignment; a vocative assigns its role to its listener only when a visible "
+                "recipient is unique. Otherwise leave candidate labels unchanged."
                 + ". Time-coded source transcript:\n" + speech
             )
             files = [("images", (f"profile_{index + 1}.jpg", frame["bytes"],
@@ -1486,11 +1166,32 @@ class InteractiveSession(PostWriteRetrievalMixin):
                 payload = json.loads(raw[start:end + 1])
                 if not isinstance(payload, dict) or not isinstance(payload.get("people"), list):
                     return rows, ""
+                payload["scene_context"] = _remove_visual_age_guess(_sanitize_social_context(
+                    payload.get("scene_context"), speech))
+                payload["people"] = [
+                    {**row, "profile_context": _remove_visual_age_guess(_sanitize_social_context(
+                        row.get("profile_context"), speech))}
+                    for row in payload["people"] if isinstance(row, dict)
+                ]
                 self.person_profile_cache.put_if_absent(cache_key, payload)
             except Exception:
                 return rows, ""
             finally:
                 self.perceiver._finish_request(request_id)
+
+        if isinstance(payload, dict):
+            payload = dict(payload)
+            payload["scene_context"] = _remove_visual_age_guess(_sanitize_social_context(
+                payload.get("scene_context"), speech))
+            clean_people = []
+            for update_row in payload.get("people") or []:
+                if not isinstance(update_row, dict):
+                    continue
+                clean_row = dict(update_row)
+                clean_row["profile_context"] = _remove_visual_age_guess(_sanitize_social_context(
+                    clean_row.get("profile_context"), speech))
+                clean_people.append(clean_row)
+            payload["people"] = clean_people
 
         def normalize_quote(value):
             return "".join(str(value or "").casefold().split()).strip("，。！？、,.!?;；:：\"'“”‘’")
@@ -1505,14 +1206,29 @@ class InteractiveSession(PostWriteRetrievalMixin):
             except (TypeError, ValueError):
                 continue
             transcript_lines.append((str(match.group("text") or "").strip(), start_s, end_s))
-        candidates = {str(row.get("entity") or "").strip().casefold(): row for row in rows
-                      if str(row.get("entity") or "").strip()}
+        candidate_rows = {f"person_{index + 1}": row
+                          for index, row in enumerate(rows[:16])}
+        rows_by_label = {}
+        for row in rows[:16]:
+            label = str(row.get("entity") or "").strip().casefold()
+            if label:
+                rows_by_label.setdefault(label, []).append(row)
+        updated_candidates = set()
         for update_row in payload.get("people") or []:
             if not isinstance(update_row, dict):
                 continue
-            target = candidates.get(str(update_row.get("entity") or "").strip().casefold())
+            candidate_id = str(update_row.get("candidate_id") or "").strip()
+            target = candidate_rows.get(candidate_id)
             if target is None:
+                matches = rows_by_label.get(
+                    str(update_row.get("entity") or "").strip().casefold(), [])
+                target = matches[0] if len(matches) == 1 else None
+                candidate_id = next((key for key, row in candidate_rows.items()
+                                     if row is target), "")
+            if target is None or (candidate_id and candidate_id in updated_candidates):
                 continue
+            if candidate_id:
+                updated_candidates.add(candidate_id)
             quotes = [str(value).strip()[:300] for value in update_row.get("evidence_quotes") or []
                       if isinstance(value, str) and str(value).strip()]
             matched = []
@@ -1551,6 +1267,14 @@ class InteractiveSession(PostWriteRetrievalMixin):
                 refs.append({"source_segment_id": str(source_segment_id or "")[:128],
                              "modality": "speech", "audio_start_s": round(start_s, 3),
                              "audio_end_s": round(end_s, 3)})
+            try:
+                frame_index = int(update_row.get("frame") or 0)
+            except (TypeError, ValueError):
+                frame_index = 0
+            if 1 <= frame_index <= len(image_frames):
+                refs.append({"source_segment_id": str(source_segment_id or "")[:128],
+                             "modality": "visual", "frame_index": frame_index,
+                             "frame_time_s": round(float(image_frames[frame_index - 1].get("at_s") or 0), 3)})
             unique_refs = []
             seen_refs = set()
             for ref in refs:
@@ -1597,11 +1321,11 @@ class InteractiveSession(PostWriteRetrievalMixin):
                   for row in (fields.get("person_observations") or [])
                   if isinstance(row, dict) and str(row.get("entity") or "").strip()][:8]
         person_visual = media.get("person_visuals") or {}
-        if people and int(person_visual.get("crop_schema") or 0) < 2:
+        if people and int(person_visual.get("crop_schema") or 0) < 9:
             return True
         for key, labels, label_key, role in (
             ("object_visuals", objects, "object", "object_crop"),
-            ("person_visuals", people, "person", "person_crop"),
+            ("person_visuals", people, "person", "face_crop"),
         ):
             labels = [label for label in labels if label]
             if not labels:
@@ -1609,7 +1333,7 @@ class InteractiveSession(PostWriteRetrievalMixin):
             visual = media.get(key)
             if not isinstance(visual, dict) or visual.get("status") in {"unavailable", "error"}:
                 return True
-            if key == "person_visuals" and int(visual.get("crop_schema") or 0) < 2:
+            if key == "person_visuals" and int(visual.get("crop_schema") or 0) < 9:
                 return True
             normalize = lambda value: " ".join(str(value or "").casefold().split())
             items = {normalize(item.get(label_key)): item
@@ -1624,7 +1348,7 @@ class InteractiveSession(PostWriteRetrievalMixin):
                     return True
                 if not any(
                     isinstance(ref, dict) and ref.get("asset")
-                    and (ref.get("visual_role") == role or ref.get("crop_bbox"))
+                    and ((key == "person_visuals" and ref.get("visual_role") == "face_crop" and ref.get("identity_verified") is True and str(ref.get("identity_assignment") or "").startswith("qwen_visual_anchor+")) or (key != "person_visuals" and (ref.get("visual_role") == role or ref.get("crop_bbox"))))
                     for ref in item.get("frame_refs") or []
                 ):
                     return True
@@ -1635,11 +1359,18 @@ class InteractiveSession(PostWriteRetrievalMixin):
                                      progress=None):
         """Retry failed person/object grounding for a previously written moment."""
         frames = list(frames or [])
-        if not frames:
-            frames = self.media_store.sample_visual_candidates(
-                video_path, clip_start, clip_end, source_id=dataset_id, count=7)
         visual_refs = media.get("visual_frames") or (
             [media.get("visual")] if media.get("visual") else [])
+        qwen_times = [float(ref.get("at_s")) for ref in visual_refs
+                      if isinstance(ref, dict) and ref.get("visual_role") == "qwen_input_frame"
+                      and ref.get("at_s") is not None]
+        if qwen_times:
+            frames = self.media_store.sample_visual_candidates(
+                video_path, clip_start, clip_end, source_id=dataset_id,
+                count=len(qwen_times), sample_times=qwen_times)
+        elif not frames:
+            frames = self.media_store.sample_visual_candidates(
+                video_path, clip_start, clip_end, source_id=dataset_id, count=7)
         if not frames:
             for ref in visual_refs[:3]:
                 path = Path(self.mem.memory_dir) / str(ref.get("asset") or "")
@@ -1659,9 +1390,14 @@ class InteractiveSession(PostWriteRetrievalMixin):
             highres_frames, face_detections = [], []
             face_detection_status, face_detection_error = "not_applicable", ""
             if kind == "person" and video_path and Path(video_path).is_file():
+                frame_times = [float(frame.get("at_s")) for frame in frames
+                               if frame.get("at_s") is not None]
+                face_times = expanded_face_sample_times(
+                    clip_start, clip_end, frame_times, max_samples=12)
                 highres_frames = self.media_store.sample_visual_candidates(
                     video_path, clip_start, clip_end, source_id=dataset_id,
-                    count=7, full_resolution=True)
+                    count=len(face_times) or 7, full_resolution=True,
+                    sample_times=face_times or None)
                 try:
                     face_detections = detect_faces(highres_frames) if highres_frames else []
                     face_detection_status = "completed"
@@ -1675,8 +1411,8 @@ class InteractiveSession(PostWriteRetrievalMixin):
             cache_labels = labels
             if kind == "person":
                 cache_labels = [
-                    "person-crop-v2-source-resolution-face: " + str(row.get("entity") or "").strip()
-                    + " | " + str(row.get("appearance") or "").strip() for row in labels]
+                    "person-crop-v8-qwen-anchor-cache-key-mutual-face-identity: " + str(row.get("entity") or "").strip()
+                    + " | " + str(row.get("appearance") or "").strip() + " | anchors=" + _person_anchor_cache_suffix(row) for row in labels]
             cache_key = self.grounding_cache.key(dataset_id, cache_labels, frames)
             if result is None:
                 result = self.grounding_cache.get(cache_key)[0]
@@ -1710,7 +1446,11 @@ class InteractiveSession(PostWriteRetrievalMixin):
             self.grounding_cache.put(cache_key, result)
             if source_key:
                 self.grounding_cache.put_source(source_key, result)
-            for item in result.get("items") or []:
+            result_items = result.get("items") or []
+            face_assignments = (_grounded_face_assignments(
+                result_items, frames, highres_frames, face_detections)
+                if kind == "person" and highres_frames else {})
+            for item_index, item in enumerate(result_items):
                 if not isinstance(item, dict):
                     continue
                 boxes = {}
@@ -1724,22 +1464,14 @@ class InteractiveSession(PostWriteRetrievalMixin):
                 indices = list(dict.fromkeys(
                     [index for index in item.get("frame_indices") or []
                      if isinstance(index, int)] + list(boxes)))
-                if kind == "person" and highres_frames:
-                    def face_frame_rank(index):
-                        if index not in boxes or not (1 <= index <= len(frames)):
-                            return (-1.0, -1.0)
-                        low_frame = frames[index - 1]
-                        ts = float(low_frame.get("at_s") or 0)
-                        hi = min(range(len(highres_frames)),
-                                 key=lambda j: abs(float(highres_frames[j].get("at_s") or 0)-ts))
-                        detections = face_detections[hi] if hi < len(face_detections) else []
-                        face = select_face_for_person(boxes[index], detections)
-                        if not face:
-                            return (0.0, 0.0)
-                        fb = face.get("bbox") or [0,0,0,0]
-                        area = max(0.0,(fb[2]-fb[0])*(fb[3]-fb[1]))
-                        return (1.0, float(face.get("confidence") or 0) * max(0.0001, area ** 0.5))
-                    indices.sort(key=face_frame_rank, reverse=True)
+                anchor_indices = set()
+                if kind == "person":
+                    for raw_index in item.get("anchor_frame_indices") or []:
+                        try:
+                            anchor_indices.add(int(raw_index))
+                        except (TypeError, ValueError):
+                            continue
+                    indices = [index for index in indices if index in anchor_indices]
                 refs = []
                 for index in indices:
                     if index not in boxes:
@@ -1749,46 +1481,33 @@ class InteractiveSession(PostWriteRetrievalMixin):
                         sample_time = float(frame.get("at_s") or 0)
                         hi_index = min(range(len(highres_frames)),
                                        key=lambda j: abs(float(highres_frames[j].get("at_s") or 0)-sample_time)) if highres_frames else -1
-                        if hi_index < 0:
+                        if hi_index < 0 or abs(float(highres_frames[hi_index].get("at_s") or 0) - sample_time) > 0.35:
+                            continue
+                        face_row = face_assignments.get((item_index, hi_index))
+                        if not face_row:
                             continue
                         source_frame = highres_frames[hi_index]
-                        person_image_bbox = list(bbox)
-                        candidate_face = select_face_for_person(
-                            bbox, face_detections[hi_index] if hi_index < len(face_detections) else [])
-                        if candidate_face:
-                            fb = candidate_face.get("bbox") or bbox
-                            person_image_bbox = [min(float(bbox[0]),float(fb[0])),
-                                                 min(float(bbox[1]),float(fb[1])),
-                                                 max(float(bbox[2]),float(fb[2])),
-                                                 max(float(bbox[3]),float(fb[3]))]
-                        crop = self.media_store.crop_visual_original(source_frame.get("bytes"), person_image_bbox, face=False)
-                        crop_ref = self.media_store._put("visual", crop, "jpg", len(crop or b"") + 1)
-                        if not crop_ref or not crop_ref.get("asset"):
-                            continue
-                        ref = {"asset": crop_ref["asset"], "bytes": int(crop_ref.get("bytes") or 0),
-                               "at_s": source_frame.get("at_s"),
-                               "source_id": source_frame.get("source_id") or dataset_id,
-                               "visual_role": "person_crop",
-                               "crop_bbox": [round(float(value), 5) for value in person_image_bbox],
-                               "grounding_bbox": [round(float(value), 5) for value in bbox],
-                               "image_quality": "source_resolution_jpeg_q96"}
-                        face_rows = face_detections[hi_index] if hi_index < len(face_detections) else []
-                        face_row = select_face_for_person(bbox, face_rows)
-                        if face_row:
-                            face_bbox = face_row.get("bbox")
-                            face_data = self.media_store.crop_visual_original(source_frame.get("bytes"), face_bbox, face=True)
-                            face_ref = self.media_store._put("visual", face_data, "jpg", len(face_data or b"") + 1)
-                            if face_ref and face_ref.get("asset"):
-                                refs.append({"asset": face_ref["asset"], "bytes": int(face_ref.get("bytes") or 0),
-                                             "at_s": source_frame.get("at_s"),
-                                             "source_id": source_frame.get("source_id") or dataset_id,
-                                             "visual_role": "face_crop",
-                                             "face_bbox": [round(float(value), 5) for value in face_bbox],
-                                             "detector": "YOLOv8n-Face",
-                                             "detector_confidence": round(float(face_row.get("confidence") or 0), 5),
-                                             "image_quality": "source_resolution_jpeg_q96"})
-                        refs.append(ref)
-                        break
+                        face_bbox = face_row.get("bbox") or []
+                        face_data = self.media_store.crop_visual_original(
+                            source_frame.get("bytes"), face_bbox, face=True)
+                        face_ref = self.media_store._put(
+                            "visual", face_data, "jpg", len(face_data or b"") + 1)
+                        if face_ref and face_ref.get("asset"):
+                            refs.append({
+                                "asset": face_ref["asset"],
+                                "bytes": int(face_ref.get("bytes") or 0),
+                                "at_s": source_frame.get("at_s"),
+                                "source_id": source_frame.get("source_id") or dataset_id,
+                                "source_asset": source_frame.get("asset"),
+                                "visual_role": "face_crop",
+                                "identity_verified": True,
+                                "identity_assignment": "qwen_visual_anchor+" + str(face_row.get("_identity_assignment") or "mutual_unique_face_geometry"),
+                                "face_bbox": [round(float(value), 5) for value in face_bbox],
+                                "detector": "YOLOv8n-Face",
+                                "detector_confidence": round(float(face_row.get("confidence") or 0), 5),
+                                "image_quality": "source_resolution_jpeg_q96",
+                            })
+                        continue
                     crop = self.media_store.crop_visual_candidate(frame.get("bytes"), bbox, 12_000)
                     crop_ref = self.media_store._put("visual", crop, "webp", 12_000)
                     if not crop_ref or not crop_ref.get("asset"):
@@ -1806,14 +1525,14 @@ class InteractiveSession(PostWriteRetrievalMixin):
                 elif item.get("status") not in {"not_visible", "uncertain"}:
                     item["status"] = "uncertain"
                     item["error"] = "本地裁剪器未能生成局部画面；已保留来源画面"
-            result["crop_schema"] = 2 if kind == "person" else 1
+            result["crop_schema"] = 9 if kind == "person" else 1
             if kind == "person":
                 result["face_detection_model"] = "YOLOv8n-Face"
                 result["face_detection_device"] = os.environ.get("MEMORY_FACE_GPU", "cuda:0")
                 result["face_detection_status"] = face_detection_status
                 if face_detection_error:
                     result["face_detection_error"] = face_detection_error
-            result["crop_method"] = ("local person proposal + source-resolution JPEG; GPU YOLOv8n-Face face crop"
+            result["crop_method"] = ("local person proposal + source-resolution JPEG; dense GPU YOLOv8n-Face crops between Qwen frames"
                                      if kind == "person" else
                                      "grid proposal + best-ranked CLIP region (no score gate) with padded WebP crop")
             return result
@@ -1834,8 +1553,33 @@ class InteractiveSession(PostWriteRetrievalMixin):
             media["person_visuals"] = run_grounding("person", person_rows, "person")
         return media
 
+    def _materialize_qwen_input_frames(self, result, video_path, clip_start, clip_end):
+        """Return the exact inference payload, or re-decode the cached input times."""
+        frame_times = result.get("frame_times_s") or []
+        frame_bytes = result.get("qwen_input_frame_bytes") or []
+        if len(frame_bytes) != len(frame_times) or not frame_bytes:
+            if not video_path or not Path(video_path).is_file():
+                return []
+            frame_bytes, recovered_times = extract_frames(
+                Path(video_path), clip_start, clip_end, self.perceiver.num_frames,
+                return_times=True, sample_times=frame_times or None)
+            frame_times = recovered_times
+        return [
+            {"bytes": data, "at_s": frame_times[index], "frame_index": index + 1}
+            for index, data in enumerate(frame_bytes)
+            if index < len(frame_times) and isinstance(data, bytes) and data
+        ]
+
+    def _has_complete_qwen_input_gallery(self, media):
+        expected = max(1, int(getattr(self.perceiver, "num_frames", 6) or 6))
+        refs = (media.get("visual_frames") or []) if isinstance(media, dict) else []
+        actual = sum(1 for ref in refs if isinstance(ref, dict)
+                     and ref.get("visual_role") == "qwen_input_frame"
+                     and ref.get("asset"))
+        return actual == expected
+
     def _refresh_existing_multimodal(self, m, moment_id, fields, source_provenance,
-                                     progress=None):
+                                     qwen_input_frames=None, progress=None):
         """Refresh source-linked context evidence without requiring model inference.
 
         Existing person/object crops are retained only when their exact entity labels
@@ -1846,6 +1590,7 @@ class InteractiveSession(PostWriteRetrievalMixin):
             return False
         old_media = stored.get("multimodal") or {}
         if (old_media.get("capture_version") == CAPTURE_VERSION
+                and self._has_complete_qwen_input_gallery(old_media)
                 and not self._entity_crop_gap(old_media, fields)):
             return False
         video_path = video_path_of(m)
@@ -1859,22 +1604,17 @@ class InteractiveSession(PostWriteRetrievalMixin):
                 recent_media=[x.get("multimodal") for x in
                               list(self.mem.memory.get("layer7", {}).get("moments", {}).values())[-100:]],
                 source_provenance=source_provenance,
+                qwen_input_frames=qwen_input_frames,
             )
             if not isinstance(media, dict) or media.get("capture_status") != "captured":
                 return False
+            _attach_location_visual_evidence(media, fields)
             context_frames = self.media_store.sample_visual_candidates(
                 video_path, clip_start, clip_end,
                 source_id=str(m.get("id") or ""), count=7)
-            if context_frames:
-                media["entity_visuals"] = self.media_store.capture_context_entities(
-                    context_frames, fields, source_id=str(m.get("id") or ""),
-                    clip_start_s=clip_start,
-                )
-            else:
-                media["entity_visuals"] = {
-                    "schema": 1, "status": "no_visual_evidence",
-                    "assets": [], "items": [],
-                }
+            # Scene/location/activity/event facts stay textual with provenance.
+            # entity_visuals is rebuilt below from person/object crops only.
+            media["entity_visuals"] = {"schema": 2, "assets": [], "items": []}
             current_objects = {
                 self._entity_key(x.get("name") if isinstance(x, dict) else x)
                 for x in fields.get("objects") or []
@@ -1890,13 +1630,14 @@ class InteractiveSession(PostWriteRetrievalMixin):
                 old = old_media.get(key)
                 if not isinstance(old, dict):
                     continue
-                role = "object_crop" if key == "object_visuals" else "person_crop"
+                role = "object_crop" if key == "object_visuals" else "face_crop"
                 kept = [dict(item) for item in old.get("items") or []
                         if isinstance(item, dict)
                         and self._entity_key(item.get(label_key)) in allowed
                         and (item.get("status") == "not_visible" or any(
                             isinstance(ref, dict) and ref.get("asset")
-                            and (ref.get("visual_role") == role or ref.get("crop_bbox"))
+                            and ref.get("visual_role") == role
+                            and (key != "person_visuals" or (role == "face_crop" and ref.get("identity_verified") is True and str(ref.get("identity_assignment") or "").startswith("qwen_visual_anchor+")))
                             for ref in item.get("frame_refs") or []))]
                 if kept:
                     media[key] = {**old, "items": kept}
@@ -1909,13 +1650,15 @@ class InteractiveSession(PostWriteRetrievalMixin):
                                    ("person_visuals", "person")):
                 previous = old_media.get(key) or {}
                 current = media.get(key) or {}
-                role = "object_crop" if key == "object_visuals" else "person_crop"
-                merged = {
+                role = "object_crop" if key == "object_visuals" else "face_crop"
+                legacy_person_gallery = key == "person_visuals" and int(previous.get("crop_schema") or 0) < 9
+                merged = {} if legacy_person_gallery else {
                     self._entity_key(item.get(label_key)): dict(item)
                     for item in previous.get("items") or [] if isinstance(item, dict)
                     and (item.get("status") == "not_visible" or any(
                         isinstance(ref, dict) and ref.get("asset")
-                        and (ref.get("visual_role") == role or ref.get("crop_bbox"))
+                        and ref.get("visual_role") == role
+                        and (key != "person_visuals" or (role == "face_crop" and ref.get("identity_verified") is True and str(ref.get("identity_assignment") or "").startswith("qwen_visual_anchor+")))
                         for ref in item.get("frame_refs") or []))
                 }
                 for item in current.get("items") or []:
@@ -1924,7 +1667,8 @@ class InteractiveSession(PostWriteRetrievalMixin):
                     label = self._entity_key(item.get(label_key))
                     has_crop = any(
                         isinstance(ref, dict) and ref.get("asset")
-                        and (ref.get("visual_role") == role or ref.get("crop_bbox"))
+                        and ref.get("visual_role") == role
+                        and (key != "person_visuals" or (role == "face_crop" and ref.get("identity_verified") is True and str(ref.get("identity_assignment") or "").startswith("qwen_visual_anchor+")))
                         for ref in item.get("frame_refs") or [])
                     if label and (has_crop or item.get("status") == "not_visible"
                                   or label not in merged):
@@ -1973,9 +1717,11 @@ class InteractiveSession(PostWriteRetrievalMixin):
         stored_multimodal = stored.get("multimodal") or {}
         stale_multimodal = (
             stored_multimodal.get("capture_version") != CAPTURE_VERSION
+            or not self._has_complete_qwen_input_gallery(stored_multimodal)
             or self._entity_crop_gap(stored_multimodal, stored)
         )
-        if not force and not stale_version and not stale_multimodal:
+        stale_summary = old.get("content_summary_version") != CONTENT_SUMMARY_VERSION
+        if not force and not stale_version and not stale_multimodal and not stale_summary:
             return None
         update("cache_refresh", "正在核验缓存版本，并刷新同一视频片段的已有记忆")
         def perception_progress(event):
@@ -2035,6 +1781,50 @@ class InteractiveSession(PostWriteRetrievalMixin):
         speech_facts = [copy.deepcopy(row) for row in previous_facts
                         if isinstance(row, dict) and row.get("modality") == "speech"]
         fields["temporal_facts"] = visual_facts + speech_facts
+        if stale_summary:
+            # Existing records normally bypass the fresh-ingest path. Rebuild the
+            # user-facing summary here too, using cached source audio and the same
+            # joint visual/speech profile enrichment as a new episode.
+            summary_audio = self._transcribe_audio_evidence(
+                stored_multimodal, dataset_id, video_path=video_path,
+                clip_start_s=clip_start, clip_end_s=clip_end,
+                progress=lambda stage, message: update(stage, message),
+            )
+            if summary_audio:
+                fields["source_evidence"] = summary_audio
+                prior_keys = set()
+                for fact in fields["temporal_facts"]:
+                    if not isinstance(fact, dict) or fact.get("modality") != "speech":
+                        continue
+                    ref = fact.get("evidence_ref") if isinstance(fact.get("evidence_ref"), dict) else {}
+                    prior_keys.add((str(fact.get("predicate") or ""),
+                                    float(ref.get("audio_start_s") or 0),
+                                    float(ref.get("audio_end_s") or 0),
+                                    str(fact.get("evidence") or "")))
+                for fact in _extract_explicit_speech_facts(summary_audio, dataset_id):
+                    ref = fact.get("evidence_ref") if isinstance(fact.get("evidence_ref"), dict) else {}
+                    key = (str(fact.get("predicate") or ""),
+                           float(ref.get("audio_start_s") or 0),
+                           float(ref.get("audio_end_s") or 0),
+                           str(fact.get("evidence") or ""))
+                    if key not in prior_keys:
+                        fields["temporal_facts"].append(fact)
+                        prior_keys.add(key)
+                observations = fields.get("person_observations") or []
+                if observations:
+                    profile_frames = self._materialize_qwen_input_frames(
+                        result, video_path, clip_start, clip_end)
+                    observations, shared_context = self._enrich_person_profiles_from_speech(
+                        observations, summary_audio, profile_frames, dataset_id,
+                        visual_facts=visual_facts,
+                        cancel_event=self._active_step_cancel,
+                        progress=lambda stage, message: update(stage, message),
+                    )
+                    fields["person_observations"] = observations
+                    if shared_context:
+                        fields["interaction_details"] = shared_context[:700]
+            if not fields.get("interaction_details"):
+                fields["interaction_details"] = str(stored.get("interaction_details") or "")[:700]
         normalize_object_transition_facts(fields)
         source_day = next((part.upper() for part in dataset_id.split("_")
                            if part.upper().startswith("DAY") and part[3:].isdigit()), "")
@@ -2059,14 +1849,15 @@ class InteractiveSession(PostWriteRetrievalMixin):
             "list_parser_version": result.get("list_parser_version"),
             "multimodal_capture_version": CAPTURE_VERSION,
             "extraction_batch_id": old.get("extraction_batch_id") or self.extraction_batch_id,
+            "content_summary_version": CONTENT_SUMMARY_VERSION,
         }
         updates = {
             "scene": fields.get("scene") or "",
             "user_action": fields.get("user_action") or "",
-            "interaction_details": fields.get("interaction_details") or "",
+            "interaction_details": fields.get("interaction_details") or stored.get("interaction_details") or "",
             "person_observations": fields.get("person_observations") or [],
             "temporal_facts": fields.get("temporal_facts") or [],
-            "source_evidence": "",
+            "source_evidence": fields.get("source_evidence") or stored.get("source_evidence") or "",
             "source_time": source_time,
             "location": fields.get("location") or "",
             "activity": fields.get("activity") or "",
@@ -2081,8 +1872,11 @@ class InteractiveSession(PostWriteRetrievalMixin):
             moment_id, updates, source_provenance, expected_segment_id=dataset_id)
         multimodal_refreshed = False
         if stale_multimodal:
+            qwen_input_frames = self._materialize_qwen_input_frames(
+                result, video_path, clip_start, clip_end)
             multimodal_refreshed = self._refresh_existing_multimodal(
                 m, moment_id, fields, source_provenance,
+                qwen_input_frames=qwen_input_frames,
                 progress=lambda stage, message: update(stage, message))
         result["multimodal_refreshed"] = multimodal_refreshed
         if not refreshed and not multimodal_refreshed:
@@ -2098,6 +1892,137 @@ class InteractiveSession(PostWriteRetrievalMixin):
         fields["source_provenance"] = source_provenance
         self._qwen_fields[dataset_id] = fields
         return result, fields
+
+    def _reconcile_existing_speech_identity(self, moment_id, source_segment_id):
+        """Reapply source-backed speech-to-person linking when reusing old records.
+
+        Existing moment IDs bypass the fresh-ingest branch, so older records could
+        keep a transcript without ever binding its explicit role to the visible
+        person. This path only uses stored transcript/facts and stored visual refs.
+        """
+        moment = self.mem.memory.get("layer7", {}).get("moments", {}).get(moment_id)
+        if not isinstance(moment, dict):
+            return False
+        source_id = str(source_segment_id or "")[:128]
+        existing_facts = [dict(row) for row in moment.get("temporal_facts") or []
+                          if isinstance(row, dict)]
+        transcript = str(moment.get("source_evidence") or "")
+        speech_facts = (_extract_explicit_speech_facts(transcript, source_id)
+                        if transcript else [])
+        if not speech_facts:
+            speech_facts = [row for row in existing_facts
+                            if str(row.get("modality") or "").casefold() == "speech"]
+        if not speech_facts:
+            return False
+
+        observations = [dict(row) for row in moment.get("person_observations") or []
+                        if isinstance(row, dict)]
+        media = moment.get("multimodal") or {}
+        person_visuals = media.get("person_visuals") or {} if isinstance(media, dict) else {}
+        provenance = moment.get("source_provenance") or {}
+        clip_start = provenance.get("clip_start_s")
+        clip_end = provenance.get("clip_end_s")
+        for row in observations:
+            current_ref = row.get("evidence_ref")
+            aliases = [item for item in row.get("spoken_aliases") or []
+                       if isinstance(item, dict)]
+            if (not row.get("visual_entity")
+                    and any(str(item.get("alias") or "").strip().casefold()
+                            == str(row.get("entity") or "").strip().casefold()
+                            and item.get("status") == "probable_visual_match"
+                            and item.get("confidence") in {"medium", "high"}
+                            for item in aliases)):
+                # Older rows may already have been renamed before the visual label
+                # anchor was persisted. Keep the present observed label as that anchor.
+                row["visual_entity"] = str(row.get("entity") or "")[:120]
+            refs = list(row.get("evidence_refs") or [])
+            if isinstance(current_ref, dict) and current_ref not in refs:
+                refs.append(current_ref)
+            if isinstance(current_ref, dict) and current_ref.get("modality") == "visual":
+                continue
+            visual_ref = None
+            entity = str(row.get("entity") or "").strip().casefold()
+            for visual in person_visuals.get("items") or []:
+                if not isinstance(visual, dict):
+                    continue
+                if str(visual.get("person") or "").strip().casefold() not in {entity, str(row.get("visual_entity") or "").strip().casefold()}:
+                    continue
+                crop_refs = [ref for ref in visual.get("frame_refs") or []
+                             if isinstance(ref, dict) and ref.get("visual_role") == "face_crop"
+                             and ref.get("identity_verified") is True and str(ref.get("identity_assignment") or "").startswith("qwen_visual_anchor+")]
+                crop_refs.sort(key=lambda ref: (ref.get("visual_role") != "face_crop",
+                                                -(float(ref.get("detector_confidence") or 0))))
+                if crop_refs:
+                    ref = crop_refs[0]
+                    visual_ref = {
+                        "source_segment_id": source_id, "modality": "visual",
+                        "frame_time_s": ref.get("at_s"),
+                    }
+                    if isinstance(row.get("frame_index"), int):
+                        visual_ref["frame_index"] = row["frame_index"]
+                    if clip_start is not None:
+                        visual_ref["clip_start_s"] = clip_start
+                    if clip_end is not None:
+                        visual_ref["clip_end_s"] = clip_end
+                    break
+            if visual_ref is None and (row.get("frame_index") is not None or row.get("frame_time_s") is not None):
+                visual_ref = {"source_segment_id": source_id, "modality": "visual"}
+                if isinstance(row.get("frame_index"), int):
+                    visual_ref["frame_index"] = row["frame_index"]
+                if row.get("frame_time_s") is not None:
+                    visual_ref["frame_time_s"] = row["frame_time_s"]
+                if clip_start is not None:
+                    visual_ref["clip_start_s"] = clip_start
+                if clip_end is not None:
+                    visual_ref["clip_end_s"] = clip_end
+            if visual_ref:
+                row["evidence_ref"] = visual_ref
+                if refs:
+                    row["evidence_refs"] = [visual_ref] + [ref for ref in refs if ref != visual_ref]
+
+        visual_facts = [row for row in existing_facts
+                        if str(row.get("modality") or "").casefold() == "visual"]
+        identity_links = attach_spoken_identity(observations, speech_facts, visual_facts)
+        if not identity_links.get("linked") and not any(
+                row.get("evidence_ref", {}).get("modality") == "visual" for row in observations):
+            return False
+
+        combined_facts = []
+        seen = set()
+        for row in existing_facts + speech_facts:
+            ref = row.get("evidence_ref") if isinstance(row.get("evidence_ref"), dict) else {}
+            signature = (row.get("subject_type"), row.get("subject"), row.get("predicate"),
+                         row.get("evidence"), ref.get("audio_start_s"), ref.get("audio_end_s"),
+                         row.get("frame_time_s"))
+            if signature in seen:
+                continue
+            seen.add(signature)
+            combined_facts.append(row)
+        old_entities = [str(row.get("visual_entity") or row.get("entity") or "").strip()
+                        for row in moment.get("person_observations") or [] if isinstance(row, dict)]
+        new_entities = [str(row.get("entity") or "").strip() for row in observations]
+        label_map = {old.casefold(): new for old, new in zip(old_entities, new_entities)
+                     if old and new and old.casefold() != new.casefold()}
+        people = person_labels_from_observations(moment.get("people") or [], observations)
+        updates = {
+            "person_observations": observations,
+            "people": people,
+            "temporal_facts": combined_facts,
+        }
+        if label_map and isinstance(media, dict):
+            def remap_labels(value):
+                if isinstance(value, str):
+                    return label_map.get(value.strip().casefold(), value)
+                if isinstance(value, list):
+                    return [remap_labels(item) for item in value]
+                if isinstance(value, dict):
+                    return {key: remap_labels(item) for key, item in value.items()}
+                return value
+            updates["multimodal"] = remap_labels(media)
+        before = {key: moment.get(key) for key in updates}
+        if before == updates:
+            return False
+        return bool(self.mem.update(moment_id, updates))
 
     def _add_one(self, m, force=False, progress=None):
         """用 Qwen 的感知产出写入一条记忆，返回 (moment_id, info)。"""
@@ -2154,6 +2079,8 @@ class InteractiveSession(PostWriteRetrievalMixin):
                     "stage_timings_ms": info["stage_timings_ms"],
                     "retrieval_cache": ((info.get("retrieval_meta") or {}).get("cache") or {}).get("status"),
                     "retrieval_stage_timings_ms": ((info.get("retrieval_meta") or {}).get("stage_timings_ms") or {}),
+                    "retrieval_wrapper_stage_timings_ms": ((info.get("retrieval_meta") or {}).get("wrapper_stage_timings_ms") or {}),
+                    "retrieval_wrapper_elapsed_ms": ((info.get("retrieval_meta") or {}).get("wrapper_elapsed_ms")),
                 }
                 path = Path(self.mem.memory_dir) / "processing_latency_log.jsonl"
                 with path.open("a", encoding="utf-8") as handle:
@@ -2180,6 +2107,8 @@ class InteractiveSession(PostWriteRetrievalMixin):
                 cached = refresh_result
                 if refresh_result.get("stale_cache_fallback"):
                     refreshed_existing = False
+            identity_refreshed = self._reconcile_existing_speech_identity(
+                existing_mid, dataset_id)
             info = {
                 "dataset_id": dataset_id,
                 "moment_id": existing_mid,
@@ -2192,12 +2121,15 @@ class InteractiveSession(PostWriteRetrievalMixin):
                 "stale_cache_fallback": bool(cached.get("stale_cache_fallback")),
                 "quality_warning": cached.get("quality_warning", ""),
                 "multimodal_refreshed": bool(cached.get("multimodal_refreshed")),
+                "identity_refreshed": identity_refreshed,
                 "eval": golden_eval(fields, m.get("ground_truth", {})),
             }
             if refreshed_existing and cached.get("multimodal_refreshed"):
                 message = "已更新同一片段的记忆与多模态证据，没有重复新增"
             elif refreshed_existing:
                 message = "已用当前缓存更新同一片段的记忆，没有重复新增"
+            elif identity_refreshed:
+                message = "已根据已存语音与画面证据补齐人物身份，没有重复新增"
             else:
                 message = "这条记忆已在当前会话中，复用现有记录"
             update("cached_memory", message, self._progress_text(m, info))
@@ -2269,6 +2201,7 @@ class InteractiveSession(PostWriteRetrievalMixin):
             "perception_prompt_version": r.get("prompt_version") or PROMPT_VERSION,
             "list_parser_version": r.get("list_parser_version") or LIST_PARSER_VERSION,
             "multimodal_capture_version": CAPTURE_VERSION,
+            "content_summary_version": CONTENT_SUMMARY_VERSION,
         }
         if r.get("stale_cache_fallback"):
             source_provenance["perception_status"] = "stale_cache_fallback"
@@ -2350,19 +2283,23 @@ class InteractiveSession(PostWriteRetrievalMixin):
         shared_candidate_frames = None
         if video_path and os.environ.get("MEMORY_CAPTURE_MULTIMODAL", "1") != "0":
             try:
-                if self.media_store.size_bytes() + 48_000 > self.media_store.asset_budget:
+                if self.media_store.size_bytes() + 48 * 1024 * 1024 > self.media_store.asset_budget:
                     self.mem.compact_multimodal_assets(
-                        max(0, self.media_store.asset_budget - 30_000))
+                        max(0, self.media_store.asset_budget - 48 * 1024 * 1024))
                     self.media_store._bytes_cached = None
                 media_capture_started = time.perf_counter()
+                qwen_input_frames = self._materialize_qwen_input_frames(
+                    r, video_path, clip_start, clip_end)
                 multimodal = self.media_store.capture(
                     video_path, clip_start, clip_end,
                     source_id=dataset_id, fields=f,
                     recent_media=[x.get("multimodal") for x in
                                   list(self.mem.memory["layer7"]["moments"].values())[-100:]],
                     source_provenance=source_provenance,
+                    qwen_input_frames=qwen_input_frames,
                 )
                 record_duration("video_decode_and_multimodal_capture_ms", media_capture_started)
+                _attach_location_visual_evidence(multimodal, f)
                 object_labels, skipped_object_crops = select_object_crop_candidates(
                     f.get("objects") or [], f.get("temporal_facts") or [])
                 multimodal["object_crop_policy"] = {
@@ -2495,8 +2432,6 @@ class InteractiveSession(PostWriteRetrievalMixin):
                                 saved_by_index[index] = saved
                         if saved_by_index:
                             selected_refs = list(saved_by_index.values())
-                            multimodal["visual_frames"] = selected_refs
-                            multimodal["visual"] = dict(selected_refs[len(selected_refs) // 2])
                             multimodal["visual_sampling"] = {
                                 "candidate_frames": len(candidate_frames),
                                 "retained_frames": len(selected_refs),
@@ -2606,17 +2541,51 @@ class InteractiveSession(PostWriteRetrievalMixin):
                     person_pipeline_started = time.perf_counter()
                     update("person_visual_grounding_lookup", "正在检查人物局部画面的持久缓存")
                     person_frame_sample_started = time.perf_counter()
-                    person_frames = shared_candidate_frames
-                    reused_object_frames = bool(person_frames)
+                    qwen_frame_times = [
+                        float(ref.get("at_s")) for ref in visual_refs
+                        if isinstance(ref, dict)
+                        and ref.get("visual_role") == "qwen_input_frame"
+                        and ref.get("at_s") is not None
+                    ]
+                    # Run local face/CLIP matching at the exact six Qwen input
+                    # timestamps, then decode those same instants at source resolution.
+                    person_frames = self.media_store.sample_visual_candidates(
+                        video_path, clip_start, clip_end, source_id=dataset_id,
+                        count=len(qwen_frame_times) or 7,
+                        sample_times=qwen_frame_times or None)
+                    reused_object_frames = False
                     if not person_frames:
-                        person_frames = self.media_store.sample_visual_candidates(
+                        person_frames = shared_candidate_frames or self.media_store.sample_visual_candidates(
                             video_path, clip_start, clip_end, source_id=dataset_id, count=7)
+                    matched_times = [float(frame.get("at_s")) for frame in person_frames
+                                     if frame.get("at_s") is not None]
+                    face_sample_times = expanded_face_sample_times(
+                        clip_start, clip_end, matched_times, max_samples=12)
                     person_highres_frames = self.media_store.sample_visual_candidates(
                         video_path, clip_start, clip_end, source_id=dataset_id,
-                        count=7, full_resolution=True)
+                        count=len(face_sample_times) or 7, full_resolution=True,
+                        sample_times=face_sample_times or None)
+                    face_cache_key = None
                     try:
-                        person_face_detections = detect_faces(person_highres_frames) if person_highres_frames else []
-                        face_detection_status = "completed"
+                        face_cache_key = self.grounding_cache.key(
+                            dataset_id, ["yolov8n-face-detections-v2-dense"], person_highres_frames)
+                        cached_faces, face_lookup_ms = self.grounding_cache.get_faces(face_cache_key)
+                        if isinstance(cached_faces, dict):
+                            person_face_detections = cached_faces["faces"]
+                            face_detection_status = "cache_hit"
+                            operation_ms["face_detection_cache_hit"] = True
+                            operation_ms["face_detection_cache_lookup_ms"] = face_lookup_ms
+                        else:
+                            person_face_detections = detect_faces(person_highres_frames) if person_highres_frames else []
+                            face_detection_status = "completed"
+                            operation_ms["face_detection_cache_hit"] = False
+                            if face_cache_key and person_highres_frames:
+                                self.grounding_cache.put_faces(face_cache_key, {
+                                    "schema": 1, "status": "completed",
+                                    "model": "YOLOv8n-Face",
+                                    "frame_count": len(person_highres_frames),
+                                    "faces": person_face_detections,
+                                })
                         face_detection_error = ""
                     except Exception as face_exc:
                         person_face_detections = []
@@ -2638,8 +2607,8 @@ class InteractiveSession(PostWriteRetrievalMixin):
                         # Include the appearance hint so repeated clip-local labels cannot
                         # accidentally reuse a crop for a different visually described person.
                         person_cache_labels = [
-                            "person-crop-v1: " + str(row.get("entity") or "").strip()
-                            + " | " + str(row.get("appearance") or "").strip()
+                            "person-crop-v8-qwen-anchor-cache-key-mutual-face-identity: " + str(row.get("entity") or "").strip()
+                            + " | " + str(row.get("appearance") or "").strip() + " | anchors=" + _person_anchor_cache_suffix(row)
                             for row in person_rows[:8]
                         ]
                         person_key = self.grounding_cache.key(
@@ -2681,28 +2650,26 @@ class InteractiveSession(PostWriteRetrievalMixin):
                         self.grounding_cache.put(person_key, person_grounding)
 
                     person_crop_started = time.perf_counter()
-                    for item in person_grounding.get("items") or []:
+                    person_items = person_grounding.get("items") or []
+                    face_assignments = _grounded_face_assignments(
+                        person_items, person_frames, person_highres_frames, person_face_detections)
+                    for item_index, item in enumerate(person_items):
                         boxes = {int(box.get("frame_index")): box.get("bbox")
                                  for box in item.get("frame_boxes") or []
                                  if isinstance(box, dict)
                                  and isinstance(box.get("frame_index"), int)
                                  and isinstance(box.get("bbox"), list)}
-                        requested = []
-                        for index in item.pop("frame_indices", []):
-                            if isinstance(index, int) and index not in requested:
-                                requested.append(index)
-                        for index in boxes:
-                            if index not in requested:
-                                requested.append(index)
-                        candidates = []
-                        for index in requested[:7]:
+                        anchors = set()
+                        for raw_index in item.get("anchor_frame_indices") or []:
+                            try:
+                                anchors.add(int(raw_index))
+                            except (TypeError, ValueError):
+                                continue
+                        frame_refs = []
+                        for index in sorted(anchors.intersection(boxes)):
                             if not (1 <= index <= len(person_frames)):
                                 continue
-                            bbox = boxes.get(index)
-                            if not bbox:
-                                continue
-                            frame = person_frames[index - 1]
-                            ground_time = float(frame.get("at_s") or 0)
+                            ground_time = float(person_frames[index - 1].get("at_s") or 0)
                             highres_index = min(
                                 range(len(person_highres_frames)),
                                 key=lambda j: abs(float(person_highres_frames[j].get("at_s") or 0)-ground_time),
@@ -2710,72 +2677,47 @@ class InteractiveSession(PostWriteRetrievalMixin):
                             if highres_index < 0:
                                 continue
                             source_frame = person_highres_frames[highres_index]
-                            face_rows = (person_face_detections[highres_index]
-                                         if highres_index < len(person_face_detections) else [])
-                            face_row = select_face_for_person(bbox, face_rows)
-                            face_rank = 0.0
-                            if face_row:
-                                fb = face_row.get("bbox") or [0,0,0,0]
-                                face_rank = float(face_row.get("confidence") or 0) * max(
-                                    0.0001, ((fb[2]-fb[0])*(fb[3]-fb[1])) ** 0.5)
-                            candidates.append((bool(face_row), face_rank, source_frame, bbox, face_row))
-                        frame_refs = []
-                        if candidates:
-                            candidates.sort(key=lambda row: (row[0], row[1]), reverse=True)
-                            _has_face, _face_rank, source_frame, bbox, face_row = candidates[0]
-                            person_image_bbox = list(bbox)
-                            if face_row:
-                                fb = face_row.get("bbox") or bbox
-                                person_image_bbox = [min(float(bbox[0]),float(fb[0])),
-                                                     min(float(bbox[1]),float(fb[1])),
-                                                     max(float(bbox[2]),float(fb[2])),
-                                                     max(float(bbox[3]),float(fb[3]))]
-                            crop_bytes = self.media_store.crop_visual_original(
-                                source_frame.get("bytes"), person_image_bbox, face=False)
-                            crop_ref = self.media_store._put(
-                                "visual", crop_bytes, "jpg", len(crop_bytes or b"") + 1)
-                            if crop_ref and crop_ref.get("asset"):
-                                frame_ref = {
-                                    "asset": crop_ref["asset"], "bytes": int(crop_ref.get("bytes") or 0),
-                                    "at_s": source_frame.get("at_s"),
-                                    "source_id": source_frame.get("source_id") or dataset_id,
-                                    "visual_role": "person_crop",
-                                    "crop_bbox": [round(float(value), 5) for value in person_image_bbox],
-                                    "grounding_bbox": [round(float(value), 5) for value in bbox],
-                                    "image_quality": "source_resolution_jpeg_q96",
-                                }
-                                if face_row:
-                                    face_bbox = face_row.get("bbox")
-                                    face_bytes = self.media_store.crop_visual_original(
-                                        source_frame.get("bytes"), face_bbox, face=True)
-                                    face_ref = self.media_store._put(
-                                        "visual", face_bytes, "jpg", len(face_bytes or b"") + 1)
-                                    if face_ref and face_ref.get("asset"):
-                                        frame_refs.append({
-                                            "asset": face_ref["asset"], "bytes": int(face_ref.get("bytes") or 0),
-                                            "at_s": source_frame.get("at_s"),
-                                            "source_id": source_frame.get("source_id") or dataset_id,
-                                            "visual_role": "face_crop",
-                                            "face_bbox": [round(float(value), 5) for value in face_bbox],
-                                            "detector": "YOLOv8n-Face",
-                                            "detector_confidence": round(float(face_row.get("confidence") or 0), 5),
-                                            "image_quality": "source_resolution_jpeg_q96",
-                                        })
-                                frame_refs.append(frame_ref)
+                            if abs(float(source_frame.get("at_s") or 0) - ground_time) > 0.35:
+                                continue
+                            face_row = face_assignments.get((item_index, highres_index))
+                            if not face_row:
+                                continue
+                            face_bbox = face_row.get("bbox") or []
+                            face_bytes = self.media_store.crop_visual_original(
+                                source_frame.get("bytes"), face_bbox, face=True)
+                            face_ref = self.media_store._put(
+                                "visual", face_bytes, "jpg", len(face_bytes or b"") + 1)
+                            if not face_ref or not face_ref.get("asset"):
+                                continue
+                            frame_refs.append({
+                                "asset": face_ref["asset"],
+                                "bytes": int(face_ref.get("bytes") or 0),
+                                "at_s": source_frame.get("at_s"),
+                                "source_id": source_frame.get("source_id") or dataset_id,
+                                "visual_role": "face_crop",
+                                "identity_verified": True,
+                                "identity_assignment": "qwen_visual_anchor+" + str(face_row.get("_identity_assignment") or "mutual_unique_face_geometry"),
+                                "source_asset": source_frame.get("asset"),
+                                "face_bbox": [round(float(value), 5) for value in face_bbox],
+                                "detector": "YOLOv8n-Face",
+                                "detector_confidence": round(float(face_row.get("confidence") or 0), 5),
+                                "image_quality": "source_resolution_jpeg_q96",
+                            })
                         item["frame_refs"] = frame_refs
                         item["crop_count"] = len(frame_refs)
                         item.pop("frame_boxes", None)
+                        item.pop("frame_indices", None)
                         if not frame_refs and item.get("status") not in {"uncertain", "not_visible"}:
                             item["status"] = "uncertain"
-                            item["error"] = "本地裁剪器未能生成局部画面；已保留来源画面"
-                    person_grounding["crop_schema"] = 2
+                            item["error"] = "No unique face match on Qwen-anchored frames; source frames remain available"
+                    person_grounding["crop_schema"] = 9
                     person_grounding["face_detection_model"] = "YOLOv8n-Face"
                     person_grounding["face_detection_device"] = os.environ.get("MEMORY_FACE_GPU", "cuda:0")
                     person_grounding["face_detection_status"] = face_detection_status
                     if face_detection_error:
                         person_grounding["face_detection_error"] = face_detection_error
                     person_grounding["crop_method"] = (
-                        "local person proposal + source-resolution JPEG; GPU YOLOv8n-Face face crop")
+                        "local person proposal + source-resolution JPEG; dense GPU YOLOv8n-Face crops between Qwen frames")
                     multimodal["person_visuals"] = person_grounding
                     record_duration("person_crop_generation_and_asset_write_ms", person_crop_started)
                     record_duration("person_grounding_pipeline_wall_ms", person_pipeline_started)
@@ -2786,28 +2728,9 @@ class InteractiveSession(PostWriteRetrievalMixin):
                         }
                         finish_timing(info)
                         return None, info
-                # People and objects use tight grounded crops above. Scene, place,
-                # environment, activity, and each event also get source-linked
-                # context crops, so every stored memory dimension can be inspected
-                # against its supporting frame in the UI.
-                context_crop_started = time.perf_counter()
-                try:
-                    context_frames = (locals().get("candidate_frames")
-                                      or locals().get("person_frames") or [])
-                    if not context_frames:
-                        context_frames = self.media_store.sample_visual_candidates(
-                            video_path, clip_start, clip_end,
-                            source_id=dataset_id, count=7)
-                    multimodal["entity_visuals"] = self.media_store.capture_context_entities(
-                        context_frames, f, source_id=dataset_id,
-                        clip_start_s=clip_start,
-                    )
-                except Exception as context_exc:
-                    multimodal["entity_visuals"] = {
-                        "schema": 1, "status": "unavailable",
-                        "message": str(context_exc)[:240], "assets": [], "items": [],
-                    }
-                record_duration("context_crop_generation_and_asset_write_ms", context_crop_started)
+                # Context facts remain textual with source provenance. Dedicated
+                # image evidence is limited to grounded people and objects.
+                multimodal["entity_visuals"] = {"schema": 2, "assets": [], "items": []}
             except Exception as exc:
                 # A media extraction failure must not prevent text memory CRUD.
                 media_error = str(exc)
@@ -2819,21 +2742,19 @@ class InteractiveSession(PostWriteRetrievalMixin):
             timing_sink=operation_ms,
         )
         record_duration("audio_decode_cache_and_transcription_wall_ms", audio_started)
+        visual_interaction_details = str(f.get("interaction_details") or "").strip()
+        speech_scene_context = ""
         if source_audio_text and person_observations:
             original_observations = [
                 dict(row) for row in person_observations if isinstance(row, dict)
             ]
-            profile_frames = (locals().get("candidate_frames")
-                              or locals().get("person_frames") or [])
+            profile_frames = (locals().get("person_frames")
+                              or locals().get("candidate_frames") or [])
             person_observations, speech_scene_context = self._enrich_person_profiles_from_speech(
                 person_observations, source_audio_text, profile_frames, dataset_id,
-                cancel_event=cancel_event,
+                visual_facts=temporal_facts, cancel_event=cancel_event,
                 progress=lambda stage, message: update(stage, message),
             )
-            if speech_scene_context:
-                # Keep the meaningful shared context, not a flat sequence of
-                # low-value action and greeting rows.
-                f["interaction_details"] = speech_scene_context[:700]
             f["person_observations"] = person_observations
             f["people"] = list(dict.fromkeys(
                 str(row.get("entity") or "").strip()
@@ -2873,6 +2794,18 @@ class InteractiveSession(PostWriteRetrievalMixin):
         ]
         identity_links = attach_spoken_identity(
             person_observations, speech_facts, temporal_facts)
+        # Keep the displayed content summary as one coherent, high-level event.
+        # Speech facts are stored with their evidence in temporal_facts below;
+        # flattening those audit rows into prose creates repetition and leaks
+        # uncertainty bookkeeping into the user-facing summary. The joint
+        # visual/speech scene_context is already quote-grounded and concise.
+        social_context = str(speech_scene_context or "").strip()
+        if social_context:
+            f["interaction_details"] = social_context[:700]
+        elif visual_interaction_details:
+            # If speech cannot add a reliable shared context, preserve the
+            # perception model's original concise event summary.
+            f["interaction_details"] = visual_interaction_details[:700]
         spoken_alias_map = {
             old.casefold(): str(row.get("entity") or "").strip()
             for old, row in zip(entity_labels_before_identity, person_observations)
@@ -3054,6 +2987,28 @@ class InteractiveSession(PostWriteRetrievalMixin):
         else:
             self.steps = self._plan_long()
 
+        # The shared memory pool survives dataset switches and process restarts.
+        # Restore the source-to-memory map for every session so rerunning a clip
+        # refreshes its existing episode instead of appending a duplicate.
+        archive = self.mem.memory.get("layer7", {}).get("moments", {})
+        for moment_id, moment in archive.items():
+            if not isinstance(moment, dict) or moment.get("stale") or moment.get("merged_into"):
+                continue
+            provenance = moment.get("source_provenance") or {}
+            source_time = moment.get("source_time") or {}
+            multimodal = moment.get("multimodal") or {}
+            source_id = str(provenance.get("source_segment_id")
+                            or source_time.get("source_segment_id")
+                            or multimodal.get("source_id") or "")
+            if not source_id:
+                continue
+            previous_id = self.id_map.get(source_id)
+            previous = archive.get(previous_id) or {}
+            rank = (str(moment.get("timestamp") or ""), str(moment_id))
+            previous_rank = (str(previous.get("timestamp") or ""), str(previous_id or ""))
+            if not previous_id or rank > previous_rank:
+                self.id_map[source_id] = moment_id
+
         if resuming:
             checkpoint = self._resume_state
             expected_dataset = str(checkpoint.get("dataset_id") or "")
@@ -3065,10 +3020,6 @@ class InteractiveSession(PostWriteRetrievalMixin):
             self.operation_log = copy.deepcopy(checkpoint.get("operations") or [])
             self.auto_paused = bool(checkpoint.get("auto_paused"))
             self.step_cancelled = bool(checkpoint.get("step_cancelled"))
-            for moment_id, moment in self.mem.memory.get("layer7", {}).get("moments", {}).items():
-                source_id = str((moment.get("source_provenance") or {}).get("source_segment_id") or "")
-                if source_id:
-                    self.id_map[source_id] = moment_id
             for moment in self.moments:
                 cached = self.perceiver.cache.get(moment.get("id", "")) or {}
                 if cached.get("fields"):
@@ -3396,7 +3347,7 @@ class InteractiveSession(PostWriteRetrievalMixin):
 
     def _nightly_consolidation_step(self, title=None, note=None):
         """Build the shared scene-end/nightly consolidation step."""
-        def run_nightly(force=False, use_cache=True):
+        def run_nightly(force=False, use_cache=True, close_scene=True):
             self.nightly_progress = {"running": True, "stage": "start",
                                      "label": "启动夜间整理", "current": 0,
                                      "total": 0, "message": "", "updated_at": time.time()}
@@ -3428,8 +3379,9 @@ class InteractiveSession(PostWriteRetrievalMixin):
             }
             if not result.get("ok"):
                 return "夜间整理失败", {"kind": "nightly", "result": result}
-            cleared = self.daytime.end_scene()
+            cleared = self.daytime.end_scene() if close_scene else 0
             result["short_term_cleared"] = cleared
+            result["scene_kept_open"] = not close_scene
             profile_result = (
                 "画像更新成功" if result.get("profile_updated")
                 else "未发现足够稳定的画像属性"
@@ -3842,6 +3794,61 @@ class InteractiveSession(PostWriteRetrievalMixin):
         self.pos += 1
         return msg
 
+    def has_accumulated_memory(self):
+        """Return whether this session has any persisted scene memories."""
+        memory = getattr(self.mem, "memory", {}) or {}
+        if any(memory.get(f"layer{number}") for number in (1, 2, 3)):
+            return True
+        layer7 = memory.get("layer7") or {}
+        moments = layer7.get("moments") if isinstance(layer7, dict) else None
+        return bool(moments)
+
+    def run_nightly_now(self, force=False, use_cache=True, progress_id=None):
+        """Consolidate accumulated memories without advancing the video-step cursor."""
+        if not self.has_accumulated_memory():
+            raise ValueError("当前还没有可整理的记忆")
+        self.step_cancelled = False
+        cancel_event = threading.Event()
+        with self._cancel_lock:
+            self._active_step_cancel = cancel_event
+            self._active_step_force = bool(force)
+            if self._pending_cancel:
+                cancel_event.set()
+                self._pending_cancel = False
+        self._active_step_no = self.pos + 1
+        self._active_step_title = "手动夜间整理归纳"
+        self._set_step_progress(
+            running=True, stage="starting", label="手动夜间整理归纳",
+            step_index=min(self.pos + 1, len(self.steps)), step_total=len(self.steps),
+            item_index=0, item_total=1, message="正在整理当前累积记忆",
+            output=None, completed=[], run_id=progress_id or uuid.uuid4().hex,
+        )
+        try:
+            if cancel_event.is_set():
+                msg, result = "夜间整理已取消", {"kind": "nightly", "cancelled": True}
+            else:
+                step = self._nightly_consolidation_step(title="手动夜间整理归纳")
+                msg, result = step["run"](
+                    force=force, use_cache=use_cache, close_scene=False
+                )
+        except Exception as exc:
+            self._set_step_progress(running=False, stage="error", message=str(exc)[:300])
+            raise
+        finally:
+            self._active_step_no = None
+            self._active_step_title = None
+            with self._cancel_lock:
+                if self._active_step_cancel is cancel_event:
+                    self._active_step_cancel = None
+                    self._active_step_force = False
+        self._set_step_progress(
+            running=False, stage="cancelled" if cancel_event.is_set() else "done",
+            message=msg, output=None,
+        )
+        self._log_snapshot("手动夜间整理归纳", "nightly_manual", msg, result)
+        self.step_cancelled = bool(cancel_event.is_set())
+        return msg
+
     def prewarm(self, limit=None):
         """批量预热 Qwen 缓存（后台任务调用）。返回 (成功, 失败)。"""
         ms = self.moments[:limit] if limit else self.moments
@@ -3917,6 +3924,7 @@ class InteractiveSession(PostWriteRetrievalMixin):
             "total": total,
             "pos": self.pos,
             "finished": self.pos >= total,
+            "has_memory": self.has_accumulated_memory(),
             "current": cur,
             "auto_paused": self.auto_paused,
             "step_cancelled": self.step_cancelled,

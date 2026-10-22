@@ -164,6 +164,14 @@ td{padding:6px 10px;border-top:1px solid var(--border)}
 .fullmem .layer-section{margin:0;padding:0 14px 14px;border:1px solid var(--layer-border);border-left:4px solid var(--layer-accent);border-radius:13px;background:linear-gradient(180deg,var(--layer-soft),#fff 110px)}
 .fullmem .layer-section>.sublayer{display:flex;align-items:center;gap:8px;min-height:48px;margin:0;padding:10px 0;color:var(--layer-accent);font-size:15px;font-weight:800}
 .fullmem .layer-section>.sublayer .scount{margin-left:auto;font-size:12px;font-weight:650;color:#71809a}
+.fullmem details.layer-section>summary{list-style:none;cursor:pointer;user-select:none;outline:none}
+.fullmem details.layer-section>summary::-webkit-details-marker{display:none}
+.fullmem details.layer-section>summary::marker{content:""}
+.fullmem details.layer-section>summary:after{content:"−";margin-left:8px;color:var(--layer-accent);font-size:19px;line-height:1}
+.fullmem details.layer-section:not([open])>summary:after{content:"＋"}
+.fullmem details.layer-section>summary:hover{filter:brightness(.88)}
+.fullmem details.layer-section>summary:focus-visible{border-radius:6px;box-shadow:0 0 0 3px color-mix(in srgb,var(--layer-accent) 24%,transparent)}
+.fullmem details.layer-section:not([open]){padding-bottom:0!important}
 .fullmem .fullmem-items{display:grid;gap:8px}
 .fullmem .mrec{display:grid;grid-template-columns:minmax(0,1fr);gap:7px;margin:0;padding:12px 14px;border:1px solid #e1e7f1;border-radius:10px;background:#fff;min-width:0}
 .fullmem .mrec .mid{color:#63718a;font-size:12px;font-weight:700}
@@ -231,6 +239,12 @@ td{padding:6px 10px;border-top:1px solid var(--border)}
 .memory-added-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 9px;color:#1f3b52;font-size:16px;font-weight:800}
 .memory-added-id{padding:2px 8px;border-radius:999px;background:#e9f7f1;color:#087a55;font-size:12px;font-weight:700}
 .memory-added-summary{color:#34415c;line-height:1.65}
+.scene-info-panel{margin:9px 0;padding:10px 12px;border:1px solid #e2e9f4;border-radius:10px;background:#f8faff}
+.scene-info-heading{margin:0 0 7px;color:#4b5d80;font-size:13px;font-weight:800}
+.scene-info-facets{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 7px}
+.scene-info-copy{display:grid;gap:5px;color:#34415c;line-height:1.6}
+.scene-info-copy>div{overflow-wrap:anywhere}
+.scene-info-copy b{margin-right:7px;color:#52627f}
 .memory-added-context{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}
 .memory-raw-json-content{max-height:min(65vh,560px)}
 .memory-json-line{display:grid;grid-template-columns:3.4em minmax(0,1fr);column-gap:14px;min-height:1.65em;white-space:pre-wrap;overflow-wrap:anywhere}
@@ -343,6 +357,13 @@ body{background:radial-gradient(1000px 380px at 50% -120px,#e7edff 0,transparent
 .archive-sample-card .moment-detail{padding:6px}
 .layer-empty-evidence{font-size:12px;line-height:1.45;color:#765b24;background:#fff8e8;border-radius:7px;padding:6px 8px}
 .video-shell{margin:8px 0 5px}
+.video-placeholder{display:flex;align-items:center;justify-content:center;gap:12px;width:min(100%,360px);min-height:202px;aspect-ratio:16/9;padding:16px;border:1px solid #dbe3f1;border-radius:11px;background:linear-gradient(145deg,#eef2f8,#e5eaf3);color:#53627b;text-align:left}
+.video-placeholder-icon{display:inline-flex;align-items:center;justify-content:center;flex:0 0 42px;width:42px;height:42px;border-radius:50%;background:#5368df;color:#fff;font-size:19px;box-shadow:0 3px 10px #263d6426}
+.video-placeholder-copy{display:flex;flex-direction:column;gap:3px}
+.video-placeholder-copy b{font-size:14px;color:#34445f}
+.video-placeholder-copy small{max-width:250px;font-size:12px;line-height:1.5;color:#6c7890}
+.video-placeholder[hidden]{display:none!important}
+@media(max-width:560px){.video-placeholder{min-height:0;padding:10px}.video-placeholder-icon{flex-basis:34px;width:34px;height:34px}}
 .interactive-video-row{display:grid;grid-template-columns:44px minmax(0,1fr) 44px;align-items:center;gap:10px;width:100%;max-width:740px}
 .interactive-video-row .video-shell{min-width:0;width:100%;margin:8px 0 5px}
 .interactive-video-nav{display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;padding:0;border:1px solid #d6def0;border-radius:50%;background:#fff;color:#4055c8;font-family:inherit;font-size:27px;line-height:1;cursor:pointer;box-shadow:0 2px 8px #29365d12}
@@ -761,6 +782,14 @@ body{height:100vh;height:100dvh;min-height:0;display:flex;flex-direction:column}
 .memory-person-row{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
 .memory-person-chip{padding:5px 8px;border:1px solid #dbe5f2;border-radius:8px;background:#f5f7fb}
 .memory-person-chip small{display:block;color:#71809a;font-size:12px}
+.memory-person-profile-card{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;gap:10px 14px;width:100%;padding:10px 12px;background:#fff}
+.memory-person-profile-copy{min-width:0}
+.memory-person-profile-copy>b{display:block;margin-bottom:4px;color:#34445f}
+.memory-person-profile-copy>small{line-height:1.55}
+.memory-person-evidence{display:flex;flex-direction:column;align-items:flex-end;gap:4px;min-width:140px}
+.memory-person-evidence>small{color:#71809a;font-size:11px}
+@media(max-width:620px){.memory-person-profile-card{grid-template-columns:minmax(0,1fr)}.memory-person-evidence{align-items:flex-start}}
+
 .memory-timeline-toggle{margin:10px 0}
 .memory-timeline-toggle summary{cursor:pointer;color:#465887;font-weight:700}
 @media(max-width:700px){.entity-graph-rows{grid-template-columns:1fr}.event-memory-card{padding:11px}}
@@ -930,9 +959,11 @@ button:focus-visible,[role=button]:focus-visible{outline:3px solid #a5b4fc;outli
 .layer-details .layer{border-radius:11px;box-shadow:none}
 .layer-details .layer .body{border-radius:9px;border-color:#e6ebf3;background:#fbfcfe;color:#4c5a71}
 #fullMemoryCard{margin-top:12px}
-.memory-detail-heading{display:flex;align-items:center;gap:9px}
-.memory-detail-heading .memory-clear-button{margin-left:auto;border-color:#e7b8bb;color:#a3323c;white-space:nowrap}
+.memory-detail-heading{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.memory-detail-heading #nightlyOrganizeBtn{margin-left:auto;white-space:nowrap}
+.memory-detail-heading .memory-clear-button{margin-left:0;border-color:#e7b8bb;color:#a3323c;white-space:nowrap}
 .memory-detail-heading .memory-clear-button:hover{border-color:#c94a55;background:#fff7f7}
+@media(max-width:640px){.memory-detail-heading #nightlyOrganizeBtn{margin-left:0}.memory-detail-heading .memory-clear-button{margin-left:auto}}
 .grid2{gap:14px;align-items:start}
 .grid2>.card{min-width:0}
 .layer-meaning{margin:0 0 10px;color:#7b879c;font-size:13px}
@@ -994,6 +1025,16 @@ button:focus-visible,[role=button]:focus-visible{outline:3px solid #a5b4fc;outli
   border-radius:8px;background:#f6f8fc;color:#66758e;font-size:12px;line-height:1.4
 }
 .memory-supplement-body .media-evidence-summary b{color:#465675}
+.associated-frame-gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,190px),1fr));gap:9px;width:100%;min-width:0}
+.associated-frame-card{min-width:0;overflow:hidden;border:1px solid #e0e7f2;border-radius:10px;background:#fff;box-shadow:0 1px 3px #263d6408}
+.associated-frame-card.memory-evidence-card-trigger{cursor:pointer;transition:border-color .15s,box-shadow .15s,transform .15s}
+.associated-frame-card.memory-evidence-card-trigger:hover{border-color:#8fa1f5;box-shadow:0 4px 12px #344b8018;transform:translateY(-1px)}
+.associated-frame-card>img{display:block;width:100%;height:132px;object-fit:contain;background:#eef2f8}
+.associated-frame-caption{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:3px 8px;padding:8px 9px;color:#465675;font-size:12px;line-height:1.4}
+.associated-frame-caption>b{overflow-wrap:anywhere}
+.associated-frame-caption>span{white-space:nowrap;color:#77849a}
+.associated-frame-caption>small{grid-column:1/-1;display:-webkit-box;overflow:hidden;-webkit-box-orient:vertical;-webkit-line-clamp:2;color:#77849a}
+@media(max-width:620px){.associated-frame-gallery{grid-template-columns:repeat(2,minmax(0,1fr))}.associated-frame-card>img{height:112px}}
 .memory-supplement-body .media-frames-group{display:grid;gap:8px;min-width:0}
 .memory-supplement-body .media-evidence-heading{display:flex;align-items:center;gap:8px;color:#465675;font-size:13px}
 .memory-supplement-body .media-evidence-heading span{padding:2px 8px;border-radius:999px;background:#edf2ff;color:#596bd0;font-size:11px;font-weight:700}
@@ -1227,29 +1268,43 @@ pre,code{font-family:"Cascadia Code","SFMono-Regular",Consolas,"Liberation Mono"
 .fullmem .layer-section .object-visual-list>b{
   grid-column:1/-1!important;
 }
+/* GENERATED MODULE evidence_gallery.css:START */
 /* Stacked photo albums: hover cycles the cover; the whole memory card opens its gallery. */
 .memory-photo-album{
   position:relative;isolation:isolate;width:164px;height:108px;margin:11px 0 7px 9px;
-  perspective:760px;cursor:pointer;overflow:visible
+  perspective:1000px;perspective-origin:48% 50%;cursor:pointer;overflow:visible;
+  transform:translateZ(0)
 }
 .memory-photo-album-page{
   position:absolute;inset:0;width:100%;height:100%;padding:4px;border:1px solid #d8e1ef;
-  border-radius:9px;background:#fff;object-fit:cover;box-shadow:0 5px 12px #27395824;
-  transition:transform .28s ease,box-shadow .28s ease
+  border-radius:10px;background:#f4f7fb;object-fit:contain;box-shadow:0 5px 12px #27395824;
+  backface-visibility:hidden;transform-style:preserve-3d;
+  transition:transform .32s cubic-bezier(.2,.75,.25,1),box-shadow .32s ease
 }
-.memory-photo-album .album-back{z-index:1;transform:translate(-7px,4px) rotate(-7deg)}
-.memory-photo-album .album-middle{z-index:2;transform:translate(4px,-4px) rotate(5deg)}
+.memory-photo-album::before,.memory-photo-album::after{
+  content:"";position:absolute;inset:0;border:1px solid #d8e1ef;border-radius:10px;
+  background:#fff;box-shadow:0 4px 10px #27395818;pointer-events:none
+}
+.memory-photo-album::before{z-index:1;transform:translate(-6px,4px) rotate(-4deg)}
+.memory-photo-album[data-album-count="1"]::before,.memory-photo-album[data-album-count="1"]::after{display:none}
+.memory-photo-album[data-album-count="1"] .album-turn{display:none}
+.memory-photo-album::after{z-index:2;transform:translate(3px,-3px) rotate(2deg)}
 .memory-photo-album .album-cover{z-index:3;transform:rotate(-1deg)}
-.memory-photo-album:hover .album-cover,.memory-photo-album.is-cycling .album-cover{box-shadow:0 9px 20px #27395838}
-.memory-photo-album .album-cover.is-turning{animation:memoryAlbumPageTurn .36s ease}
+.memory-photo-album .album-turn{
+  z-index:4;visibility:hidden;transform-origin:left center;transform-style:preserve-3d
+}
+.memory-photo-album:hover .album-cover,.memory-photo-album.is-cycling .album-cover{box-shadow:0 12px 24px #27395845}
+.memory-photo-album .album-turn.is-turning{visibility:visible;animation:memoryAlbumPageIn .39s cubic-bezier(.18,.72,.24,1) both;will-change:transform,opacity}
+.memory-photo-album[data-orientation="portrait"]{width:100px;height:132px}
+.memory-photo-album[data-orientation="square"]{width:128px;height:128px}
 .memory-photo-album-count{
   position:absolute;z-index:5;right:-7px;bottom:-7px;padding:3px 7px;border:1px solid #dce4f1;
   border-radius:999px;background:#fff;color:#52627d;font-size:11px;font-weight:700;box-shadow:0 2px 6px #2538581c
 }
-@keyframes memoryAlbumPageTurn{
-  0%{transform:rotate(-1deg) translateX(0) rotateY(0);opacity:1}
-  45%{transform:rotate(5deg) translateX(13px) rotateY(-24deg);opacity:.72}
-  100%{transform:rotate(-1deg) translateX(0) rotateY(0);opacity:1}
+@keyframes memoryAlbumPageIn{
+  0%{transform:rotate(-1deg) rotateY(168deg) translateX(5px);filter:brightness(.72);opacity:.08}
+  42%{filter:brightness(.88);opacity:.78}
+  100%{transform:rotate(-1deg) rotateY(0) translateX(0);filter:brightness(1);opacity:1}
 }
 .entity-evidence-gallery{
   grid-column:2;grid-row:1/3;display:grid!important;
@@ -1269,21 +1324,36 @@ pre,code{font-family:"Cascadia Code","SFMono-Regular",Consolas,"Liberation Mono"
 .entity-evidence-gallery-counter{color:#4359bd;font-weight:750;font-variant-numeric:tabular-nums}
 .entity-evidence-gallery-thumbs{grid-column:1/-1;grid-row:3;display:flex;gap:7px;min-width:0;max-width:100%;overflow-x:auto;padding:3px 1px 5px}
 .entity-evidence-gallery-thumb{position:relative;flex:0 0 82px;width:82px;padding:3px;border:1px solid #dce4f0;border-radius:8px;background:#fff;color:#687791;cursor:pointer}
-.entity-evidence-gallery-thumb img{display:block;width:100%;height:48px;object-fit:cover;border-radius:5px;background:#e9eef6}
+.entity-evidence-gallery-thumb img{display:block;width:100%;height:48px;object-fit:contain;border-radius:5px;background:#e9eef6}
 .entity-evidence-gallery-thumb span{display:block;padding-top:2px;font-size:10px;text-align:center}
 .entity-evidence-gallery-thumb.active{border-color:#6174e8;box-shadow:0 0 0 2px #6174e82b}
 .entity-evidence-gallery-thumb.unavailable{opacity:.45}
 @media(max-width:700px){
   .memory-photo-album{width:150px;height:100px}
+  .memory-photo-album[data-orientation="portrait"]{width:90px;height:120px}
+  .memory-photo-album[data-orientation="square"]{width:116px;height:116px}
   .entity-evidence-gallery{grid-column:1;grid-row:3;grid-template-columns:34px minmax(0,1fr) 34px;grid-template-rows:minmax(0,1fr) auto auto;gap:6px 4px}
   .entity-evidence-gallery[data-gallery-count="1"]{grid-template-columns:minmax(0,1fr)}
   .entity-evidence-gallery-nav{width:30px;height:36px;font-size:22px}
   .entity-evidence-gallery-thumb{flex-basis:70px;width:70px}
   .entity-evidence-gallery-thumb img{height:42px}
 }
-@media(prefers-reduced-motion:reduce){.memory-photo-album-page{transition:none}.memory-photo-album .album-cover.is-turning{animation:none}}
 
-
+.memory-photo-album-highlight,.nightly-image-highlight{
+  position:absolute;z-index:7;top:6px;left:6px;padding:3px 7px;border:1px solid #f5d46a;
+  border-radius:999px;background:#fff8d9;color:#8a5b00;font-size:10px;font-weight:750;
+  line-height:1.2;box-shadow:0 2px 7px #27395820;white-space:nowrap
+}
+.memory-photo-album-highlight[hidden]{display:none}
+.associated-frame-card{position:relative}
+.entity-evidence-current{position:relative}
+.entity-evidence-highlight{
+  position:absolute;z-index:2;top:14px;left:14px;padding:4px 8px;border:1px solid #f5d46a;
+  border-radius:999px;background:#fff8d9;color:#8a5b00;font-size:12px;font-weight:750;
+  box-shadow:0 2px 7px #27395820
+}
+.entity-evidence-highlight[hidden]{display:none}
+/* GENERATED MODULE evidence_gallery.css:END */
 /* Run controls share the top header with the scenario and dataset selectors. */
 .hero{flex-wrap:wrap;row-gap:7px}
 .hero .tabs{order:2}
@@ -1350,6 +1420,9 @@ pre,code{font-family:"Cascadia Code","SFMono-Regular",Consolas,"Liberation Mono"
 @media(max-width:700px){.entity-evidence-text{max-height:34vh}}
 /* 实体卡片不再被同排最高卡撑长 */
 .object-visual-list{align-items:start}
+
+.nightly-progress-floating{position:fixed!important;right:20px;bottom:20px;width:min(620px,calc(100vw - 40px));max-height:34vh;overflow:auto;z-index:9998;margin:0!important;background:rgba(255,255,255,.97);box-shadow:0 12px 36px rgba(35,48,82,.2);backdrop-filter:blur(10px)}
+@media(max-width:640px){.nightly-progress-floating{right:10px;bottom:10px;width:calc(100vw - 20px);max-height:40vh}}
 </style>
 </head>
 <body>
@@ -1492,7 +1565,7 @@ pre,code{font-family:"Cascadia Code","SFMono-Regular",Consolas,"Liberation Mono"
 
   <section class="content-panel" data-view-panel="layers" role="tabpanel" aria-label="记忆详情">
   <div class="card memory-detail-card" id="fullMemoryCard">
-    <h2 class="memory-detail-heading"><span class="dot"></span><span>记忆详情</span><button class="btn memory-clear-button" id="clearAccumulatedMemoryBtn" type="button" onclick="clearAccumulatedMemory()">清空当前所有记忆</button></h2>
+    <h2 class="memory-detail-heading"><span class="dot"></span><span>记忆详情</span><button class="btn primary" id="nightlyOrganizeBtn" type="button" onclick="runNightlyOrganize()" disabled title="完成当前测试集步骤后可用">🌙 夜间整理归纳</button><button class="btn memory-clear-button" id="clearAccumulatedMemoryBtn" type="button" onclick="clearAccumulatedMemory()">清空当前所有记忆</button></h2>
     <div class="fullmem open" id="fullMem"></div>
   </div>
   </section>
@@ -1984,24 +2057,29 @@ function renderSummaryLayer(layer, kind){
 function renderMemoryPhotoAlbum(refs){
   const frames=(Array.isArray(refs)?refs:[]).filter(ref=>ref&&ref.url).map(ref=>({
     url:String(ref.url),original:String(ref.source_url||ref.original_url||''),
-    at_s:Number(ref.at_s??ref.frame_time_s??0)
-  })).filter(frame=>frame.url).sort((a,b)=>(Number.isFinite(a.at_s)?a.at_s:0)-(Number.isFinite(b.at_s)?b.at_s:0));
+    at_s:Number(ref.at_s??ref.frame_time_s??0),
+    important:!!ref.nightly_importance,
+    importanceReason:String((ref.nightly_importance||{}).reason||'')
+  })).filter(frame=>frame.url).sort((a,b)=>(Number.isFinite(a.at_s)?a.at_s:0)-(Number.isFinite(b.at_s)?a.at_s:0));
   if(!frames.length)return '';
   const n=frames.length;
   const page=(frame,slot)=>'<img class="memory-photo-album-page '+slot+'" data-album-slot="'+slot+'" src="'+esc(frame.url)+'" alt="" aria-hidden="true" loading="lazy">';
-  const back=n>1?page(frames[(n-1)%n],'album-back'):'';
-  const middle=n>2?page(frames[(n-2)%n],'album-middle'):'';
-  return '<div class="memory-photo-album" data-album-index="0" data-album-frames="'+esc(encodeURIComponent(JSON.stringify(frames)))+'" aria-label="'+n+' 张关联画面，悬停浏览，点击查看相册">'
-    +back+middle+page(frames[0],'album-cover')
+  const badge=frames[0].important
+    ?'<span class="memory-photo-album-highlight" title="'+esc(frames[0].importanceReason||'夜间整理标记的重要画面')+'">⭐ 夜间重点</span>'
+    :'<span class="memory-photo-album-highlight" hidden></span>';
+  return '<div class="memory-photo-album" data-album-count="'+n+'" data-album-index="0" data-album-frames="'+esc(encodeURIComponent(JSON.stringify(frames)))+'" aria-label="'+n+' 张关联画面，悬停浏览，点击查看相册">'
+    +page(frames[0],'album-cover')+(n>1?page(frames[0],'album-turn'):'')+badge
     +'</div>';
 }
 function renderVisualEvidenceCards(items,evidenceContext,kind,grounding){
   if(!Array.isArray(items)||!items.length)return '';
-  const labels={person:'人物',object:'物品',scene:'场景',location:'地点',environment:'环境',activity:'活动',event:'事件'};
+  const labels={person:'人物',object:'物品'};
   const cards=items.map(item=>{
-    const refs=(item.frame_refs||[]).filter(ref=>ref&&ref.url);
-    const cropRole=kind==='person'?'person_crop':kind==='object'?'object_crop':'context_crop';
-    const crops=refs.filter(ref=>ref.visual_role===cropRole);
+    const refs=(item.frame_refs||[]).filter(ref=>ref&&ref.url&&(kind!=='person'||(ref.visual_role==='face_crop'&&ref.identity_verified===true&&String(ref.identity_assignment||'').startsWith('qwen_visual_anchor+'))));
+    const cropRoles=kind==='person'?new Set(['face_crop'])
+      :kind==='object'?new Set(['object_crop']):new Set(['context_crop','scene_crop']);
+    const crops=refs.filter(ref=>cropRoles.has(ref.visual_role)&&(kind!=='person'||ref.identity_verified===true))
+      .sort((a,b)=>(a.visual_role==='face_crop'?-1:0)-(b.visual_role==='face_crop'?-1:0));
     const fallbackRefs=refs.filter(ref=>ref.evidence_fallback_reason);
     const localCropper=/clip-grid|opencv-hog/i.test(String((grounding&&grounding.model)||'')+' '+String((grounding&&grounding.crop_method)||''));
     const unavailable=grounding&&grounding.status==='unavailable'&&!crops.length;
@@ -2014,7 +2092,7 @@ function renderVisualEvidenceCards(items,evidenceContext,kind,grounding){
     const cardAttrs=renderEvidenceCardOpenAttrs(refs,evidenceContext,title,description||title);
     return '<div class="object-visual-card'+(cardAttrs?' memory-evidence-card-trigger':'')+'"'+(cardAttrs?' '+cardAttrs:'')+'><span class="object-visual-name">'+esc(title)+'</span>'+(status?'<span class="object-visual-status">'+esc(status)+'</span>':'')+(description?'<div class="object-visual-description">'+esc(description)+'</div>':'')+(crops.length?'<span class="memory-photo-album-count">'+crops.length+' 帧局部画面</span>':fallbackRefs.length?'<span class="memory-photo-album-count">来源画面</span>':'')+renderMemoryPhotoAlbum(previewFrames)+'</div>';
   }).join('');
-  const groupTitle=kind==='person'?'人物对应画面':kind==='object'?'物品对应画面':'地点、环境与活动画面';
+  const groupTitle=kind==='person'?'人物对应画面':'物品对应画面';
   const errorText=String((grounding&&grounding.message)||'');
   const localCropper=/clip-grid|opencv-hog|local-crop-grounder/i.test(String((grounding&&grounding.model)||'')+' '+String((grounding&&grounding.crop_method)||''));
   const errorHint=localCropper?'本地裁剪定位暂不可用':/connection refused|errno 111/i.test(errorText)?'Qwen视觉服务连接被拒绝':/timed? ?out|timeout/i.test(errorText)?'Qwen视觉服务请求超时':'Qwen视觉服务暂不可用';
@@ -2031,24 +2109,70 @@ function renderObjectVisualEvidence(media,evidenceContext){
   }
   return renderVisualEvidenceCards(items,evidenceContext,'object',media&&media.object_visuals);
 }
-function renderPersonVisualEvidence(media,evidenceContext,contextRecord){
-  const entityItems=(media&&media.entity_visuals&&media.entity_visuals.items)||[];
-  let items=entityItems.filter(item=>item&&item.entity_type==='person');
-  if(!items.length){
-    const grounding=media&&media.person_visuals;
-    items=(grounding&&Array.isArray(grounding.items)?grounding.items:[]).map(item=>({...item,entity:item.person,description:item.appearance}));
-  }
-  if(!items.length&&contextRecord){
+function renderPersonVisualEvidence(media,evidenceContext,contextRecord,integratedEntities=new Set()){
+  const originalItems=personEntityVisualItems(media);
+  let items=originalItems.filter(item=>!integratedEntities.has(String(item.entity||'').trim().toLocaleLowerCase()));
+  if(!items.length&&!originalItems.length&&contextRecord){
     items=(contextRecord.person_observations||[]).map(row=>({entity_type:'person',entity:row.entity,description:row.appearance,status:'context_fallback',frame_refs:(media.visual_frames||[]).slice(0,3)}));
   }
   return renderVisualEvidenceCards(items,evidenceContext,'person',media&&media.person_visuals);
 }
-function renderContextVisualEvidence(media,evidenceContext){
-  const items=((media&&media.entity_visuals&&media.entity_visuals.items)||[])
-    .filter(item=>item&&['scene','location','environment','activity','event'].includes(item.entity_type));
-  return renderVisualEvidenceCards(items,evidenceContext,'context');
+function renderAssociatedEvidenceGallery(media,evidenceContext){
+  media=media||{};
+  const entries=[],seen=new Set();
+  const urlOf=ref=>String(ref&&ref.url||((ref&&ref.asset)?API+'/api/memory_asset?p='+encodeURIComponent(ref.asset):''));
+  const add=(ref,title,description,kind,item)=>{
+    if(!ref||typeof ref!=='object')return;
+    const url=urlOf(ref); if(!url)return;
+    const identity=String(ref.asset||url);
+    const key=(ref.visual_role==='qwen_input_frame'||ref.visual_role==='location_source_frame')
+      ?identity+'#qwen-'+String(ref.frame_index||'')+'@'+String(ref.at_s??ref.frame_time_s??'')
+      :identity;
+    if(seen.has(key))return; seen.add(key);
+    entries.push({ref:{...ref,url},title:String(title||'关联画面'),description:String(description||''),kind,item:item||null});
+  };
+  const roleTitle=role=>role==='face_crop'?'人脸裁剪':role==='person_crop'?'人物裁剪':'物品裁剪';
+  // Person crops are already shown in the person cards above; avoid repeating them here.
+  let objects=((media.entity_visuals&&media.entity_visuals.items)||[]).filter(item=>item&&item.entity_type==='object');
+  if(!objects.length)objects=((media.object_visuals&&media.object_visuals.items)||[]).map(item=>({...item,entity:item.entity||item.object,description:item.description||item.appearance}));
+  objects.forEach(item=>{
+    const name=String(item.entity||item.object||'物品').trim()||'物品';
+    (item.frame_refs||[]).filter(ref=>ref&&ref.visual_role==='object_crop')
+      .forEach(ref=>add(ref,'物品 · '+name+' · 物品裁剪',item.description||item.appearance,'object',item));
+  });
+  const locationItems=((media.location_visuals&&media.location_visuals.items)||[])
+    .filter(item=>item&&typeof item==='object');
+  locationItems.forEach(item=>{
+    const name=String(item.location||'地点').trim()||'地点';
+    (item.frame_refs||[]).filter(ref=>ref&&ref.visual_role==='location_source_frame')
+      .forEach(ref=>add(ref,'地点 · '+name+' · 场景原帧',item.evidence||item.place_evidence_basis||'地点来源画面','location',item));
+  });
+  const sourceFrames=(Array.isArray(media.visual_frames)?media.visual_frames:[])
+    .filter(ref=>ref&&typeof ref==='object'&&ref.visual_role==='qwen_input_frame');
+  const inputFrameCount=Number(media.qwen_input_frame_count)||sourceFrames.length;
+  sourceFrames.forEach((ref,index)=>{
+    const at=Number(ref.at_s??ref.frame_time_s);
+    const frameIndex=Number(ref.frame_index)||index+1;
+    add(ref,'Qwen 输入帧 '+frameIndex+'/'+inputFrameCount+'（场景回查）',
+      Number.isFinite(at)?at.toFixed(2)+' 秒':'','source',null);
+  });
+  if(!entries.length)return '';
+  const prov=(evidenceContext&&evidenceContext.source_provenance)||{};
+  const tiles=entries.map(entry=>{
+    const at=Number(entry.ref.at_s??entry.ref.frame_time_s),time=Number.isFinite(at)?at.toFixed(2)+' 秒':'';
+    const caption=[entry.title,time].filter(Boolean).join(' · ');
+    const localMedia={source_id:String(media.source_id||''),visual_frames:entry.kind==='source'||entry.kind==='location'?[entry.ref]:sourceFrames,
+      person_visuals:{items:entry.kind==='person'?[{...entry.item,frame_refs:[entry.ref]}]:[]},
+      object_visuals:{items:entry.kind==='object'?[{...entry.item,frame_refs:[entry.ref]}]:[]},entity_visuals:{items:[]}};
+    const localContext={...(evidenceContext||{}),source_provenance:prov,multimodal:localMedia};
+    const attrs=entry.kind==='source'?'':renderEvidenceCardOpenAttrs([entry.ref],localContext,caption,entry.description||caption);
+    const mark=entry.ref.nightly_importance;
+    const badge=mark?'<span class="nightly-image-highlight" title="'+esc(mark.reason||'夜间整理标记的重要画面')+'">⭐ 夜间重点</span>':'';
+    return '<div class="associated-frame-card'+(attrs?' memory-evidence-card-trigger':'')+'"'+(attrs?' '+attrs:'')+'>'+badge+'<img loading="lazy" src="'+esc(entry.ref.url)+'" alt="'+esc(caption)+'"><div class="associated-frame-caption"><b>'+esc(entry.title)+'</b>'+(time?'<span>'+esc(time)+'</span>':'')+(entry.description?'<small>'+esc(entry.description)+'</small>':'')+'</div></div>';
+  }).join('');
+  return '<div class="associated-frame-gallery" aria-label="关联画面内容">'+tiles+'</div>';
 }
-function renderMultimodalEvidence(x,evidenceContext){
+function renderMultimodalEvidence(x,evidenceContext,options={}){
   const media=x&&x.multimodal;
   if(!media) return '';
   const frames=Array.isArray(media.visual_frames)&&media.visual_frames.length?media.visual_frames:[media.visual||{}];
@@ -2059,42 +2183,49 @@ function renderMultimodalEvidence(x,evidenceContext){
   const allFrames=[...frames,...entityFrames,...entityAssets];
   const assets=new Map(allFrames.filter(ref=>ref&&ref.asset).map(ref=>[ref.asset,Number(ref.bytes||0)]));
   const bytes=[...assets.values()].reduce((a,b)=>a+b,0);
-  const personEvidence=renderPersonVisualEvidence(media,evidenceContext||x,x);
+  const personEvidence=renderPersonVisualEvidence(media,evidenceContext||x,x,options.integratedPersonEntities||new Set());
   const objectEvidence=renderObjectVisualEvidence(media,evidenceContext||x);
-  const contextEvidence=renderContextVisualEvidence(media,evidenceContext||x);
+  // Context and event facts are textual provenance, not image-backed entities.
+  const contextEvidence='';
   const objectFrameCount=(media.object_visuals&&media.object_visuals.items||[])
     .reduce((count,item)=>count+(item.frame_refs||[]).filter(ref=>ref&&ref.url&&ref.visual_role==='object_crop').length,0);
-  const personFrameCount=(media.person_visuals&&media.person_visuals.items||[])
-    .reduce((count,item)=>count+(item.frame_refs||[]).filter(ref=>ref&&ref.url&&(ref.visual_role==='person_crop'||ref.visual_role==='face_crop')).length,0);
-  const contextFrameCount=entityAssets.filter(ref=>ref&&ref.visual_role==='context_crop').length;
+  const personFrameCount=personEntityVisualItems(media)
+    .reduce((count,item)=>count+personVisualRefs(item).length,0);
+  const contextFrameCount=0;
   const summaryParts=[
     '<span><b>关联画面</b> '+assets.size+' 张</span>',
-    '<span><b>人物、物品及场景裁剪</b> '+(personFrameCount+objectFrameCount+contextFrameCount)+' 张</span>',
+    '<span><b>人物与物品裁剪</b> '+(personFrameCount+objectFrameCount+contextFrameCount)+' 张</span>',
     '<span><b>附件大小</b> '+(bytes/1024).toFixed(1)+' KB</span>'
   ];
   if(speakers.length) summaryParts.push('<span><b>说话人</b> '+esc(speakers.join(', '))+'</span>');
   const evidenceGroups=[personEvidence,objectEvidence,contextEvidence].filter(Boolean);
   const bits=['<div class="media-evidence-summary">'+summaryParts.join('')+'</div>'];
-  if(evidenceGroups.length) bits.push('<div class="media-evidence-lists">'+evidenceGroups.join('')+'</div>');
+  const associatedGallery=options.showAssociatedGallery?renderAssociatedEvidenceGallery(media,evidenceContext||x):'';
+  if(associatedGallery) bits.push(associatedGallery);
+  if(!options.showAssociatedGallery&&evidenceGroups.length) bits.push('<div class="media-evidence-lists">'+evidenceGroups.join('')+'</div>');
   return '<div class="media-evidence">'+bits.join('')+'</div>';
 }
 function renderMemorySupplements(x, className){
   if(!x)return '';
-  const people=renderPersonObservations(x.person_observations,x);
-  const media=renderMultimodalEvidence(x,x);
+  const mediaData=x.multimodal||{};
+  const people=renderPersonObservations(x.person_observations,x,mediaData);
+  const media=renderMultimodalEvidence(x,x,{integratedPersonEntities:integratedPersonVisualEntities(x.person_observations,mediaData),showAssociatedGallery:true});
   const personCount=Array.isArray(x.person_observations)?x.person_observations.length:0;
   const hasFacts=!!people;
-  const mediaData=x.multimodal||{};
-  const evidenceCount=[...((mediaData.person_visuals&&mediaData.person_visuals.items)||[]),...((mediaData.object_visuals&&mediaData.object_visuals.items)||[])].reduce((sum,item)=>sum+(item.frame_refs||[]).filter(ref=>ref&&ref.url&&(ref.visual_role==='person_crop'||ref.visual_role==='face_crop'||ref.visual_role==='object_crop')).length,0);
+  const objectVisualItems=((mediaData.entity_visuals&&mediaData.entity_visuals.items)||[]).filter(item=>item&&item.entity_type==='object');
+  const objectRefs=(objectVisualItems.length?objectVisualItems:((mediaData.object_visuals&&mediaData.object_visuals.items)||[]))
+    .flatMap(item=>(item.frame_refs||[]).filter(ref=>ref&&ref.url&&ref.visual_role==='object_crop'));
+  const evidenceCount=new Set([...personEntityVisualItems(mediaData).flatMap(personVisualRefs),...objectRefs]
+    .map(ref=>ref.asset||ref.url).filter(Boolean)).size;
   let html='';
-  if(hasFacts){
-    html+='<section class="memory-supplement"><div class="memory-supplement-title">人物画像 · '+personCount+' 人</div><div class="memory-supplement-body">'+people+'</div></section>';
-  }
   if(media){
     const counts=[];
     if(evidenceCount)counts.push(evidenceCount+' 张画面');
     const suffix=counts.length?' · '+counts.join(' · '):'';
     html+='<section class="memory-supplement"><div class="memory-supplement-title">画面与来源'+suffix+'</div><div class="memory-supplement-body">'+media+'</div></section>';
+  }
+  if(hasFacts){
+    html+='<section class="memory-supplement"><div class="memory-supplement-title">人物画像 · '+personCount+' 人</div><div class="memory-supplement-body">'+people+'</div></section>';
   }
   return html?'<div class="memory-supplements '+(className||'')+'">'+html+'</div>':'';
 }
@@ -2104,23 +2235,28 @@ function renderMomentDetail(x){
   const action=cleanMemoryText(x.user_action);
   const notes=cleanMemoryText(x.notes);
   const excerpt=value=>esc(value);
-  const tags=[];
-  const addTag=(value,label)=>{ if(value) tags.push('<span class="mtag">'+label+' '+esc(value)+'</span>'); };
+  const sceneTags=[],metaTags=[];
+  const addTag=(target,value,label)=>{ if(value) target.push('<span class="mtag">'+label+' '+esc(value)+'</span>'); };
   if(x.highlighted){
     const sourceLabels={highlight_api:'显式标记',feedback_confirmed:'确认反馈'};
     const source=sourceLabels[x.highlight_source]||'来源未知';
     const markedAt=String(x.highlighted_at||'').slice(0,10);
-    addTag(source+(markedAt?' · '+markedAt:''),'⭐ 重点');
+    addTag(metaTags,source+(markedAt?' · '+markedAt:''),'⭐ 重点');
   }
-  addTag(x.location,'📍 Location');
-  addTag(x.activity,'🏷 Activity');
-  if(x.merged_into) addTag('并入 '+String(x.merged_into).slice(-14),'🔗 已归档来源');
-  if(Array.isArray(x.merged_sources)&&x.merged_sources.length) addTag(x.merged_sources.length+' 条来源','🔗 合并事件');
-  for(const person of (Array.isArray(x.people)?x.people:[])) addTag(person,'👤 Person');
+  if(x.nightly_importance){
+    const mark=x.nightly_importance||{};
+    addTag(metaTags,String(mark.reason||'夜间整理选为重要记忆')+
+      (Number.isFinite(Number(mark.score))?' · '+Math.round(Number(mark.score)*100)+'分':''),'🌙 夜间重点');
+  }
+  addTag(sceneTags,x.location,'📍 地点');
+  addTag(sceneTags,x.activity,'🏷 活动');
+  if(x.merged_into) addTag(metaTags,'并入 '+String(x.merged_into).slice(-14),'🔗 已归档来源');
+  if(Array.isArray(x.merged_sources)&&x.merged_sources.length) addTag(metaTags,x.merged_sources.length+' 条来源','🔗 合并事件');
+  for(const person of (Array.isArray(x.people)?x.people:[])) addTag(sceneTags,person,'👤 人物');
   const id=String(x.id||'');
   const headline=scene||action||notes||'No memory content';
   let html='<article class="moment-detail"><div class="moment-detail-head"><b>Memory '+esc(id.slice(-14)||'Unnumbered')+'</b><time>'+esc(memorySourceTimeLabel(x))+'</time></div>';
-  if(tags.length) html+='<div class="moment-detail-tags">'+tags.join('')+'</div>';
+  if(metaTags.length) html+='<div class="moment-detail-tags">'+metaTags.join('')+'</div>';
   if(Array.isArray(x.merge_history)&&x.merge_history.length){
     const records=x.merge_history.slice(-5).reverse().map(entry=>{
       const conflicts=(entry.scalar_conflicts||[]).map(c=>
@@ -2138,11 +2274,12 @@ function renderMomentDetail(x){
     }).join('');
     html+='<section class="layer-note"><b>合并审计记录 '+x.merge_history.length+' 次</b>'+records+'</section>';
   }
-  if(scene) html+='<div class="moment-preview"><b>Scene:</b> '+excerpt(scene)+'</div>';
-  else if(action) html+='<div class="moment-preview"><b>Action:</b> '+excerpt(action)+'</div>';
-  else html+='<div class="moment-preview">'+excerpt(headline)+'</div>';
-  if(scene&&action) html+='<div class="moment-action-preview"><b>Action:</b> '+excerpt(action)+'</div>';
-  if(x.interaction_details) html+='<div class="moment-action-preview"><b>场景背景:</b> '+excerpt(String(x.interaction_details))+'</div>';
+  const sceneInfoRows=[];
+  if(scene) sceneInfoRows.push('<div><b>视频内容描述</b>'+excerpt(scene)+'</div>');
+  if(action) sceneInfoRows.push('<div><b>行为</b>'+excerpt(action)+'</div>');
+  if(x.interaction_details) sceneInfoRows.push('<div><b>内容总结</b>'+excerpt(String(x.interaction_details))+'</div>');
+  if(!sceneInfoRows.length&&headline) sceneInfoRows.push('<div><b>记忆内容</b>'+excerpt(headline)+'</div>');
+  if(sceneTags.length||sceneInfoRows.length) html+='<section class="scene-info-panel"><div class="scene-info-heading">场景信息</div>'+(sceneTags.length?'<div class="scene-info-facets">'+sceneTags.join('')+'</div>':'')+(sceneInfoRows.length?'<div class="scene-info-copy">'+sceneInfoRows.join('')+'</div>':'')+'</section>';
   if(notes&&notes!==headline&&notes!==action) html+='<div class="moment-notes-preview"><b>补充线索</b> '+excerpt(notes)+'</div>';
   html+=renderMemorySupplements(x,'moment-supplements');
   return html+'</article>';
@@ -2183,7 +2320,7 @@ function renderEvidenceTrigger(refs,context,title,evidenceText=''){
   const frameRefs=[...list.filter(frame=>frame.url||frame.asset),...(Array.isArray(multimodal.visual_frames)?multimodal.visual_frames:[])];
   if(multimodal.visual)frameRefs.push(multimodal.visual);
   if(Array.isArray(ctx.images))frameRefs.push(...ctx.images);
-  const visualItems=[...((multimodal.person_visuals&&multimodal.person_visuals.items)||[]),...((multimodal.object_visuals&&multimodal.object_visuals.items)||[]),...((multimodal.entity_visuals&&multimodal.entity_visuals.items)||[])];
+  const visualItems=[...((multimodal.person_visuals&&multimodal.person_visuals.items)||[]),...((multimodal.object_visuals&&multimodal.object_visuals.items)||[]),...((multimodal.entity_visuals&&multimodal.entity_visuals.items)||[]).filter(item=>item&&['person','object'].includes(item.entity_type))];
   for(const item of visualItems)frameRefs.push(...(Array.isArray(item.frame_refs)?item.frame_refs:[]));
   const uniqueFrames=[],seenFrames=new Set();
   frameRefs.forEach(frame=>{
@@ -2219,17 +2356,37 @@ function renderEvidenceTrigger(refs,context,title,evidenceText=''){
     const url=frame.url||(frame.asset?API+'/api/memory_asset?p='+encodeURIComponent(frame.asset):'');
     return url?{...frame,url}:null;
   }).filter(Boolean);
-  const imageFrames=directFrames.length?directFrames:chosen.map(item=>({...item.frame,requestedAt:item.requestedAt,exact:item.exact}));
+  const cropRoles=new Set(['face_crop','object_crop']);
+  const directCropFrames=directFrames.filter(frame=>cropRoles.has(frame.visual_role));
+  const indexedCropFrames=candidates.filter(frame=>cropRoles.has(frame.visual_role));
+  const imageFrames=directCropFrames.length?directCropFrames
+    :indexedCropFrames.length?indexedCropFrames
+    :directFrames.length?directFrames:chosen.map(item=>({...item.frame,requestedAt:item.requestedAt,exact:item.exact}));
+  const sourceFrames=uniqueFrames.filter(frame=>!cropRoles.has(frame.visual_role));
+  const originalFor=frame=>{
+    if(frame.source_url||frame.original_url)return frame.source_url||frame.original_url;
+    const at=Number(frame.at_s??frame.frame_time_s);
+    const sourceId=String(frame.source_id||frame.source_segment_id||'');
+    const matches=sourceFrames.map(source=>{
+      const sourceAt=Number(source.at_s??source.frame_time_s);
+      const sourceSourceId=String(source.source_id||source.source_segment_id||'');
+      if(sourceId&&sourceSourceId&&sourceId!==sourceSourceId)return null;
+      const distance=Number.isFinite(at)&&Number.isFinite(sourceAt)?Math.abs(at-sourceAt):Infinity;
+      return distance<=0.12?{source,distance}:null;
+    }).filter(Boolean).sort((a,b)=>a.distance-b.distance);
+    return matches[0]?.source.url||'';
+  };
   const modalSeen=new Set();
   const images=imageFrames.filter(frame=>{
     const key=String(frame.asset||frame.url)+'|'+String(frame.at_s??frame.frame_time_s??'');
     if(modalSeen.has(key))return false;
     modalSeen.add(key);return true;
   }).map(frame=>({
-    url:frame.url,original:frame.source_url||frame.original_url||'',
+    url:frame.url,original:originalFor(frame),
     at_s:Number(frame.at_s??frame.frame_time_s??0),
     requested_at_s:frame.requestedAt??frame.frame_time_s??nested(frame).frame_time_s??null,
-    exact:frame.exact===true||directFrames.length>0
+    exact:frame.exact===true||directFrames.length>0,
+    nightly_importance:frame.nightly_importance||null
   }));
   const audioStartValue=Number.isFinite(audioStart)?audioStart:null;
   const audioEndValue=Number.isFinite(audioEnd)?audioEnd:null;
@@ -2241,9 +2398,29 @@ function renderEvidenceCardOpenAttrs(refs,context,title,evidenceText=''){
   const encoded=(trigger.match(/data-evidence="([^"]+)"/)||[])[1]||'';
   return encoded?'tabindex="0" role="button" aria-haspopup="dialog" aria-label="'+esc(title)+'，点击查看来源画面" data-evidence="'+encoded+'"':'';
 }
-function renderPersonObservations(rows,evidenceContext){
+function personEntityVisualItems(media){
+  const indexed=((media&&media.entity_visuals&&media.entity_visuals.items)||[])
+    .filter(item=>item&&item.entity_type==='person');
+  if(indexed.length)return indexed;
+  return ((media&&media.person_visuals&&media.person_visuals.items)||[])
+    .filter(item=>item&&typeof item==='object')
+    .map(item=>({...item,entity:item.entity||item.person,description:item.description||item.appearance}));
+}
+function personVisualRefs(item){
+  return ((item&&item.frame_refs)||[]).filter(ref=>ref&&ref.url&&
+    ref.visual_role==='face_crop'&&ref.identity_verified===true&&String(ref.identity_assignment||'').startsWith('qwen_visual_anchor+'));
+}
+function integratedPersonVisualEntities(rows,media){
+  if(!Array.isArray(rows)||!rows.length)return new Set();
+  const observations=new Set(rows.filter(Boolean).map(row=>String(row.entity||'').trim().toLocaleLowerCase()));
+  return new Set(personEntityVisualItems(media)
+    .filter(item=>observations.has(String(item.entity||'').trim().toLocaleLowerCase())&&personVisualRefs(item).length>0)
+    .map(item=>String(item.entity||'').trim().toLocaleLowerCase()));
+}
+function renderPersonObservations(rows,evidenceContext,media){
   if(!Array.isArray(rows)||!rows.length)return '';
-  const grouped=new Map();
+  const visualItems=personEntityVisualItems(media||(evidenceContext&&evidenceContext.multimodal));
+  const usedVisualItems=new Set(),grouped=new Map();
   rows.forEach(row=>{
     if(!row||typeof row!=='object')return;
     const key=[row.entity||'',row.visual_label||'',row.appearance||'',row.face_features||'',row.apparent_age_range||'',row.age_basis||'',row.age||''].join('|').toLocaleLowerCase();
@@ -2269,8 +2446,14 @@ function renderPersonObservations(rows,evidenceContext){
     if(row.position)details.push('位置：'+row.position);
     if(Array.isArray(row.relationships)&&row.relationships.length)details.push('关系：'+row.relationships.join('；'));
     if(row.profile_context)details.push('相关背景：'+row.profile_context);
-    const cardAttrs=renderEvidenceCardOpenAttrs(row._evidenceRefs,evidenceContext,personTitle+' · 人物画像',details.join('；'));
-    return '<span class="memory-person-chip'+(cardAttrs?' memory-evidence-card-trigger':'')+'"'+(cardAttrs?' '+cardAttrs:'')+'><b>'+esc(personTitle)+'</b>'+(details.length?'<small>'+esc(details.join('；'))+'</small>':'')+'</span>';
+    const visualItem=visualItems.find(item=>!usedVisualItems.has(item)&&
+      String(item.entity||'').trim().toLocaleLowerCase()===String(row.entity||'').trim().toLocaleLowerCase());
+    const cropRefs=personVisualRefs(visualItem);
+    if(cropRefs.length)usedVisualItems.add(visualItem);
+    const refs=[...row._evidenceRefs,...cropRefs];
+    const cardAttrs=renderEvidenceCardOpenAttrs(refs,evidenceContext,personTitle+' · 人物画像',details.join('；'));
+    const gallery=cropRefs.length?'<div class="memory-person-evidence"><small>对应裁剪 · '+cropRefs.length+' 张</small>'+renderMemoryPhotoAlbum(cropRefs)+'</div>':'';
+    return '<article class="memory-person-chip memory-person-profile-card'+(cardAttrs?' memory-evidence-card-trigger':'')+'"'+(cardAttrs?' '+cardAttrs:'')+'><div class="memory-person-profile-copy"><b>'+esc(personTitle)+'</b>'+(details.length?'<small>'+esc(details.join('；'))+'</small>':'')+'</div>'+gallery+'</article>';
   }).join('');
   return '<div><div class="memory-person-row">'+body+'</div></div>';
 }
@@ -2411,7 +2594,7 @@ function entityGraphEvidence(row, typeLabel, entityName){
   const media=row.multimodal||{};
   const refs=[
     ...(Array.isArray(media.visual_frames)?media.visual_frames:[]),
-    ...(typeLabel==='人物'&&Array.isArray(media.person_crops)?media.person_crops:[]),
+    ...(typeLabel==='人物'&&Array.isArray(media.person_crops)?media.person_crops.filter(ref=>ref&&ref.visual_role==='face_crop'&&ref.identity_verified===true&&String(ref.identity_assignment||'').startsWith('qwen_visual_anchor+')):[]),
     ...(typeLabel==='物品'&&Array.isArray(media.object_crops)?media.object_crops:[])
   ];
   const context={
@@ -2504,6 +2687,15 @@ function renderLayer7Snapshot(s, full){
   return '<div class="layer7-overview layer-tone-l7">'+(chips?'<div class="layer7-index-chips">'+chips+'</div>':'')+(sample?renderLayerMemoryRow(sample,'L7 归档样例'):'')+(graphSamples?renderEntityGraph(full.entity_relationships):'')+'<small class="layer-strip-meta">主存储 '+count+' 条 · 可检索 '+active+' 条 · 已合并留档 '+merged+' 条</small></div>';
 }
 
+function memoryLayerExpanded(key){
+  try{return localStorage.getItem('memory-layer-collapsed:'+key)!=='1';}catch(_){return true;}
+}
+function saveMemoryLayerDisclosure(details){
+  const key=details&&details.dataset&&details.dataset.memoryLayer;
+  if(!key)return;
+  try{localStorage.setItem('memory-layer-collapsed:'+key,details.open?'0':'1');}catch(_){}
+}
+
 function renderFullMemory(full){
   if(!full){ document.getElementById('fullMem').innerHTML='<div class="note">本轮尚未写入记忆。</div>'; return; }
   const hasShort=['layer1','layer2','layer3'].some(key=>Array.isArray(full[key])&&full[key].length);
@@ -2551,23 +2743,23 @@ function renderFullMemory(full){
   }
   const unique=Array.from(byId.values()).sort((a,b)=>String(b.item.timestamp||'').localeCompare(String(a.item.timestamp||'')));
   const shown=unique.slice(0,30);
-  html+='<section class="layer-section layer-tone-l1"><div class="sublayer"><span class="layer-token layer-tone-l1">L1</span><span class="layer-token layer-tone-l2">L2</span><span class="layer-token layer-tone-l3">L3</span> 短期记忆 <span class="scount">'+unique.length+' 条</span></div><div class="fullmem-items">';
+  html+='<details class="layer-section layer-tone-l1" data-memory-layer="short" '+(memoryLayerExpanded('short')?'open':'')+' ontoggle="saveMemoryLayerDisclosure(this)"><summary class="sublayer"><span class="layer-token layer-tone-l1">L1</span><span class="layer-token layer-tone-l2">L2</span><span class="layer-token layer-tone-l3">L3</span> 短期记忆 <span class="scount">'+unique.length+' 条</span></summary><div class="fullmem-items">';
   html+=shown.map(entry=>{
     const badges=entry.layers.map(key=>'<span class="layer-membership layer-tone-'+labels[key].toLowerCase()+'">'+labels[key]+'</span>').join('');
     return fmtMomentMini(entry.item,true).replace(/<\/div>$/, '<span class="layer-memberships">'+badges+'</span></div>');
   }).join('')||'<div class="layer-empty-evidence">暂无</div>';
   if(unique.length>shown.length) html+='<div class="fullmem-more-note">显示最近 '+shown.length+' 条，共 '+unique.length+' 条。</div>';
-  html+='</div></section>';
+  html+='</div></details>';
 
   const l4=layer4, l5=layer5, l6=layer6;
-  html+='<section class="layer-section layer-tone-l4"><div class="sublayer"><span class="layer-token layer-tone-l4">L4</span> 近期摘要 <span class="layer-asset-usage">附件 '+formatAssetBytes(layerAssetBytes.layer4)+'</span></div>'+renderSummaryLayer(l4,'l4')+'</section>';
-  html+='<section class="layer-section layer-tone-l5"><div class="sublayer"><span class="layer-token layer-tone-l5">L5</span> 远期摘要 <span class="layer-asset-usage">附件 '+formatAssetBytes(layerAssetBytes.layer5)+'</span></div>'+renderSummaryLayer(l5,'l5')+'</section>';
-  html+='<section class="layer-section layer-tone-l6"><div class="sublayer"><span class="layer-token layer-tone-l6">L6</span> 用户画像 <span class="layer-asset-usage">附件 '+formatAssetBytes(layerAssetBytes.layer6)+'</span></div>'+renderProfileFromFull(l6.profile||{},l6.summary||'',l6)+'</section>';
+  html+='<details class="layer-section layer-tone-l4" data-memory-layer="l4" '+(memoryLayerExpanded('l4')?'open':'')+' ontoggle="saveMemoryLayerDisclosure(this)"><summary class="sublayer"><span class="layer-token layer-tone-l4">L4</span> 近期摘要 <span class="layer-asset-usage">附件 '+formatAssetBytes(layerAssetBytes.layer4)+'</span></summary>'+renderSummaryLayer(l4,'l4')+'</details>';
+  html+='<details class="layer-section layer-tone-l5" data-memory-layer="l5" '+(memoryLayerExpanded('l5')?'open':'')+' ontoggle="saveMemoryLayerDisclosure(this)"><summary class="sublayer"><span class="layer-token layer-tone-l5">L5</span> 远期摘要 <span class="layer-asset-usage">附件 '+formatAssetBytes(layerAssetBytes.layer5)+'</span></summary>'+renderSummaryLayer(l5,'l5')+'</details>';
+  html+='<details class="layer-section layer-tone-l6" data-memory-layer="l6" '+(memoryLayerExpanded('l6')?'open':'')+' ontoggle="saveMemoryLayerDisclosure(this)"><summary class="sublayer"><span class="layer-token layer-tone-l6">L6</span> 用户画像 <span class="layer-asset-usage">附件 '+formatAssetBytes(layerAssetBytes.layer6)+'</span></summary>'+renderProfileFromFull(l6.profile||{},l6.summary||'',l6)+'</details>';
 
   const indices=full.indices||{};
   const indexLabels={people:'人物',locations:'地点',time_nodes:'时间',activity_events:'活动',environments:'环境',objects:'物品'};
   const total=full.layer7_total??full.moments_count??0;
-  html+='<section class="layer-section layer-tone-l7 fullmem-archive"><div class="sublayer"><span class="layer-token layer-tone-l7">L7</span> 归档记忆 <span class="layer-asset-usage">附件 '+formatAssetBytes(layerAssetBytes.layer7)+'</span><span class="scount">'+total+' 条</span></div><div class="fullmem-archive-body">';
+  html+='<details class="layer-section layer-tone-l7 fullmem-archive" data-memory-layer="l7" '+(memoryLayerExpanded('l7')?'open':'')+' ontoggle="saveMemoryLayerDisclosure(this)"><summary class="sublayer"><span class="layer-token layer-tone-l7">L7</span> 归档记忆 <span class="layer-asset-usage">附件 '+formatAssetBytes(layerAssetBytes.layer7)+'</span><span class="scount">'+total+' 条</span></summary><div class="fullmem-archive-body">';
   const archiveSamples=full.archive_samples||full.layer7_moments;
   const hasArchive=Array.isArray(archiveSamples)?archiveSamples.length>0:
     !!archiveSamples&&Object.values(archiveSamples).some(groups=>Array.isArray(groups)&&groups.some(group=>Array.isArray(group.moments)&&group.moments.length));
@@ -2577,7 +2769,7 @@ function renderFullMemory(full){
     if(hasArchive) html+=renderLayer7Archive(archiveSamples);
     if(hasEventGraph) html+=renderEntityGraph(full.entity_relationships);
   }
-  html+='</div></section>';
+  html+='</div></details>';
 
   const dayKeys=Object.keys((indices.time_nodes)||{}).filter(k=>/^\d{4}-\d{2}-\d{2}$/.test(k));
   if(curKey==='long_term' && dayKeys.length<=1){
@@ -3224,24 +3416,37 @@ async function changeInteractiveDataset(value){
   await newSession(option.scenario,option.participant,option.dataset,true);
 }
 
-async function runStep(force, automatic=false, continuousKind=null){
-  if(!intState||intState.finished||sessionLost) return;
+async function runStep(force, automatic=false, continuousKind=null, manualNightly=false){
+  if(!intState||sessionLost||(!manualNightly&&intState.finished)) return;
+  if(manualNightly&&!intState.has_memory) return;
   const completedKind=intState.current&&intState.current.kind;
   const btn=document.getElementById('runStepBtn');
   const live=document.getElementById('liveBtn');
   const cancelBtn=document.getElementById('cancelInferenceBtn');
   btn.disabled=true; if(live) live.disabled=true;
+  const nightlyAction=document.getElementById('nightlyOrganizeBtn');
+  if(nightlyAction) nightlyAction.disabled=true;
   if(cancelBtn){ cancelBtn.style.display=''; cancelBtn.disabled=false; cancelBtn.textContent='⏹ 终止当前步骤'; }
   const kindLabel=KIND_CN[continuousKind]||continuousKind||'当前类型';
   btn.textContent = force?'⏳ Qwen 实时推理中…（可终止）':(automatic?'⏳ 连续执行「'+kindLabel+'」…':'⏳ 执行中…');
   autoBusy=true;
   const progressBox=document.getElementById('nightlyProgress');
   const cacheOption=document.getElementById('nightlyCacheOption');
-  const isNightly=intState.current&&intState.current.kind==='nightly';
+  const isNightly=manualNightly||!!(intState.current&&intState.current.kind==='nightly');
   let progressStream=null;
   const progressId=(window.crypto&&crypto.randomUUID)?crypto.randomUUID():Date.now().toString(36)+Math.random().toString(36).slice(2);
   if(cacheOption) cacheOption.style.display=isNightly?'inline-flex':'none';
-  if(progressBox){progressBox.style.display='block';progressBox.innerHTML='<b>正在连接进度…</b><div style="margin-top:5px;color:#667085">步骤开始后会显示处理阶段和已完成内容。</div>';}
+  let nightlyProgressAnchor=null;
+  if(progressBox){
+    progressBox.style.display='block';
+    progressBox.innerHTML='<b>正在连接进度…</b><div style="margin-top:5px;color:#667085">步骤开始后会显示处理阶段和已完成内容。</div>';
+    if(isNightly&&progressBox.parentNode){
+      nightlyProgressAnchor=document.createComment('nightly-progress-anchor');
+      progressBox.parentNode.insertBefore(nightlyProgressAnchor,progressBox);
+      progressBox.classList.add('nightly-progress-floating');
+      document.body.appendChild(progressBox);
+    }
+  }
   progressStream=new EventSource(API+'/api/interactive/progress?run_id='+encodeURIComponent(progressId));
   progressStream.addEventListener('progress',event=>{
     let p; try{p=JSON.parse(event.data||'null');}catch(_){return;}
@@ -3250,7 +3455,8 @@ async function runStep(force, automatic=false, continuousKind=null){
     const step=p.step_index&&p.step_total?('步骤 '+p.step_index+'/'+p.step_total):'';
     const item=p.item_total?(' · 当前片段 '+(p.item_index||0)+'/'+p.item_total):'';
     const running=!!p.running;
-    const indeterminate=running&&!p.total;
+    const nightlyStageBusy=isNightProgress&&running&&Number(p.current||0)<Number(p.total||0);
+    const indeterminate=running&&(!p.total||nightlyStageBusy);
     const pct=p.total?Math.max(0,Math.min(100,Math.round((Number(p.current)||0)*100/Number(p.total)))):
       (p.step_total?Math.max(0,Math.min(100,Math.round((Math.max(0,(Number(p.step_index)||1)-1))*100/Number(p.step_total)))):0);
     const barWidth=indeterminate?'28%':pct+'%';
@@ -3275,7 +3481,8 @@ async function runStep(force, automatic=false, continuousKind=null){
     if(automatic) params.set('automatic','1');
     if(automatic && continuousKind) params.set('continuous_kind',continuousKind);
     const suffix=params.toString()?'?'+params.toString():'';
-    const r=await fetch(API+'/api/interactive/step'+suffix);
+    const endpoint=manualNightly?'/api/interactive/nightly':'/api/interactive/step';
+    const r=await fetch(API+endpoint+suffix,{method:manualNightly?'POST':'GET'});
     const st=await r.json();
     if(st.error==='busy'){
       stopAuto();
@@ -3297,7 +3504,9 @@ async function runStep(force, automatic=false, continuousKind=null){
       }
       return;
     }
-    if(!automatic && !st.step_cancelled && Number(st.pos)>Number(intState.pos) && completedKind==='add' && intState.current &&
+    if(manualNightly){
+      intState=st;
+    }else if(!automatic && !st.step_cancelled && Number(st.pos)>Number(intState.pos) && completedKind==='add' && intState.current &&
        (intState.current.inputs||[]).some(item=>item&&item.video_url)){
       const entry={step:intState.current,pos:intState.pos,resultLog:(st.log||[]).slice(-1)[0]||null};
       videoNavigation.entries=videoNavigation.entries.filter(item=>item.pos<entry.pos);
@@ -3321,6 +3530,13 @@ async function runStep(force, automatic=false, continuousKind=null){
     if(detail) detail.insertAdjacentHTML('afterbegin','<div class="note" style="color:#e5484d">步骤请求失败：'+esc(error.message||error)+'。连续运行已停止，请检查连接后重试。</div>');
   }finally{
     if(progressStream) progressStream.close();
+    if(isNightly&&progressBox){
+      progressBox.classList.remove('nightly-progress-floating');
+      if(nightlyProgressAnchor&&nightlyProgressAnchor.parentNode){
+        nightlyProgressAnchor.parentNode.insertBefore(progressBox,nightlyProgressAnchor);
+        nightlyProgressAnchor.remove();
+      }
+    }
     autoBusy=false;
     clearInteractiveSwitchNotice();
     if(cancelBtn){ cancelBtn.style.display='none'; cancelBtn.disabled=true; cancelBtn.textContent='⏹ 终止当前步骤'; }
@@ -3758,19 +3974,24 @@ function renderMemoryAddition(log){
   add('时间',moment.source_time&&[moment.source_time.day_label,moment.source_time.time_of_day,cleanMemoryText(moment.source_time.time_occasion)].filter(Boolean).join(' · ')||moment.timestamp&&moment.timestamp.replace('T',' ').slice(0,16));
   add('地点',moment.location); add('人物',moment.people); add('活动',moment.activity);
   add('物品',moment.objects); add('环境',moment.environments);
-  const summary=[cleanMemoryText(moment.scene),cleanMemoryText(moment.interaction_details)].filter(Boolean);
-  const structured=renderPersonObservations(moment.person_observations,moment);
+  const sceneDescription=cleanMemoryText(moment.scene);
+  const contentSummary=cleanMemoryText(moment.interaction_details);
+  const structured=renderPersonObservations(moment.person_observations,moment,moment.multimodal);
   const structuredCount=Array.isArray(moment.person_observations)?moment.person_observations.length:0;
   const structuredPanel=structured?'<section class="memory-supplement memory-person-primary"><div class="memory-supplement-title">人物画像 · '+structuredCount+' 人</div><div class="memory-supplement-body">'+structured+'</div></section>':'';
   const rawStoredPanel='<details class="memory-qwen-raw" data-moment-id="'+esc(moment.id||p.moment_id)+'" ontoggle="loadStoredMemoryRecord(this)"><summary>\u67e5\u770b\u8bb0\u5fc6\u5b9e\u9645\u5b58\u50a8\u683c\u5f0f (JSON)</summary><pre class="prec-raw memory-raw-json-content">\u5c55\u5f00\u540e\u8bfb\u53d6\u5f53\u524d\u8bb0\u5fc6\u5e93\u4e2d\u7684\u539f\u59cb\u8bb0\u5f55</pre></details>';
-  const media=renderMultimodalEvidence(moment,moment);
+  const media=renderMultimodalEvidence(moment,moment,{integratedPersonEntities:integratedPersonVisualEntities(moment.person_observations,moment.multimodal),showAssociatedGallery:true});
   const details=media?'<details open class="media-always-open">'+media+'</details>':'';
   const qwenPerceptionPanel=renderQwenPerceptionOutput(p);
   const resultTitle=p.memory_refreshed?'本片段记忆已更新':'本片段新增记忆';
   box.innerHTML='<article class="memory-added-card"><h3 class="memory-added-head">'+resultTitle+' <span class="memory-added-id">L7 · '+esc(moment.id||p.moment_id)+'</span></h3>'+
     structuredPanel+
-    (tags.length?'<div class="memory-added-context">'+tags.join('')+'</div>':'')+
-    (summary.length?'<div class="memory-added-summary">'+summary.map((text,index)=>'<div><b>'+(['场景','场景背景'][index]||'记忆内容')+'：</b>'+esc(text)+'</div>').join('')+'</div>':'')+
+    ((tags.length||sceneDescription||contentSummary)?'<section class="scene-info-panel"><div class="scene-info-heading">场景信息</div>'+
+      (tags.length?'<div class="memory-added-context scene-info-facets">'+tags.join('')+'</div>':'')+
+      ((sceneDescription||contentSummary)?'<div class="memory-added-summary scene-info-copy">'+
+        (sceneDescription?'<div><b>视频内容描述</b>'+esc(sceneDescription)+'</div>':'')+
+        (contentSummary?'<div><b>内容总结</b>'+esc(contentSummary)+'</div>':'')+
+      '</div>':'')+'</section>':'')+
     details+
     rawStoredPanel+'</article>';
   if(qwenBox)qwenBox.innerHTML=qwenPerceptionPanel;
@@ -3857,6 +4078,11 @@ function stopAuto(){
   if(b) b.textContent='⏩ 连续运行当前类型';
 }
 
+function runNightlyOrganize(){
+  if(autoBusy||!intState||sessionLost||!intState.has_memory) return;
+  runStep(false,false,null,true);
+}
+
 function updateRunBtn(){
   const btn=document.getElementById('runStepBtn');
   const live=document.getElementById('liveBtn');
@@ -3864,7 +4090,15 @@ function updateRunBtn(){
   const isAdd = !!(intState && intState.current && ['add','add_batch'].includes(intState.current.kind));
   btn.disabled=!ok;
   const isNightly=!!(intState&&intState.current&&intState.current.kind==='nightly');
-  btn.textContent = sessionLost?'▶ 运行此步':intState&&intState.current_completed?'✅ 本段已完成':ok?(isNightly?'🌙 场景结束，夜间归纳':'▶ 运行此步'):'✅ 全部完成';
+  btn.textContent = sessionLost?'▶ 运行此步':intState&&intState.current_completed?'✅ 本段已完成':ok?'▶ 运行此步':'✅ 全部完成';
+  btn.style.display=isNightly?'none':'';
+  const nightlyButton=document.getElementById('nightlyOrganizeBtn');
+  if(nightlyButton){
+    const hasMemory=!!(intState&&intState.has_memory);
+    nightlyButton.disabled=!hasMemory||sessionLost||autoBusy;
+    nightlyButton.title=!hasMemory?'写入至少一条记忆后即可整理':autoBusy?'当前操作结束后即可整理':'立即归纳当前已累计的记忆，不影响后续视频步骤';
+    nightlyButton.textContent='🌙 夜间整理归纳';
+  }
   if(live){ live.disabled=!ok||!isAdd; live.style.display=ok&&isAdd?'':'none'; }
   const ab=document.getElementById('autoBtn');
   if(ab){
@@ -4124,7 +4358,9 @@ function videoTag(m, shellId){
     +'<div class="video-actions" data-shell-id="'+esc(shellId)+'">'
     +'<button type="button" class="btn preview-load">⚡ 快速预览</button>'
     +'<button type="button" class="btn original-load">原始画质</button></div>'
-    +'<video class="clipvid" controls preload="none" playsinline muted autoplay hidden'
+    +'<div class="video-placeholder" aria-live="polite"><span class="video-placeholder-icon">▶</span>'
+    +'<span class="video-placeholder-copy"><b>正在载入视频预览</b><small>载入后显示首帧；点击播放器播放，声音已开启</small></span></div>'
+    +'<video class="clipvid" controls preload="none" playsinline hidden'
     +' data-original-url="'+esc(m.video_url)+'" data-preview-url="'+esc(previewUrl)+'"'
     +' data-cs="'+(m.clip_start||0)+'" data-ce="'+(m.clip_end!=null?m.clip_end:'')+'"></video>'
     +'<div class="video-status" aria-live="polite"></div></div>';
@@ -4135,6 +4371,7 @@ function bindClips(){
     if(shell.dataset.bound) return;
     shell.dataset.bound='1';
     const v=shell.querySelector('video');
+    const placeholder=shell.querySelector('.video-placeholder');
     const status=shell.querySelector('.video-status');
     const actionRow=document.querySelector('.video-actions[data-shell-id="'+shell.id+'"]');
     const fast=(actionRow||shell).querySelector('.preview-load');
@@ -4143,6 +4380,12 @@ function bindClips(){
     v._ce=v.dataset.ce!==''&&v.dataset.ce!=null?parseFloat(v.dataset.ce):null;
     v._originalCs=v._cs;
     v._originalCe=v._ce;
+    const setLoading=loading=>{fast.disabled=loading;original.disabled=loading;};
+    const showPlaceholder=message=>{
+      v.hidden=true;
+      placeholder.hidden=false;
+      if(message) status.textContent=message;
+    };
     v.onloadedmetadata=()=>{
       if(v._ce!=null&&v.duration&&v._ce>v.duration) v._ce=Math.max(0,v.duration-.05);
       const start=Math.min(v._cs,Math.max(0,(v.duration||v._cs)-.05));
@@ -4150,56 +4393,51 @@ function bindClips(){
     };
     v.ontimeupdate=()=>{if(v._ce!=null&&v.currentTime>=v._ce) v.currentTime=v._cs;};
     v.onloadeddata=()=>{
-      fast.disabled=false;
-      status.textContent=v.dataset.usingOriginal==='1'?'原始视频已就绪':'低清预览已就绪（服务器已缓存）';
-      if(v.dataset.autoPreview==='1'){
-        v.muted=true;
-        const playing=v.play();
-        if(playing) playing.then(()=>{status.textContent='';})
-          .catch(()=>{status.textContent='预览已就绪，点击播放器上的播放按钮开始观看。';});
-      }
+      placeholder.hidden=true;
+      v.hidden=false;
+      setLoading(false);
+      status.textContent=(v.dataset.usingOriginal==='1'?'原始视频已就绪':'低清预览已就绪（服务器缓存）')+'；点击播放器播放，声音已开启。';
+      fast.textContent=v.dataset.usingOriginal==='1'?'⚡ 快速预览':'✓ 预览已就绪';
     };
-    v.onerror=()=>{v.hidden=true;status.textContent='视频加载失败；可重试快速预览，或切换原始画质。';fast.disabled=false;};
+    v.onerror=()=>{
+      setLoading(false);
+      fast.textContent='↻ 重试预览';
+      showPlaceholder(v.dataset.usingOriginal==='1'?'原始视频暂时无法读取；可重试快速预览或检查 SSH 隧道。':'低清预览读取失败；可重试预览，或切换原始画质。');
+    };
     async function load(useOriginal){
-      fast.disabled=true;
-      fast.textContent=useOriginal?'⏳ 加载原片…':'⏳ 准备快速预览…';
-      status.textContent=useOriginal?'正在通过 SSH 隧道读取原始视频…':'正在准备低清预览；首次生成会稍等，之后直接读取缓存…';
+      setLoading(true);
+      fast.textContent=useOriginal?'⏳ 原片请求中…':'⏳ 准备快速预览…';
+      showPlaceholder(useOriginal?'正在通过 SSH 隧道读取原始视频…':'正在读取服务器预览缓存…');
       try{
         if(!useOriginal){
           const statusUrl=new URL(v.dataset.originalUrl,location.href);
           statusUrl.pathname='/api/video_preview/status';
-          if(v._originalCe!=null){
-            statusUrl.searchParams.set('start',v._originalCs);
-            statusUrl.searchParams.set('end',v._originalCe);
-          }
+          if(v._originalCe!=null){statusUrl.searchParams.set('start',v._originalCs);statusUrl.searchParams.set('end',v._originalCe);}
           const deadline=Date.now()+250000;
-          let delay=500;
+          let delay=500,ready=false;
           while(Date.now()<deadline){
             const r=await fetch(statusUrl.toString(),{cache:'no-store'});
             if(!r.ok) throw new Error('预览服务返回 '+r.status);
             const state=await r.json();
-            if(state.state==='ready') break;
+            if(state.state==='ready'){ready=true;break;}
             if(state.state==='error') throw new Error(state.message||'预览生成失败');
             status.textContent=state.state==='queued'?'预览任务排队中…':'服务器正在生成轻量预览，页面可继续使用…';
             await new Promise(resolve=>setTimeout(resolve,delay));
             delay=Math.min(2000,Math.round(delay*1.4));
           }
-          if(Date.now()>=deadline) throw new Error('预览生成超时，请稍后重试');
+          if(!ready) throw new Error('预览生成超时，请稍后重试');
         }
         v.dataset.usingOriginal=useOriginal?'1':'0';
-        v.dataset.autoPreview=(!useOriginal&&shell.dataset.autoload==='1')?'1':'0';
         v._cs=useOriginal?v._originalCs:0;
         v._ce=useOriginal?v._originalCe:null;
+        v.muted=false;
         v.src=useOriginal?v.dataset.originalUrl:v.dataset.previewUrl;
-        v.hidden=false;
         v.load();
-        if(v.dataset.autoPreview==='1') v.muted=true;
-        fast.textContent=useOriginal?'⚡ 快速预览':'✓ 视频预览已就绪';
+        status.textContent='视频数据已就绪，正在显示首帧…';
       }catch(err){
-        v.hidden=true;
-        status.textContent='快速预览暂不可用：'+err.message+'。可以切换原始画质。';
-        fast.disabled=false;
+        setLoading(false);
         fast.textContent='↻ 重试预览';
+        showPlaceholder((useOriginal?'原始视频暂不可用：':'快速预览暂不可用：')+err.message+'。可重试或切换画质。');
       }
     }
     fast.addEventListener('click',()=>load(false));
@@ -4207,7 +4445,6 @@ function bindClips(){
     if(shell.dataset.autoload==='1') load(false);
   });
 }
-
 function updatePlaybackControls(){
   const hasSteps=snaps.length>0;
   document.getElementById('prevBtn').disabled=!hasSteps||cur<=0;
@@ -4490,6 +4727,10 @@ fetch(API+'/api/multimodal-capacity',{cache:'no-store'})
     document.getElementById('multimodalLatencyMetric').textContent='已保存记忆的索引检索耗时暂不可用：'+error.message;
   });
 
+/* GENERATED MODULE evidence_gallery.js:START */
+// Evidence gallery and image lightbox module, embedded by build_viz.py.
+function escapeHtml(value){return String(value==null?'':value).replace(/[<>&"']/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c]));}
+
 function evidenceImageCaption(image){
   const at=Number(image.at_s||0).toFixed(2);
   return image.exact?'对应画面 · '+at+' 秒':image.requested_at_s!=null?'最近抽样画面 · '+at+' 秒（事实位置 '+Number(image.requested_at_s).toFixed(2)+' 秒）':'片段关键帧 · '+at+' 秒';
@@ -4506,16 +4747,16 @@ function openEntityEvidence(button){
   if(data.clipStart!=null)rows.push(['视频范围',Number(data.clipStart).toFixed(2)+'–'+Number(data.clipEnd??data.clipStart).toFixed(2)+' 秒']);
   if(data.times&&data.times.length)rows.push(['画面时间',data.times.map(time=>Number(time).toFixed(2)+' 秒').join('、')]);
   if(data.audioStart!=null)rows.push(['转写时间',Number(data.audioStart).toFixed(2)+'–'+Number(data.audioEnd??data.audioStart).toFixed(2)+' 秒']);
-  const metadata=rows.length?'<dl class="entity-evidence-meta">'+rows.map(([label,value])=>'<dt>'+esc(label)+'</dt><dd>'+esc(value)+'</dd>').join('')+'</dl>':'';
-  const text=data.evidence?'<div class="entity-evidence-text"><b>对应记忆内容</b><br>'+esc(data.evidence).replace(/\n/g,'<br>')+'</div>':'';
+  const metadata=rows.length?'<dl class="entity-evidence-meta">'+rows.map(([label,value])=>'<dt>'+escapeHtml(label)+'</dt><dd>'+escapeHtml(value)+'</dd>').join('')+'</dl>':'';
+  const text=data.evidence?'<div class="entity-evidence-text"><b>对应记忆内容</b><br>'+escapeHtml(data.evidence).replace(/\n/g,'<br>')+'</div>':'';
   const images=(Array.isArray(data.images)?data.images:[]).filter(image=>image&&image.url);
   let visual='';
   if(images.length){
     const first=images[0],caption=evidenceImageCaption(first);
-    const thumbs=images.length>1?'<div class="entity-evidence-gallery-thumbs" aria-label="选择画面">'+images.map((image,index)=>'<button type="button" class="entity-evidence-gallery-thumb'+(index===0?' active':'')+'" data-gallery-index="'+index+'" aria-label="查看第 '+(index+1)+' 张画面" aria-pressed="'+(index===0?'true':'false')+'"><img loading="lazy" src="'+esc(image.url)+'" alt=""><span>'+Number(image.at_s||0).toFixed(2)+' 秒</span></button>').join('')+'</div>':'';
+    const thumbs=images.length>1?'<div class="entity-evidence-gallery-thumbs" aria-label="选择画面">'+images.map((image,index)=>'<button type="button" class="entity-evidence-gallery-thumb'+(index===0?' active':'')+'" data-gallery-index="'+index+'" aria-label="查看第 '+(index+1)+' 张画面" aria-pressed="'+(index===0?'true':'false')+'"><img loading="lazy" src="'+escapeHtml(image.url)+'" alt=""><span>'+(image.nightly_importance?'⭐ ':'')+Number(image.at_s||0).toFixed(2)+' 秒</span></button>').join('')+'</div>':'';
     visual='<div class="entity-evidence-frames entity-evidence-gallery" data-gallery-count="'+images.length+'">'
       +'<button type="button" class="entity-evidence-gallery-nav" data-gallery-move="-1" aria-label="上一张画面" '+(images.length>1?'':'hidden')+'>‹</button>'
-      +'<figure class="entity-evidence-frame entity-evidence-current"><img loading="eager" src="'+esc(first.url)+'" '+(first.original?'data-original-url="'+esc(first.original)+'"':'')+' alt="来源画面 '+Number(first.at_s||0).toFixed(2)+' 秒"><figcaption>'+caption+(first.original?' · 点击显示原始帧':'')+'</figcaption></figure>'
+      +'<figure class="entity-evidence-frame entity-evidence-current"><img loading="eager" src="'+escapeHtml(first.url)+'" '+(first.original?'data-original-url="'+escapeHtml(first.original)+'"':'')+' alt="来源画面 '+Number(first.at_s||0).toFixed(2)+' 秒"><span class="entity-evidence-highlight" '+(first.nightly_importance?'':'hidden')+' title="'+escapeHtml((first.nightly_importance||{}).reason||'夜间整理标记的重要画面')+'">⭐ 夜间重点</span><figcaption>'+caption+(first.original?' · 点击显示原始帧':'')+'</figcaption></figure>'
       +'<button type="button" class="entity-evidence-gallery-nav" data-gallery-move="1" aria-label="下一张画面" '+(images.length>1?'':'hidden')+'>›</button>'
       +'<div class="entity-evidence-gallery-status"><span class="entity-evidence-gallery-counter">1 / '+images.length+'</span><span>'+(images.length>1?'用 ← → 或缩略图切换':'关联画面预览')+'</span></div>'+thumbs+'</div>';
   }else{
@@ -4548,6 +4789,8 @@ function openEntityEvidence(button){
       if(image.original)preview.dataset.originalUrl=image.original;else delete preview.dataset.originalUrl;
       showingOriginal=false;
       setCaption(image);
+      const badge=gallery.querySelector('.entity-evidence-highlight');
+      if(badge){badge.hidden=!image.nightly_importance;badge.title=(image.nightly_importance||{}).reason||'夜间整理标记的重要画面';}
       gallery.querySelector('.entity-evidence-gallery-counter').textContent=(index+1)+' / '+images.length;
       gallery.querySelectorAll('.entity-evidence-gallery-thumb').forEach((thumb,i)=>{
         thumb.classList.toggle('active',i===index);
@@ -4586,49 +4829,126 @@ function openEntityEvidence(button){
   });
 })();
 
-// Hover over a stacked memory album to cycle its cover frames; leaving stops the carousel.
+// Bind each evidence album directly. Preload and decode the incoming page before
+// animating, then swap the two image layers instead of replacing the visible image.
 (()=>{
+  const active=new Set();
   const readFrames=album=>{
     if(Array.isArray(album._albumFrames))return album._albumFrames;
     try{album._albumFrames=JSON.parse(decodeURIComponent(album.dataset.albumFrames||''));}
     catch(_){album._albumFrames=[];}
     return album._albumFrames;
   };
-  const paint=(album,index)=>{
+  const preload=(album,url)=>{
+    if(!url)return Promise.resolve(null);
+    album._albumImageCache=album._albumImageCache||new Map();
+    if(album._albumImageCache.has(url))return album._albumImageCache.get(url);
+    const promise=new Promise(resolve=>{
+      const image=new Image();let settled=false;
+      const done=async()=>{
+        if(settled)return;settled=true;
+        if(image.naturalWidth){try{await image.decode?.();}catch(_){} resolve(image);}
+        else resolve(null);
+      };
+      image.decoding='async';image.onload=done;image.onerror=()=>{if(!settled){settled=true;resolve(null);}};
+      image.src=url;
+      if(image.complete)done();
+    });
+    album._albumImageCache.set(url,promise);
+    return promise;
+  };
+  const detectOrientation=album=>{
+    if(album.dataset.orientationLocked==='true')return;
+    const cover=album.querySelector('.album-cover');
+    if(!cover?.naturalWidth||!cover?.naturalHeight)return;
+    const ratio=cover.naturalWidth/cover.naturalHeight;
+    album.dataset.orientation=ratio<.82?'portrait':ratio>1.2?'landscape':'square';
+    album.dataset.orientationLocked='true';
+  };
+  const advance=async(album,generation)=>{
     const frames=readFrames(album);
-    if(!frames.length)return;
-    index=(index+frames.length)%frames.length;
-    album.dataset.albumIndex=String(index);
-    const assign=(slot,offset)=>{
-      const image=album.querySelector('[data-album-slot="'+slot+'"]');
-      if(image)image.src=frames[(index+offset+frames.length)%frames.length].url;
-    };
-    assign('album-back',-1);assign('album-middle',-2);assign('album-cover',0);
+    if(frames.length<2||album._albumAnimating||album._albumAdvancing||generation!==album._albumGeneration)return;
+    album._albumAdvancing=true;
+    const current=Number(album.dataset.albumIndex||0)%frames.length;
+    const next=(current+1)%frames.length,frame=frames[next];
+    const ready=await preload(album,frame.url);
+    if(!ready||generation!==album._albumGeneration||album.dataset.hoverCycling!=='true'){
+      if(generation===album._albumGeneration){
+        album._albumAdvancing=false;
+        if(album.dataset.hoverCycling==='true')album._albumTimer=setTimeout(()=>advance(album,generation),450);
+      }
+      return;
+    }
+    const cover=album.querySelector('.album-cover'),turn=album.querySelector('.album-turn');
+    if(!cover||!turn){album._albumAdvancing=false;return;}
+    turn.classList.remove('is-turning');
+    turn.src=frame.url;
+    try{await turn.decode?.();}catch(_){}
+    if(generation!==album._albumGeneration||album.dataset.hoverCycling!=='true')return;
+    album._albumAdvancing=false;album._albumAnimating=true;
+    // Both layers are decoded before the animation becomes visible. The current
+    // cover stays in place; the next page rotates in above it, preventing a flash.
+    void turn.offsetWidth;
+    turn.classList.add('is-turning');
+    album._albumFinishTimer=setTimeout(()=>{
+      if(generation!==album._albumGeneration||album.dataset.hoverCycling!=='true')return;
+      turn.classList.remove('album-turn','is-turning');
+      turn.classList.add('album-cover');
+      cover.classList.remove('album-cover');
+      cover.classList.add('album-turn');
+      album.dataset.albumIndex=String(next);
+      const badge=album.querySelector('.memory-photo-album-highlight');
+      if(badge){badge.hidden=!frame.important;badge.title=frame.importanceReason||'夜间整理标记的重要画面';}
+      album._albumAnimating=false;album._albumFinishTimer=null;
+      album._albumTimer=setTimeout(()=>advance(album,generation),520);
+    },390);
   };
   const stop=album=>{
-    if(album._albumTimer){clearInterval(album._albumTimer);album._albumTimer=null;}
-    album.classList.remove('is-cycling');
+    album._albumGeneration=(album._albumGeneration||0)+1;
+    if(album._albumDelay){clearTimeout(album._albumDelay);album._albumDelay=null;}
+    if(album._albumTimer){clearTimeout(album._albumTimer);album._albumTimer=null;}
+    if(album._albumFinishTimer){clearTimeout(album._albumFinishTimer);album._albumFinishTimer=null;}
+    album._albumAnimating=false;album._albumAdvancing=false;
+    album.querySelector('.album-turn')?.classList.remove('is-turning');
+    album.classList.remove('is-cycling');delete album.dataset.hoverCycling;active.delete(album);
+    album._albumImageCache?.clear();
   };
   const start=album=>{
-    if(album._albumTimer||readFrames(album).length<2)return;
-    album.classList.add('is-cycling');
-    album._albumTimer=setInterval(()=>{
-      const cover=album.querySelector('.album-cover');
-      cover?.classList.remove('is-turning');
-      if(cover)void cover.offsetWidth;
-      cover?.classList.add('is-turning');
-      setTimeout(()=>paint(album,Number(album.dataset.albumIndex||0)+1),180);
-      setTimeout(()=>cover?.classList.remove('is-turning'),380);
-    },1150);
+    if(album._albumDelay||album._albumTimer||album._albumAnimating||album._albumAdvancing||readFrames(album).length<2)return;
+    const generation=(album._albumGeneration||0)+1;album._albumGeneration=generation;
+    active.add(album);album.classList.add('is-cycling');album.dataset.hoverCycling='true';
+    album._albumDelay=setTimeout(()=>{
+      album._albumDelay=null;
+      advance(album,generation);
+    },320);
   };
-  setInterval(()=>{
-    const hovered=document.querySelector('.memory-photo-album:hover');
-    document.querySelectorAll('.memory-photo-album').forEach(album=>{
-      if(album===hovered)start(album);else stop(album);
-    });
-  },400);
+  const bind=album=>{
+    if(!album||album.dataset.albumHoverBound)return;
+    album.dataset.albumHoverBound='true';
+    const cover=album.querySelector('.album-cover');
+    cover?.addEventListener('load',()=>detectOrientation(album));
+    detectOrientation(album);
+    const first=readFrames(album)[0],badge=album.querySelector('.memory-photo-album-highlight');
+    if(badge){badge.hidden=!first?.important;badge.title=first?.importanceReason||'夜间整理标记的重要画面';}
+    album.addEventListener('pointerenter',()=>start(album));
+    album.addEventListener('pointerleave',()=>stop(album));
+    album.addEventListener('focusin',()=>start(album));
+    album.addEventListener('focusout',event=>{if(!album.contains(event.relatedTarget))stop(album);});
+  };
+  const scan=root=>{
+    if(root instanceof Element&&root.matches('.memory-photo-album'))bind(root);
+    root.querySelectorAll?.('.memory-photo-album').forEach(bind);
+  };
+  const initialize=()=>{
+    scan(document);
+    if(document.body)new MutationObserver(records=>records.forEach(record=>record.addedNodes.forEach(node=>{
+      if(node.nodeType===Node.ELEMENT_NODE)scan(node);
+    }))).observe(document.body,{childList:true,subtree:true});
+  };
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',initialize,{once:true});
+  else initialize();
+  document.addEventListener('visibilitychange',()=>{if(document.hidden)active.forEach(stop);});
 })();
-
 // Open evidence images at their full stored resolution; Escape, backdrop, or close button dismisses.
 (()=>{
   const selector='.media-evidence img, .object-index-moment img, .entity-event img, .entity-evidence-dialog .entity-evidence-current img';
@@ -4708,6 +5028,7 @@ function openEntityEvidence(button){
     if(node.nodeType===Node.ELEMENT_NODE) decorate(node);
   }))).observe(document.body,{childList:true,subtree:true});
 })();
+/* GENERATED MODULE evidence_gallery.js:END */
 
 init().catch(error=>{
   document.getElementById('stepInfo').textContent='连接失败：'+error.message;

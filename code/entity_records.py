@@ -7,7 +7,7 @@ from copy import deepcopy
 import hashlib
 import re
 
-from memory import normalize_object_transition_facts, object_visual_observations
+from memory import derive_object_states, normalize_object_transition_facts, object_visual_observations
 from face_identity import link_records
 
 
@@ -16,12 +16,13 @@ def memory_facts(moment):
     view = deepcopy(moment or {})
     normalize_object_transition_facts(view)
     object_rows = object_visual_observations(view)
+    object_states = derive_object_states(view)
     return {key: deepcopy(view.get(key) or default) for key, default in (
         ('scene', ''), ('user_action', ''), ('interaction_details', ''),
         ('people', []), ('location', ''), ('activity', ''),
         ('objects', []), ('environments', []), ('person_observations', []),
         ('temporal_facts', []), ('object_observations', object_rows),
-        ('source_time', {}), ('source_provenance', {}), ('source_evidence', ''),
+        ('object_states', object_states), ('source_time', {}), ('source_provenance', {}), ('source_evidence', ''),
     )}
 
 
@@ -46,10 +47,49 @@ def _speech_placeholder(name):
 
 
 class EntityRecordIndex:
-    def __init__(self, layer7, asset_root=None, identity_correction_path=None):
+    def __init__(self, layer7, asset_root=None, identity_correction_path=None,
+                 compute_missing_face_embeddings=True):
         groups = {}
         active = [m for m in (layer7.get('moments') or {}).values()
                   if isinstance(m, dict) and not m.get('merged_into') and not m.get('stale')]
+        # A crop assigned to multiple labels is ambiguous, even if Qwen marked
+        # each assignment verified. Hide it from every profile until corrected.
+        asset_labels = {}
+        for moment in active:
+            for item in ((moment.get("multimodal") or {}).get("person_visuals") or {}).get("items") or []:
+                if not isinstance(item, dict):
+                    continue
+                label = _name(item.get("person")).casefold()
+                if not label:
+                    continue
+                for ref in item.get("frame_refs") or []:
+                    if (isinstance(ref, dict) and ref.get("visual_role") == "face_crop"
+                            and ref.get("identity_verified") is True and ref.get("asset")):
+                        asset_labels.setdefault(str(ref["asset"]), set()).add(label)
+        ambiguous_face_assets = {asset for asset, labels in asset_labels.items() if len(labels) > 1}
+
+        # Nightly identity links are source-scoped: only the cited target and
+        # evidence moments join the stable person gallery.
+        stable_person_members = set()
+        archive = layer7.get('moments') or {}
+        for target in active:
+            target_id = str(target.get('id') or '')
+            for link in target.get('nightly_identity_resolutions') or []:
+                if not isinstance(link, dict):
+                    continue
+                canonical = str(link.get('canonical_entity') or '').strip().casefold()
+                if not canonical:
+                    continue
+                stable_person_members.add((target_id, canonical))
+                for source_id in link.get('evidence_moment_ids') or []:
+                    source = archive.get(str(source_id))
+                    if isinstance(source, dict) and canonical in {
+                        str(value).strip().casefold() for value in source.get('people') or []
+                    } | {
+                        str(row.get('entity') or '').strip().casefold()
+                        for row in source.get('person_observations') or [] if isinstance(row, dict)
+                    }:
+                        stable_person_members.add((str(source_id), canonical))
         self.source_moments = len(active)
         self.structured_moments = 0
         for original_moment in active:
@@ -147,7 +187,8 @@ class EntityRecordIndex:
                     'jake', 'alice', 'tasha', 'lucia', 'katrina', 'shure'
                 }
                 if entity_kind == 'person':
-                    scope = '' if named_in_frame or known_participant else segment
+                    resolved_identity = (mid, label.casefold()) in stable_person_members
+                    scope = '' if named_in_frame or known_participant or resolved_identity else segment
                 elif entity_kind == 'object':
                     scope = segment
                 else:
@@ -188,10 +229,23 @@ class EntityRecordIndex:
                 selected_objects = [deepcopy(x) for x in object_rows
                                     if _name(x.get('object')).casefold() == label.casefold()]
                 visual_people = (media.get('person_visuals') or {}).get('items') or []
-                person_crops = [deepcopy(ref) for item in visual_people
-                                if person_label(item.get('person')).casefold() == label.casefold()
-                                for ref in item.get('frame_refs') or []
-                                if ref.get('visual_role') in {'face_crop', 'person_crop'}]
+                person_crops = []
+                seen_person_crops = set()
+                for item in visual_people:
+                    if person_label(item.get('person')).casefold() != label.casefold():
+                        continue
+                    for ref in item.get('frame_refs') or []:
+                        if (ref.get('visual_role') != 'face_crop'
+                                or ref.get('identity_verified') is not True
+                                or not str(ref.get('identity_assignment') or '').startswith('qwen_visual_anchor+')
+                                or str(ref.get('asset') or '') in ambiguous_face_assets):
+                            continue
+                        crop_key = (str(ref.get('asset') or ''),
+                                    str(ref.get('at_s', ref.get('frame_time_s', ''))))
+                        if crop_key in seen_person_crops:
+                            continue
+                        seen_person_crops.add(crop_key)
+                        person_crops.append(deepcopy(ref))
                 person_crops.sort(key=lambda ref: (
                     0 if ref.get('visual_role') == 'face_crop' else 1,
                     float(ref.get('at_s') or 0)))
@@ -205,7 +259,7 @@ class EntityRecordIndex:
                     'person_observations': selected_people,
                     'temporal_facts': selected_facts,
                     'object_observations': selected_objects,
-                    'images': crops[:6],
+                    'images': crops[:12],
                     'image_kind': 'person_crop' if person_crops else ('object_crop' if object_crops else 'none'),
                 })
                 record['events'].append(event)
@@ -220,7 +274,9 @@ class EntityRecordIndex:
             record['_search_text'] = None
         records.sort(key=lambda record: (
             -record['fact_count'], -record['event_count'], record['name'].casefold(), record['id']))
-        self.identity_link_status = link_records(records, asset_root=asset_root, correction_path=identity_correction_path)
+        self.identity_link_status = link_records(
+            records, asset_root=asset_root, correction_path=identity_correction_path,
+            compute_missing=compute_missing_face_embeddings)
         self.records = records
 
     def query(self, kind='all', query='', offset=0, limit=12):

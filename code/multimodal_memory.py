@@ -21,7 +21,7 @@ from typing import Any
 
 IMAGE_LIMIT = 12_000
 TEMPORAL_IMAGE_LIMIT = 6_000
-CAPTURE_VERSION = "temporal-v9-source-resolution-yolo-face-evidence-2026-10-19"
+CAPTURE_VERSION = "temporal-v10-qwen-six-input-frames-2026-10-20"
 
 
 def media_refs(media: dict, kind: str) -> list[dict]:
@@ -130,7 +130,8 @@ class MultimodalAssetStore:
     def sample_visual_candidates(self, video: str | Path, start_s: float,
                                  end_s: float | None, source_id: str = "",
                                  count: int = 7,
-                                 full_resolution: bool = False) -> list[dict[str, Any]]:
+                                 full_resolution: bool = False,
+                                 sample_times: list[float] | None = None) -> list[dict[str, Any]]:
         """Sample transient candidates; callers persist only the selected frames."""
         path = Path(video)
         if not path.is_file():
@@ -148,9 +149,13 @@ class MultimodalAssetStore:
         if end <= start:
             return []
         last_time = max(start, end - 0.1)
-        n = max(3, min(7, int(count or 7)))
-        times = sorted(set(round(start + (last_time - start) * i / (n - 1), 3)
-                           for i in range(n)))
+        if sample_times:
+            times = sorted(set(round(float(value), 3) for value in sample_times
+                               if start <= float(value) <= last_time))
+        else:
+            n = max(3, min(7, int(count or 7)))
+            times = sorted(set(round(start + (last_time - start) * i / (n - 1), 3)
+                               for i in range(n)))
         frames = []
         for sample_time in times:
             if full_resolution:
@@ -297,8 +302,9 @@ class MultimodalAssetStore:
                 source_id: str = "",
                 fields: dict | None = None,
                 recent_media: list[dict] | None = None,
-                source_provenance: dict | None = None) -> dict[str, Any]:
-        """Retain three ordered visual instants for the memory record.
+                source_provenance: dict | None = None,
+                qwen_input_frames: list[dict] | None = None) -> dict[str, Any]:
+        """Retain the actual Qwen input frames as scene-checkback evidence.
 
         The structured Qwen scene/action/entities remain in the parent moment.
         Missing media only removes that modality; it never erases text memory.
@@ -355,169 +361,83 @@ class MultimodalAssetStore:
             "source_video_id", _portable_video_id(path))
         result["source_provenance"].update({"clip_start_s": round(start, 3),
                                             "clip_end_s": round(end, 3)})
-        # Near-identical pictures remain separate observations. Content-addressed
-        # _put shares only identical encoded bytes; dHash is a retrieval cue.
-        last_time = max(start, end - 0.1)
-        times = sorted(set(round(t, 3) for t in (
-            start, (start + last_time) / 2, last_time)))
+        # These are the JPEG payloads submitted to Qwen, not another set of
+        # independently sampled/downsized scene thumbnails. Store each instant's
+        # timestamp and ordinal even when content-addressing shares identical bytes.
         frames = []
-        for sample_time in times:
-            for width, quality in ((384, 58), (320, 48), (288, 42), (224, 32), (176, 25)):
-                image = _run_ffmpeg([
-                    "-ss", f"{sample_time:.3f}", "-i", str(path), "-frames:v", "1",
-                    "-vf", f"scale={width}:-2", "-c:v", "libwebp",
-                    "-quality", str(quality), "-f", "webp", "pipe:1",
-                ])
-                try:
-                    image_hash = _visual_hash(image) if image else ""
-                except Exception:
-                    continue
-                if not image_hash:
-                    continue
-                saved = self._put("visual", image, "webp", TEMPORAL_IMAGE_LIMIT)
-                if saved:
-                    saved.update({"mime": "image/webp", "dhash": image_hash,
-                                  "at_s": sample_time, "source_id": str(source_id)})
-                    frames.append(saved)
-                    break
+        for index, item in enumerate(qwen_input_frames or [], start=1):
+            if not isinstance(item, dict):
+                continue
+            image = item.get("bytes")
+            if not isinstance(image, bytes) or not image:
+                continue
+            try:
+                sample_time = round(float(item.get("at_s")), 3)
+            except (TypeError, ValueError):
+                continue
+            saved = self._put("visual", image, "jpg", 8 * 1024 * 1024)
+            if not saved:
+                continue
+            saved.update({
+                "mime": "image/jpeg", "at_s": sample_time,
+                "source_id": str(source_id), "frame_index": index,
+                "visual_role": "qwen_input_frame", "quality_tier": "recent",
+            })
+            frames.append(saved)
         if frames:
-            for frame in frames:
-                frame["quality_tier"] = "recent"
             result["visual_quality_tier"] = "recent"
+            result["visual_frame_source"] = "qwen_input"
+            result["qwen_input_frame_count"] = len(qwen_input_frames or [])
             result["visual_frames"] = frames
             result["visual"] = dict(frames[len(frames) // 2])
+        else:
+            # Compatibility fallback for callers without a Qwen result. These
+            # samples remain explicitly distinct from Qwen inputs in the UI.
+            last_time = max(start, end - 0.1)
+            times = sorted(set(round(t, 3) for t in (
+                start, (start + last_time) / 2, last_time)))
+            for sample_time in times:
+                for width, quality in ((384, 58), (320, 48), (288, 42), (224, 32), (176, 25)):
+                    image = _run_ffmpeg([
+                        "-ss", f"{sample_time:.3f}", "-i", str(path), "-frames:v", "1",
+                        "-vf", f"scale={width}:-2", "-c:v", "libwebp",
+                        "-quality", str(quality), "-f", "webp", "pipe:1",
+                    ])
+                    try:
+                        image_hash = _visual_hash(image) if image else ""
+                    except Exception:
+                        continue
+                    if not image_hash:
+                        continue
+                    saved = self._put("visual", image, "webp", TEMPORAL_IMAGE_LIMIT)
+                    if saved:
+                        saved.update({"mime": "image/webp", "dhash": image_hash,
+                                      "at_s": sample_time, "source_id": str(source_id),
+                                      "visual_role": "source_sample"})
+                        frames.append(saved)
+                        break
+            if frames:
+                for frame in frames:
+                    frame["quality_tier"] = "recent"
+                result["visual_quality_tier"] = "recent"
+                result["visual_frame_source"] = "source_sample_fallback"
+                result["visual_frames"] = frames
+                result["visual"] = dict(frames[len(frames) // 2])
 
         result["capture_status"] = "captured" if frames else "no_decodable_media"
         return result
 
     def capture_context_entities(self, frames: list[dict], fields: dict | None = None,
                                  source_id: str = "", clip_start_s: float = 0.0) -> dict[str, Any]:
-        """Attach compact source-frame crops to scene, place, environment, activity, and event memories."""
-        fields = fields if isinstance(fields, dict) else {}
-        frames = [frame for frame in (frames or [])
-                  if isinstance(frame, dict) and isinstance(frame.get("bytes"), bytes)]
-        output = {"schema": 1, "status": "completed" if frames else "no_visual_evidence",
-                  "method": "source-grounded padded context crops", "assets": [], "items": []}
-        if not frames:
-            return output
+        """Deprecated compatibility shim: context facts remain text, not image entities.
 
-        mid = len(frames) // 2
-        action_facts = []
-        static_predicates = {"appearance", "appeared", "located_at", "occurred_at",
-                             "state", "present", "visible", "environment"}
-        for fact in fields.get("temporal_facts") or []:
-            if not isinstance(fact, dict):
-                continue
-            predicate = str(fact.get("predicate") or "").casefold()
-            if predicate not in static_predicates:
-                action_facts.append(fact)
-
-        def nearest_frame(fact=None):
-            if not isinstance(fact, dict):
-                return mid
-            ref = fact.get("evidence_ref") if isinstance(fact.get("evidence_ref"), dict) else {}
-            value = fact.get("frame_time_s", ref.get("frame_time_s"))
-            try:
-                target = float(value)
-                start = float(clip_start_s or 0)
-                # Candidate timestamps are source-video seconds. Qwen evidence can
-                # be relative to a clip, so accept either representation.
-                if target < start - 0.05:
-                    target += start
-                return min(range(len(frames)),
-                           key=lambda index: abs(float(frames[index].get("at_s") or 0) - target))
-            except (TypeError, ValueError):
-                pass
-            try:
-                frame_index = int(fact.get("frame_index"))
-            except (TypeError, ValueError):
-                return mid
-            if frame_index < 1:
-                return mid
-            return max(0, min(len(frames) - 1,
-                              round((frame_index - 1) * (len(frames) - 1) / 5)))
-
-        specs = []
-        scene = str(fields.get("scene") or "").strip()
-        location = str(fields.get("location") or "").strip()
-        activity = str(fields.get("activity") or "").strip()
-        if scene:
-            specs.append(("scene", "当前片段", scene, [mid]))
-        if location:
-            specs.append(("location", location[:180], location, [mid]))
-        for environment in fields.get("environments") or []:
-            value = str(environment or "").strip()
-            if value:
-                specs.append(("environment", value[:180], value, [mid]))
-        if activity:
-            event_frames = list(dict.fromkeys(nearest_frame(fact) for fact in action_facts))
-            specs.append(("activity", activity[:180], activity, (event_frames or [mid])[:2]))
-        for fact in action_facts[:16]:
-            subject = str(fact.get("subject") or "").strip()
-            predicate = str(fact.get("predicate") or "").strip()
-            value = str(fact.get("value") or "").strip()
-            if not (subject or value):
-                continue
-            title = " · ".join(part for part in (subject, predicate) if part)[:180]
-            specs.append(("event", title or "可见事件", value or title,
-                          [nearest_frame(fact)]))
-
-        refs_by_frame = {}
-        for entity_type, entity, description, indices in specs:
-            asset_indices = []
-            for index in indices:
-                if index not in refs_by_frame:
-                    frame = frames[index]
-                    # Scene-level memories need context, but still use a tighter
-                    # view; crop_visual_candidate caps broad boxes at 78% per axis.
-                    bbox = [0.0, 0.0, 1.0, 1.0]
-                    crop_bytes = self.crop_visual_candidate(frame["bytes"], bbox, 12_000)
-                    crop_ref = self._put("visual", crop_bytes, "webp", 12_000) if crop_bytes else None
-                    source_bytes = self.fit_visual_candidate(frame["bytes"], 6_000)
-                    source_ref = self._put("visual", source_bytes, "webp", 6_000) if source_bytes else None
-                    if source_ref:
-                        source_ref.update({"mime": "image/webp",
-                                           "at_s": frame.get("at_s"),
-                                           "source_id": frame.get("source_id") or source_id,
-                                           "quality_tier": "recent"})
-                    if crop_ref and crop_ref.get("asset"):
-                        asset = {
-                            "asset": crop_ref["asset"], "bytes": int(crop_ref.get("bytes") or 0),
-                            "at_s": frame.get("at_s"), "source_id": frame.get("source_id") or source_id,
-                            "quality_tier": "recent", "visual_role": "context_crop",
-                            "crop_bbox": bbox,
-                        }
-                        if source_ref and source_ref.get("asset"):
-                            asset["source_asset"] = source_ref["asset"]
-                    elif source_ref and source_ref.get("asset"):
-                        asset = {
-                            "asset": source_ref["asset"], "bytes": int(source_ref.get("bytes") or 0),
-                            "at_s": frame.get("at_s"), "source_id": frame.get("source_id") or source_id,
-                            "quality_tier": "recent", "visual_role": "source_frame",
-                        }
-                    else:
-                        asset = None
-                    if asset:
-                        # Share the same persisted crop among cards anchored to the same frame.
-                        key = (asset["asset"], asset.get("at_s"))
-                        existing = next((i for i, row in enumerate(output["assets"])
-                                         if (row.get("asset"), row.get("at_s")) == key), None)
-                        if existing is None:
-                            output["assets"].append(asset)
-                            existing = len(output["assets"]) - 1
-                        refs_by_frame[index] = existing
-                    else:
-                        refs_by_frame[index] = None
-                asset_index = refs_by_frame[index]
-                if asset_index is not None and asset_index not in asset_indices:
-                    asset_indices.append(asset_index)
-            output["items"].append({
-                "entity_type": entity_type, "entity": entity,
-                "description": description[:1000],
-                "status": "grounded" if asset_indices else "no_visual_evidence",
-                "asset_indices": asset_indices,
-            })
-        return output
+        Dedicated visual evidence is stored by the person/object grounding pipelines.
+        Scene, location, environment, activity, and event facts retain their textual
+        content and source timestamps on the memory record itself.
+        """
+        return {"schema": 2, "status": "not_applicable",
+                "method": "textual context with source provenance",
+                "assets": [], "items": []}
 
     def size_bytes(self) -> int:
         if self._bytes_cached is None:
@@ -600,7 +520,7 @@ class MultimodalAssetStore:
         protected_ids = set(newest_ids)
         for moment in ordered:
             mid = str(moment.get("id") or "")
-            if moment.get("highlighted"):
+            if moment.get("highlighted") or moment.get("nightly_importance"):
                 protected_ids.add(mid)
             value = str(moment.get("timestamp") or "").strip()
             try:
@@ -656,11 +576,10 @@ class MultimodalAssetStore:
         protected_assets = set()
         for moment in ordered:
             mid = str(moment.get("id") or "")
-            if mid not in old_ids:
-                for ref, field in visual_references(moment):
-                    asset = ref.get(field)
-                    if asset:
-                        protected_assets.add(str(asset))
+            for ref, field in visual_references(moment):
+                asset = ref.get(field)
+                if asset and (mid not in old_ids or ref.get("nightly_importance")):
+                    protected_assets.add(str(asset))
 
         refs_by_asset = {}
         for moment in ordered:
@@ -674,7 +593,8 @@ class MultimodalAssetStore:
                 asset = str(ref.get(field) or "")
                 if (not asset or asset in protected_assets
                         or ref.get("quality_tier") == "archive"
-                        or ref.get("visual_role") in {"person_crop", "face_crop"}):
+                        or ref.get("nightly_importance")
+                        or ref.get("visual_role") in {"person_crop", "face_crop", "qwen_input_frame"}):
                     continue
                 refs_by_asset.setdefault(asset, []).append((mid, ref, field))
 
@@ -750,7 +670,7 @@ class MultimodalAssetStore:
         protected_count = max(0, int(protected_recent))
         protected_ids = {m.get("id") for m in ordered[-protected_count:]} if protected_count else set()
         candidates = [m for m in ordered if m.get("id") not in protected_ids
-                      and not m.get("highlighted")]
+                      and not m.get("highlighted") and not m.get("nightly_importance")]
         candidates.sort(key=lambda m: (
             int(m.get("access_count") or 0), str(m.get("last_used") or ""),
             str(m.get("timestamp") or "")))

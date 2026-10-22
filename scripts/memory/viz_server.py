@@ -84,31 +84,19 @@ def _with_memory_asset_urls(value):
     object_group = enriched.get("object_visuals") or {}
     person_rows = person_group.get("items") or [] if isinstance(person_group, dict) else []
     object_rows = object_group.get("items") or [] if isinstance(object_group, dict) else []
-    source_frames = [row for row in enriched.get("visual_frames", [])
-                     if isinstance(row, dict) and row.get("url")]
-    context_assets = ([row for row in entities.get("assets", [])
-                       if isinstance(row, dict) and row.get("visual_role") == "scene_context_fallback"
-                       and row.get("url")] if isinstance(entities, dict) else [])
+    def allowed_roles(entity_type):
+        return {"person": {"face_crop", "person_crop"},
+                "object": {"object_crop"}}.get(entity_type, set())
 
-    def fallback_refs(rows, reason):
-        return [{**row, "visual_role": "source_frame_fallback",
-                 "evidence_fallback_reason": reason} for row in rows[:3]]
-
-    # Preserve source-frame evidence for any visible person/object whose local
-    # box was uncertain or not materialized. Do not attach arbitrary frames to
-    # rows explicitly marked as having no visual evidence.
-    for group_name, rows in (("person", person_rows), ("object", object_rows)):
+    # Do not attach arbitrary source frames to entity cards. A card gets only
+    # its own grounded crop; the crop's source_asset remains available for toggle.
+    for entity_type, rows in (("person", person_rows), ("object", object_rows)):
         for row in rows:
-            if not isinstance(row, dict) or row.get("frame_refs"):
+            if not isinstance(row, dict):
                 continue
-            if row.get("status") in {"no_visual_evidence", "not_needed", "not_applicable"}:
-                continue
-            reason = ("未找到可靠的人物局部框，已保留完整来源画面供核对"
-                      if group_name == "person" else
-                      "未找到可靠的物品局部框，已保留完整来源画面供核对")
-            row["frame_refs"] = fallback_refs(source_frames, reason)
-            if row["frame_refs"]:
-                row["evidence_fallback_reason"] = reason
+            row["frame_refs"] = [ref for ref in row.get("frame_refs") or []
+                                 if isinstance(ref, dict)
+                                 and ref.get("visual_role") in allowed_roles(entity_type)]
 
     if isinstance(entities, dict) and isinstance(entities.get("items"), list):
         entity_assets = entities.get("assets") or []
@@ -123,7 +111,8 @@ def _with_memory_asset_urls(value):
                     continue
                 if 0 <= index < len(entity_assets):
                     ref = entity_assets[index]
-                    if isinstance(ref, dict) and ref.get("asset"):
+                    if (isinstance(ref, dict) and ref.get("asset")
+                            and ref.get("visual_role") in allowed_roles(item.get("entity_type"))):
                         refs.append(ref)
             if refs:
                 item["frame_refs"] = refs
@@ -156,14 +145,33 @@ def _with_memory_asset_urls(value):
                 item["frame_refs"] = fallback_refs(source_frames, reason)
                 if item["frame_refs"]:
                     item["evidence_fallback_reason"] = reason
-            elif entity_type in {"scene", "location", "environment", "activity", "event"}:
-                reason = "该场景/活动暂无独立局部框，已保留完整来源画面"
-                if not item.get("frame_refs"):
-                    item["frame_refs"] = fallback_refs(context_assets or source_frames, reason)
-                if item.get("frame_refs") and not any(
-                        ref.get("visual_role") in {"context_crop", "scene_crop"}
-                        for ref in item["frame_refs"] if isinstance(ref, dict)):
-                    item["evidence_fallback_reason"] = reason
+    if isinstance(entities, dict) and isinstance(entities.get("items"), list):
+        # Older records may contain scene/context cards. Keep only person/object
+        # evidence in the multimodal entity gallery; their text remains in memory.
+        kept_items, kept_assets, remap = [], [], {}
+        for item in entities["items"]:
+            if not isinstance(item, dict) or item.get("entity_type") not in {"person", "object"}:
+                continue
+            new_indices = []
+            for raw_index in item.get("asset_indices") or []:
+                try:
+                    old_index = int(raw_index)
+                except (TypeError, ValueError):
+                    continue
+                if old_index < 0 or old_index >= len(entity_assets):
+                    continue
+                asset_row = entity_assets[old_index]
+                if (not isinstance(asset_row, dict)
+                        or asset_row.get("visual_role") not in allowed_roles(item.get("entity_type"))):
+                    continue
+                if old_index not in remap:
+                    remap[old_index] = len(kept_assets)
+                    kept_assets.append(entity_assets[old_index])
+                new_indices.append(remap[old_index])
+            item["asset_indices"] = new_indices
+            kept_items.append(item)
+        entities["items"] = kept_items
+        entities["assets"] = kept_assets
     return enriched
 ACTIVE_STEP_FORCE = False
 ACTIVE_STEP_RUNNING = False
@@ -1504,11 +1512,46 @@ class Handler(BaseHTTPRequestHandler):
         return self._send(404, {"error": "not found"})
 
     def do_POST(self):
-        global SESSION
+        global SESSION, ACTIVE_STEP_FORCE, ACTIVE_STEP_RUNNING, ACTIVE_STEP_PHASE
         url = urlparse(self.path)
         if url.path not in ("/api/interactive/merge", "/api/interactive/unmerge",
-                            "/api/interactive/person_identity", "/api/interactive/clear_memory"):
+                            "/api/interactive/person_identity", "/api/interactive/clear_memory",
+                            "/api/interactive/nightly"):
             return self._send(404, {"error": "not found"})
+        if url.path == "/api/interactive/nightly":
+            if not STEP_LOCK.acquire(blocking=False):
+                return self._send(409, {"error": "busy", "message": "当前步骤正在运行，请稍后再整理"})
+            ACTIVE_STEP_RUNNING = True
+            ACTIVE_STEP_PHASE = "starting"
+            ACTIVE_STEP_FORCE = False
+            try:
+                if SESSION is None:
+                    return self._send(409, {"error": "请先创建交互会话"})
+                if not SESSION.has_accumulated_memory():
+                    return self._send(409, {"error": "empty_memory", "message": "当前还没有可整理的记忆"})
+                params = parse_qs(url.query)
+                use_cache = (params.get("use_cache") or ["1"])[0] not in ("0", "false", "False")
+                force = (params.get("force") or ["0"])[0] not in ("0", "false", "False")
+                ACTIVE_STEP_FORCE = force
+                progress_id = (params.get("progress_id") or [None])[0]
+                msg = SESSION.run_nightly_now(
+                    force=force, use_cache=use_cache, progress_id=progress_id)
+                ACTIVE_STEP_PHASE = "finishing"
+                state = SESSION.state()
+                state["last_result"] = msg
+                state["manual_nightly"] = True
+                save_session_checkpoint(state)
+                return self._send(200, _compact_interactive_state(state))
+            except Exception as exc:
+                return self._send(500, {"error": f"手动夜间整理失败：{exc}"})
+            finally:
+                ACTIVE_STEP_FORCE = False
+                ACTIVE_STEP_RUNNING = False
+                ACTIVE_STEP_PHASE = None
+                if SESSION is not None:
+                    with SESSION._cancel_lock:
+                        SESSION._pending_cancel = False
+                STEP_LOCK.release()
         if url.path == "/api/interactive/clear_memory":
             if not STEP_LOCK.acquire(blocking=False):
                 return self._send(409, {"error": "记忆正在写入，无法清空"})

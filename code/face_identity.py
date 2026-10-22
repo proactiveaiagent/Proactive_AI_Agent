@@ -1,8 +1,9 @@
 """Source-backed local face matching and reversible identity corrections."""
-import hashlib,json,os,subprocess,re
+import hashlib,json,os,subprocess,re,threading
 from pathlib import Path
 THRESHOLD=float(os.environ.get("MEMORY_FACE_SIMILARITY_THRESHOLD","0.64"))
 MODEL="InsightFace buffalo_l / ArcFace"
+_EMBEDDING_WORKER_LOCK = threading.Lock()
 def read(path,default):
  try:
   x=json.loads(Path(path).read_text(encoding="utf-8")); return x if isinstance(x,type(default)) else default
@@ -29,7 +30,7 @@ def write_correction(path,action,left,right,reason="user correction"):
  path.parent.mkdir(parents=True,exist_ok=True); t=path.with_name(path.name+"."+str(os.getpid())+".tmp")
  t.write_text(json.dumps(d,ensure_ascii=False,indent=2)+"\n",encoding="utf-8"); os.replace(t,path)
  return {"ok":True,"action":action,"file":path.name}
-def link_records(records,asset_root=None,correction_path=None):
+def link_records(records,asset_root=None,correction_path=None,compute_missing=True):
  people=[r for r in records if r.get("kind")=="person"]
  if not people:return {"model":MODEL,"status":"no_people","matches":0}
  root=Path(asset_root).resolve() if asset_root else None; cp=root/"person_face_embedding_cache.json" if root else None
@@ -38,9 +39,7 @@ def link_records(records,asset_root=None,correction_path=None):
   for r in people:
    for ev in r.get("events",[]):
     seg=str((ev.get("source_provenance") or {}).get("source_segment_id") or ev.get("moment_id") or "")
-    image_refs=[ref for ref in ev.get("images",[]) if ref.get("asset") and ref.get("visual_role") in {"face_crop","person_crop"}]
-    # A dedicated face crop retains facial detail; use the full person crop only as fallback.
-    selected=[ref for ref in image_refs if ref.get("visual_role")=="face_crop"] or image_refs
+    selected=[ref for ref in ev.get("images",[]) if ref.get("asset") and ref.get("visual_role")=="face_crop" and ref.get("identity_verified") is True and str(ref.get("identity_assignment") or "").startswith("qwen_visual_anchor+")]
     for ref in selected:
      p=(root/str(ref["asset"])).resolve()
      try:p.relative_to(root); raw=p.read_bytes()
@@ -65,13 +64,34 @@ def link_records(records,asset_root=None,correction_path=None):
  model_root=Path(os.environ.get("MEMORY_FACEID_ROOT",str(Path.home()/".insightface")))
  model_dir=model_root/"models"/"buffalo_l"
  model_ready=(model_dir/"det_10g.onnx").is_file() and (model_dir/"w600k_r50.onnx").is_file()
- if crops and py.is_file() and worker.is_file() and model_ready:
+ if compute_missing and crops and py.is_file() and worker.is_file() and model_ready:
   try:
-   inp=json.dumps([{"key":k,**task} for k,task in crops.items()])
-   run=subprocess.run([str(py),str(worker)],input=inp,text=True,capture_output=True,timeout=120,check=True,env={**os.environ,"MEMORY_FACEID_ROOT":str(model_root)})
-   for row in json.loads(run.stdout):
-    if row.get("key"):cache[row["key"]]=row
-   t=cp.with_name(cp.name+"."+str(os.getpid())+".tmp"); t.write_text(json.dumps(cache,separators=(",",":")),encoding="utf-8"); os.replace(t,cp)
+   # Serialize GPU workers and refresh their cache after taking the lock.
+   with _EMBEDDING_WORKER_LOCK:
+    latest=read(cp,{}) if cp else {}
+    if isinstance(latest,dict): cache.update(latest)
+    missing_crops={k:v for k,v in crops.items() if k not in cache}
+    if missing_crops:
+     inp=json.dumps([{"key":k,**task} for k,task in missing_crops.items()])
+     repo_root=Path(__file__).resolve().parents[1]
+     face_env={**os.environ,"MEMORY_FACEID_ROOT":str(model_root),
+               "MEMORY_FACEID_GPU_ID":os.environ.get("MEMORY_FACEID_GPU_ID","4"),
+               "MEMORY_FACEID_DEVICE":os.environ.get("MEMORY_FACEID_DEVICE","cuda")}
+     ort_path=Path(os.environ.get("MEMORY_FACEID_ORT_PATH",str(repo_root.parent/"runtime/faceid_ort_gpu120")))
+     faceid_site=py.parents[1]/"lib/python3.11/site-packages"
+     import_paths=[str(path) for path in (ort_path,faceid_site) if path.is_dir()]
+     if import_paths:
+      face_env["PYTHONPATH"]=os.pathsep.join(import_paths+[face_env.get("PYTHONPATH","")])
+     face_env["CUDA_VISIBLE_DEVICES"]=face_env["MEMORY_FACEID_GPU_ID"]
+     agent_site=repo_root/"zhx/miniforge3/envs/agent/lib/python3.11/site-packages"
+     cuda_libs=[str(path) for path in (agent_site/"nvidia").glob("*/lib") if path.is_dir()]
+     existing_libs=[x for x in face_env.get("LD_LIBRARY_PATH","").split(os.pathsep) if x]
+     face_env["LD_LIBRARY_PATH"]=os.pathsep.join(dict.fromkeys(cuda_libs+existing_libs))
+     run=subprocess.run([str(py),str(worker)],input=inp,text=True,capture_output=True,timeout=120,check=True,env=face_env)
+     for row in json.loads(run.stdout):
+      if row.get("key"):cache[row["key"]]=row
+     t=cp.with_name(cp.name+"."+str(os.getpid())+"."+str(threading.get_ident())+".tmp")
+     t.write_text(json.dumps(cache,separators=(",",":")),encoding="utf-8"); os.replace(t,cp)
   except (OSError,ValueError,subprocess.SubprocessError) as e:
    for r in people:r["identity_link_status"]="face_worker_unavailable: "+str(e)[:120]
  vec={}; segs={}; speech_aliases={}
@@ -152,6 +172,8 @@ def link_records(records,asset_root=None,correction_path=None):
   status="active"
  elif assets and not model_ready:
   status="model_missing"
+ elif not compute_missing and crops:
+  status="pending_face_embeddings"
  elif cached_no_face or (assets and not crops):
   status="no_reliable_faces"
  elif assets:
@@ -160,4 +182,5 @@ def link_records(records,asset_root=None,correction_path=None):
   status="no_face_crops"
  return {"model":MODEL,"status":status,"threshold":THRESHOLD,
          "embedded_people":len(vec),"matches":len(auto),
+          "pending_embeddings":len(crops) if (not compute_missing and py.is_file() and worker.is_file() and model_ready) else 0,
          "corrections":len(d["history"])}

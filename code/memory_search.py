@@ -67,6 +67,7 @@ def _memory_search_field_weights():
         "person_observations": 1.1,
         "temporal_facts": 1.3,
         "object_observations": 1.2,
+        "object_states": 1.4,
         "source_time": 0.8,
         "activity": 1.0,
         "people": 1.0,

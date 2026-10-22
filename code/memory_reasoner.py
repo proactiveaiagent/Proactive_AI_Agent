@@ -90,6 +90,66 @@ def _semantic_tokens(value: str) -> set[str]:
     return tokens
 
 
+_GENERIC_RECALL_TOKENS = {
+    "woman", "women", "man", "men", "person", "people", "individual", "child",
+    "adult", "visible", "human", "face", "facial", "expression", "smile", "smiling",
+    "camera", "scene", "video", "frame", "residential", "look", "looking", "appear", "appears",
+    "wear", "wearing", "background", "walk", "walking", "stand", "standing",
+    "sit", "sitting", "move", "moving", "toward", "action",
+    # Occupational/relationship roles are useful facts, but too generic to act
+    # as cross-episode identity or retrieval anchors on their own.
+    "neighbor", "neighbour", "server", "waiter", "waitress", "employee",
+    "customer", "cashier", "doctor", "nurse", "stranger",
+}
+_GENERIC_PERSON_ALIAS = re.compile(
+    r"^(?:the\s+)?(?:woman|man|person|people|individual|child|adult|visible person)"
+    r"(?:\s+\d+)?$"
+    r"|^(?:the\s+)?(?:first|second|another|visible)\s+(?:woman|man|person)\b"
+    r"|^(?:the\s+)?(?:person|woman|man|child|adult)\s+(?:in|wearing|with|at|near|by)\s+.+$"
+    r"|^(?:the\s+)?(?:camera\s+)?wearer(?:\s+(?:in|wearing|with|at|near|by)\s+.+)?$"
+    r"|^(?:the\s+)?[a-z][a-z -]*\s+wearer$",
+    re.I,
+)
+_GENERIC_PERSON_ROLES = {
+    "server", "waiter", "waitress", "employee", "customer", "cashier",
+    "doctor", "nurse", "neighbor", "neighbour", "stranger", "police officer",
+    "服务员", "收银员", "医生", "护士", "邻居", "陌生人",
+}
+
+
+def _is_generic_person_alias(value: str) -> bool:
+    normalized = " ".join(str(value or "").casefold().split()).strip(" .,:;-_")
+    return bool(_GENERIC_PERSON_ALIAS.fullmatch(normalized)
+                or normalized in _GENERIC_PERSON_ROLES)
+
+
+def _recall_anchor_tokens(value: str) -> set[str]:
+    """Remove generic human/scene language before matching across episodes."""
+    return _semantic_tokens(value) - _GENERIC_RECALL_TOKENS
+
+
+def _source_segment(moment: dict) -> str:
+    provenance = moment.get("source_provenance") or {}
+    source_time = moment.get("source_time") or {}
+    multimodal = moment.get("multimodal") or {}
+    return str(provenance.get("source_segment_id")
+               or source_time.get("source_segment_id")
+               or multimodal.get("source_id") or "")
+
+
+def _moment_retrieval_quality(moment: dict) -> tuple:
+    return (
+        240 * len(moment.get("temporal_facts") or [])
+        + 160 * len(moment.get("person_observations") or [])
+        + 100 * len(moment.get("object_observations") or [])
+        + 80 * bool(moment.get("source_evidence"))
+        + sum(len(str(moment.get(key) or "")) for key in
+              ("scene", "user_action", "interaction_details", "activity", "location")),
+        str(moment.get("timestamp") or ""),
+        str(moment.get("id") or ""),
+    )
+
+
 def _numeric_units(text: str) -> set[str]:
     """Conservative check for incompatible quantified units after translation."""
     groups = {"day": r"days?", "hour": r"hours?", "minute": r"minutes?",
@@ -201,32 +261,64 @@ class MemoryReasoner:
         archive = layer7["moments"]
         found: dict[str, dict] = {}
 
+        # Prefer the richest, latest record when an old session wrote the same
+        # source clip more than once. This leaves the archive untouched.
+        best_by_source = {}
+        for mid, moment in archive.items():
+            if not isinstance(moment, dict) or moment.get("stale") or moment.get("merged_into"):
+                continue
+            source_id = _source_segment(moment)
+            if not source_id:
+                continue
+            rank = _moment_retrieval_quality(moment)
+            previous = best_by_source.get(source_id)
+            if previous is None or rank > previous[0]:
+                best_by_source[source_id] = (rank, str(mid))
+        canonical_ids = {mid for _rank, mid in best_by_source.values()}
+        canonical_ids.update(
+            str(mid) for mid, moment in archive.items()
+            if isinstance(moment, dict) and not moment.get("stale")
+            and not moment.get("merged_into") and not _source_segment(moment)
+        )
+
         def candidate(mid: str, moment: dict) -> dict:
             if hasattr(self.memory, "_retrieval_group_moment"):
                 moment = self.memory._retrieval_group_moment(moment)
             return found.setdefault(mid, {
                 "moment": moment, "text_score": 0.0, "entity_matches": [],
+                "anchor_terms": set(), "identity_anchor": False,
             })
 
-        for name in entities:
+        usable_entities = [
+            name for name in entities
+            if not _is_generic_person_alias(name)
+        ]
+        for name in usable_entities:
             for dimension in ("people", "locations", "activity_events", "objects", "environments"):
                 for tag, ids in self.memory.memory["layer7"].get(dimension, {}).items():
-                    if str(tag).lower() == name.lower():
+                    if str(tag).casefold() == name.casefold():
                         for mid in ids[-12:]:
                             moment = archive.get(mid)
-                            if (moment and not moment.get("stale")
+                            if (moment and mid in canonical_ids and not moment.get("stale")
                                     and not moment.get("merged_into") and mid not in seen):
                                 row = candidate(mid, moment)
+                                stable_person = (
+                                    dimension == "people"
+                                    and not _is_generic_person_alias(str(tag))
+                                )
+                                row["identity_anchor"] = bool(
+                                    row["identity_anchor"] or stable_person
+                                )
                                 match = {"dimension": dimension, "tag": str(tag)}
                                 if match not in row["entity_matches"]:
                                     row["entity_matches"].append(match)
-        # Expand an exact entity hit through the event that supports it. These
-        # are event co-occurrences, not inferred personal relationships; each
-        # edge is returned with its source moment ID for inspection.
-        for relation in entity_relation_evidence(layer7, entities, limit=12):
+        # Same-event expansion is allowed only from explicit, non-generic
+        # identity terms. A temporary alias such as "woman 1" is clip-local.
+        for relation in entity_relation_evidence(layer7, usable_entities, limit=12):
             mid = relation.get("evidence_id")
             moment = archive.get(mid)
-            if not moment or mid in seen:
+            if (not moment or mid not in canonical_ids or mid in seen
+                    or moment.get("stale") or moment.get("merged_into")):
                 continue
             row = candidate(mid, moment)
             associated = relation.get("associated_entities") or []
@@ -234,35 +326,81 @@ class MemoryReasoner:
                 f"{item.get('type')}: {item.get('name')}" for item in associated[:8]
                 if isinstance(item, dict) and item.get("name")
             )
+            entity_name = str(relation.get("entity") or "")
+            stable_person = (
+                _is_generic_person_alias(entity_name) is False
+                and entity_name.casefold() not in _GENERIC_PERSON_ROLES
+                and entity_name.casefold() in {
+                    str(tag).casefold()
+                    for tag in (layer7.get("people") or {}).keys()
+                }
+            )
+            row["identity_anchor"] = bool(row["identity_anchor"] or stable_person)
             match = {
                 "dimension": "same_event_entities",
-                "tag": f"{relation.get('entity')}: {summary}" if summary else str(relation.get("entity") or ""),
+                "tag": f"{entity_name}: {summary}" if summary else entity_name,
                 "evidence_id": mid,
                 "relation": relation.get("relation"),
             }
             if match not in row["entity_matches"]:
                 row["entity_matches"].append(match)
-        for query in searches:
-            if hasattr(self.memory, "query_ranked"):
-                ranked = self.memory.query_ranked(query, top_k=limit)
-            else:
-                ranked = [{"score": 1.0 - rank / max(limit, 1), "moment": moment}
-                          for rank, moment in enumerate(self.memory.query(query, top_k=limit))]
-            top_score = max((float(row.get("score") or 0) for row in ranked), default=0.0)
-            for row in ranked:
-                moment = row.get("moment") or {}
-                mid = moment.get("id")
-                if mid and mid not in seen:
-                    candidate_row = candidate(mid, moment)
-                    raw_score = float(row.get("score") or 0)
-                    relative_score = raw_score / top_score if top_score > 0 else 0.0
-                    candidate_row["text_score"] = max(candidate_row["text_score"], relative_score)
 
-        # Text relevance remains the primary order. Exact indexed-entity matches,
-        # user highlights, and recency only break ties; these signals cannot
-        # displace a clearly stronger text match.
-        ranked = sorted(found.values(), key=lambda row: (
-            row["text_score"], len(row["entity_matches"]),
+        search_fields = (
+            "scene", "user_action", "interaction_details", "people", "location",
+            "activity", "objects", "object_observations", "environments",
+            "person_observations", "temporal_facts", "source_evidence", "normalized",
+            "_merged_search_text",
+        )
+        for query in searches:
+            query_anchors = _recall_anchor_tokens(query)
+            if not query_anchors:
+                continue
+            if hasattr(self.memory, "query_ranked"):
+                ranked_rows = self.memory.query_ranked(query, top_k=limit)
+            else:
+                ranked_rows = [{"score": 1.0 - rank / max(limit, 1), "moment": moment}
+                               for rank, moment in enumerate(self.memory.query(query, top_k=limit))]
+            for result in ranked_rows:
+                moment = result.get("moment") or {}
+                mid = str(moment.get("id") or "")
+                if not mid or mid not in canonical_ids or mid in seen:
+                    continue
+                doc_text = " ".join(
+                    json.dumps(moment.get(key), ensure_ascii=False)
+                    for key in search_fields if moment.get(key) is not None
+                )
+                matched_anchors = query_anchors & _recall_anchor_tokens(doc_text)
+                existing = found.get(mid) or {}
+                has_explicit_entity = bool(
+                    existing.get("entity_matches") or existing.get("identity_anchor")
+                )
+                # A single shared verb (e.g. "greeted") is not enough to link
+                # two episodes. A specific indexed entity or stable identity
+                # can independently support a one-anchor lookup.
+                if not matched_anchors or (
+                    len(matched_anchors) < 2 and not has_explicit_entity
+                ):
+                    continue
+                query_coverage = len(matched_anchors) / max(1, len(query_anchors))
+                raw_score = max(0.0, float(result.get("score") or 0))
+                method = str(result.get("retrieval_method") or "bm25")
+                score_strength = (min(1.0, raw_score / (raw_score + 1.0))
+                                  if method == "bm25" else min(1.0, raw_score * 60.0))
+                candidate_row = candidate(mid, moment)
+                candidate_row["anchor_terms"].update(matched_anchors)
+                calibrated_score = 0.85 * query_coverage + 0.15 * score_strength
+                candidate_row["text_score"] = max(
+                    candidate_row["text_score"], calibrated_score)
+
+        # A candidate must share a meaningful content anchor, or an explicit
+        # stable person identity. Common scene language alone cannot recall it.
+        ranked = [
+            row for row in found.values()
+            if row["anchor_terms"] or row["identity_anchor"]
+        ]
+        ranked.sort(key=lambda row: (
+            bool(row["identity_anchor"]), row["text_score"],
+            len(row["entity_matches"]),
             bool(row["moment"].get("highlighted")
                  or row["moment"].get("_group_highlighted")),
             str(row["moment"].get("timestamp") or ""),
@@ -274,14 +412,17 @@ class MemoryReasoner:
                 mid = str(moment.get("id") or "")
                 reasons = []
                 if row["text_score"] > 0:
-                    reasons.append("文本相关度")
+                    reasons.append("可核对内容锚点")
                 if row["entity_matches"]:
                     reasons.append("索引实体命中")
+                if row["identity_anchor"]:
+                    reasons.append("明确人物身份命中")
                 if moment.get("highlighted"):
                     reasons.append("用户标记重点")
                 priority_details[mid] = {
                     "id": mid,
                     "text_relevance": round(row["text_score"], 3),
+                    "matched_terms": sorted(row["anchor_terms"])[:12],
                     "entity_matches": row["entity_matches"],
                     "highlighted": bool(moment.get("highlighted")
                                         or moment.get("_group_highlighted")),

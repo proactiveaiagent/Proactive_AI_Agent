@@ -57,7 +57,7 @@ _SOURCE_FINGERPRINT_LOCK = threading.RLock()
 
 DEFAULT_API = os.environ.get("QWEN_API_URL", "http://127.0.0.1:8001")
 DEFAULT_FRAMES = 6
-PROMPT_VERSION = "memory-v9.2-event-linked-objects-2026-10-19"
+PROMPT_VERSION = "memory-v9.8-cross-frame-identity-event-grounding-2026-10-20"
 LIST_PARSER_VERSION = "json-arrays-concise-entity-labels-v7-2026-10-19"
 
 
@@ -70,7 +70,7 @@ def build_prompt(n_frames: int) -> str:
 
 Use visible pixels only. Do not use transcript files, captions, test annotations, reference answers, filenames, or dataset metadata as evidence. Do not invent names, exact ages, dialogue, intent, plans, relationships, or facts not supported by the frames. A relationship or social role may be used only when plainly established by readable text or an explicit interaction; never infer family, friendship, or occupation from clothing or appearance. Exact age and age categories require explicit readable text. Read on-screen text only when clearly legible and directly relevant.
 
-Understand the full clip as one coherent scene. Before answering, scan all frames in order and inventory visible people, their actions and interactions, important objects and their locations/states, the activity, setting, and visible time/place clues. Record a short chronological account, not a bag of keywords. Preserve distinct supported actions and state changes, including who/what they affect. A person or unchanged object seen in several frames is one entity; give it a short, stable, semantic name and summarize its visible interval. Keep identifying names separate from appearance details. Do not omit a visible person. If identity continuity is unclear, keep observations separate.
+Understand the full clip as one coherent scene. Before answering, scan all frames in order and inventory visible people, their actions and interactions, important objects and their locations/states, the activity, setting, and visible time/place clues. Record a short chronological account, not a bag of keywords. Preserve distinct supported actions and state changes, including who/what they affect. A person or unchanged object seen in several frames is one entity; give it a short, stable, semantic name and summarize its visible interval. Track each person using stable visual anchors such as face, clothing, and position; never transfer one person's action to another because their pose or background is similar. Keep identifying names separate from appearance details. Do not omit a visible person. If identity continuity is unclear, keep observations separate and use a generic event subject rather than merging identities. Camera pans/tilts or viewpoint changes are camera motion; do not attribute them to a person in view unless that person's body visibly moves.
 
 Return exactly these English fields, each on its own line:
 Scene: two to four concise chronological sentences describing the whole scene, people, actions, interactions, object changes, and outcome; quote short, important legible text only when it materially identifies a person, place, object, or event
@@ -83,9 +83,9 @@ Activity: the specific observable activity, participants, supported roles, what 
 Objects: list only salient items that matter to this episode: items visibly handled, used, moved, transferred, changed, explicitly mentioned, uniquely identifiable/personal, or central to understanding the activity/event. Use concise canonical nouns, at most 8. Do not inventory generic background fixtures or duplicate variants merely because they are visible (for example ordinary doors, floors, walls, chairs, tables, windows, gates, or appliances); keep broad setting details in Location/Environment instead. Include a common item only when the video shows its direct role in an action, interaction, state change, or event. If no item meets this relevance rule, return a blank Objects field. Never infer item ownership; bind an owner only when directly supported by explicit speech or visible interaction. Keep item color, material, position, condition, and printed text in Environment or evidence-linked Temporal Facts, especially for handled/moved items.
 Environment: concise details of indoor/outdoor setting, layout, legible signs or landmarks (quote exact short wording and where it appears), lighting, weather, and background; omit unsupported guesses
 Interaction Details: a chronological account of who did what to whom or to which item, including responses, transfers, and affected people; use the exact short person labels and concise object names
-Temporal Facts: one JSON array of up to 16 separately retrievable facts. If any visible action, interaction, object handling/change, or meaningful change in posture/expression occurs, this array must not be empty. Record every distinct action/state change as its own atomic row with actor, affected entity, before/after state or location when shown, order, and specific frame evidence; do not collapse all actions into one row. A static clip with no separable action may use []. Schema: {{"subject_type":"person|object|place|environment|event","subject":"entity label","predicate":"appearance|state|located_at|moved|held|used|placed|picked_up|handed_over|participated_in|occurred_at|other","value":"one specific supported fact","actor":"person who visibly acted, if known","affected_people":["only people visibly affected by this fact"],"from_location":"only when visually supported","to_location":"only when visually supported","from_state":"only when visually supported","to_state":"only when visually supported","time_scope":"observed clip-time range when supported","time_order":1,"frame_index":1,"modality":"visual","evidence":"short description of visible pixels or legible text","status":"observed|completed|unclear","confidence":"high|medium|low"}}. Include distinct actions/interactions, important object states and transitions, activity, place, environmental conditions, and time context. Preserve actor, affected people, before/after state/location, and order. When a legible document, sign, label, menu, or screen carries important information, add a separate evidence-linked fact quoting the exact visible text and identify the source item; record displayed claims as text shown, not as independently verified truth. Use each person observation’s exact short entity label for person subject, actor, and affected_people; use concise object names. Never replace names with clothing descriptions. Do not repeat unchanged facts across frames. Do not claim an item moved unless the frames show the transition. Keep each fact atomic and evidence-linked. Return up to 16 high-value facts: prioritize actions and interactions, object changes, person details, and place/environment context; cover more than one category when the clip supports it instead of filling the list with repeated appearance facts. Keep each value and evidence phrase short, omit unsupported or empty optional fields, and fit all arrays completely within the response. Use the correct subject type: a moved item is an object, while the person is its actor.
+Temporal Facts: one JSON array of up to 16 separately retrievable facts. If any visible action, interaction, object handling/change, or meaningful change in posture/expression occurs, this array must not be empty. Reconcile the verbs and state changes in Scene, Activity, and Interaction Details against this array before returning: every distinct visible action must have its own atomic row, with the visible actor, affected person/object, event order, and specific frame evidence when available. Do not let a broad summary sentence stand in for multiple approach, greeting, touch, response, movement, or object-state events. Keep uncertain speaker/actor identity unknown rather than assigning it by guess. A static clip with no separable action may use []. Schema: {{"subject_type":"person|object|place|environment|event","subject":"entity label","predicate":"appearance|state|located_at|moved|held|used|placed|picked_up|handed_over|participated_in|occurred_at|other","value":"one specific supported fact","actor":"person who visibly acted, if known","affected_people":["only people visibly affected by this fact"],"from_location":"only when visually supported","to_location":"only when visually supported","from_state":"only when visually supported","to_state":"only when visually supported","time_scope":"observed clip-time range when supported","time_order":1,"frame_index":1,"modality":"visual","evidence":"short description of visible pixels or legible text","status":"observed|completed|unclear","confidence":"high|medium|low"}}. Include distinct actions/interactions, important object states and transitions, activity, place, environmental conditions, and time context. Preserve actor, affected people, before/after state/location, and order. When a legible document, sign, label, menu, or screen carries important information, add a separate evidence-linked fact quoting the exact visible text and identify the source item; record displayed claims as text shown, not as independently verified truth. Use each person observation’s exact short entity label for person subject, actor, and affected_people; use concise object names. Never replace names with clothing descriptions. Do not repeat unchanged facts across frames or emit one duplicate row per sampled frame for a continuing posture. Do not infer waiting or intent from a static pose; describe the visible state unless duration or an explicit cue supports the activity. Do not claim an item moved unless the frames show the transition. Keep each fact atomic and evidence-linked. Return up to 16 high-value facts: prioritize actions and interactions, object changes, person details, and place/environment context; cover more than one category when the clip supports it instead of filling the list with repeated appearance facts. Keep each value and evidence phrase short, omit unsupported or empty optional fields, and fit all arrays completely within the response. Use the correct subject type: a moved item is an object, while the person is its actor.
 
-For sequence questions, preserve only order visible across these frames. Do not infer speech, plans, diagnosis, needs, advice, reminders, names, age, or relationships. Do not infer a person’s identity, intent, or role from appearance. Do not guess obscured text or transform displayed medical claims into a diagnosis. Keep concise wording, but retain useful supported detail in structured observations and facts while keeping both arrays complete: person appearance at most 18 words, face_features at most 8 words, person evidence at most 12 words; each Temporal Facts value at most 20 words and evidence at most 12 words. Omit empty optional keys and do not repeat the scene in each fact. Before returning, check that every key action in Scene, User Action, and Interaction Details has a corresponding Temporal Facts row; actors and affected people use the same short person labels; object subjects use concise nouns; visible object locations/states and environment are represented; and every distinguishable person has an observation. People names must match name_evidence. Use [] for Temporal Facts only when no separable action or state change is visible. Use [] for Person Observations only when no human figure or identifiable body part is visible. Leave unsupported details blank and add no other text."""
+For sequence questions, preserve only order visible across these frames. Include only actions directly visible in the sampled frames; do not infer a prior/completed action from its aftermath (for example, an empty bowl does not prove eating), or infer purpose/intent. Do not infer speech, plans, diagnosis, needs, advice, reminders, names, age, or relationships. Do not infer a person’s identity, intent, or role from appearance. Do not guess obscured text or transform displayed medical claims into a diagnosis. Keep concise wording, but retain useful supported detail in structured observations and facts while keeping both arrays complete: person appearance at most 18 words, face_features at most 8 words, person evidence at most 12 words; each Temporal Facts value at most 20 words and evidence at most 12 words. Omit empty optional keys and do not repeat the scene in each fact. Before returning, check that every key action in Scene, User Action, and Interaction Details has a corresponding Temporal Facts row; actors and affected people use the same short person labels; object subjects use concise nouns; visible object locations/states and environment are represented; and every distinguishable person has an observation. People names must match name_evidence. Use [] for Temporal Facts only when no separable action or state change is visible. Use [] for Person Observations only when no human figure or identifiable body part is visible. Leave unsupported details blank and add no other text."""
 
 
 _FIELD_LINE_RE = re.compile(
@@ -495,6 +495,166 @@ _AGE_RANGE_RE = re.compile(
     r"\b\d{1,3}\s+years?\s+old\b|\baged\s+\d{1,3}\b", re.I
 )
 
+def _visual_person_alias(row: dict) -> str:
+    """Create an age-neutral visual label when age scrubbing leaves only 'person'."""
+    appearance = " ".join(str(row.get("appearance") or "").split())
+    wearing = re.search(r"\bwearing\s+(?:(?:a|an|the)\s+)?([^,.;:]+)", appearance, re.I)
+    if wearing:
+        descriptor = _INFERRED_AGE_CATEGORY_RE.sub(" ", wearing.group(1))
+        descriptor = re.sub(r"\s+", " ", descriptor).strip(" .;,:-")
+        if descriptor:
+            return f"person wearing {descriptor}"[:120]
+    posture = re.search(
+        r"\b(?:standing|sitting|seated|lying|kneeling|bending)\b"
+        r"(?:\s+(?:on|at|near|beside|in)\s+[^,.;:]+)?",
+        appearance, re.I,
+    )
+    if posture:
+        descriptor = re.sub(r"\s+", " ", posture.group(0)).strip()
+        return f"person {descriptor}"[:120]
+    return ""
+
+
+def _normalize_generic_person_observation_labels(fields: dict) -> dict:
+    """Keep visually described people when age neutralization removes age nouns."""
+    if not isinstance(fields, dict):
+        return fields
+    observations = [row for row in fields.get("person_observations") or []
+                    if isinstance(row, dict)]
+    changes = []
+    normalized = []
+    for original in observations:
+        row = dict(original)
+        old = " ".join(str(row.get("entity") or "").casefold().split())
+        alias = _visual_person_alias(row) if _is_generic_person_label(row.get("entity")) else ""
+        if alias:
+            row["entity"] = alias
+            changes.append((old, alias, row.get("frame_index")))
+        normalized.append(row)
+    if not changes:
+        return fields
+    result = dict(fields)
+    result["person_observations"] = normalized
+    people = []
+    for label in fields.get("people") or []:
+        key = " ".join(str(label or "").casefold().split())
+        matching = [alias for old, alias, _frame in changes if old == key]
+        people.append(matching[0] if len(set(matching)) == 1 else label)
+    if people:
+        result["people"] = list(dict.fromkeys(people))
+    facts = []
+    for original in fields.get("temporal_facts") or []:
+        if not isinstance(original, dict):
+            facts.append(original)
+            continue
+        fact = dict(original)
+        try:
+            frame = int(fact.get("frame_index") or 0)
+        except (TypeError, ValueError):
+            frame = 0
+        candidates = [alias for old, alias, index in changes
+                     if old and old in {"person", "people", "someone", "individual"}
+                     and (not frame or index == frame)]
+        if not candidates and len(changes) == 1:
+            candidates = [changes[0][1]]
+        if len(set(candidates)) == 1:
+            old_labels = {old for old, alias, _index in changes if alias == candidates[0]}
+            for key in ("subject", "actor"):
+                if " ".join(str(fact.get(key) or "").casefold().split()) in old_labels:
+                    fact[key] = candidates[0]
+            if isinstance(fact.get("affected_people"), list):
+                fact["affected_people"] = [
+                    candidates[0] if " ".join(str(value or "").casefold().split()) in old_labels
+                    else value for value in fact["affected_people"]]
+        facts.append(fact)
+    if "temporal_facts" in fields:
+        result["temporal_facts"] = facts
+    return result
+
+
+def _reconcile_person_references_by_frame(fields: dict) -> dict:
+    """Resolve an unlinked role only when one observed person shares its frame and evidence."""
+    if not isinstance(fields, dict):
+        return fields
+    observations = [row for row in fields.get("person_observations") or []
+                    if isinstance(row, dict) and str(row.get("entity") or "").strip()]
+    facts = [row for row in fields.get("temporal_facts") or [] if isinstance(row, dict)]
+    if not observations or not facts:
+        return fields
+    stop = {"person", "people", "someone", "visible", "frame", "camera", "wearer",
+            "the", "and", "for", "with", "from", "into", "onto", "then", "they",
+            "their", "this", "that", "was", "were", "has", "have", "hands", "handed"}
+
+    def tokens(value):
+        return {token for token in re.findall(r"[a-z0-9]+", str(value or "").casefold())
+                if len(token) > 2 and token not in stop}
+
+    proposals = {}
+    for fact in facts:
+        try:
+            frame = int(fact.get("frame_index") or 0)
+        except (TypeError, ValueError):
+            frame = 0
+        if frame <= 0:
+            continue
+        fact_text = " ".join(str(fact.get(key) or "") for key in
+                             ("predicate", "value", "evidence"))
+        fact_tokens = tokens(fact_text)
+        if not fact_tokens:
+            continue
+        candidates = []
+        for row in observations:
+            try:
+                row_frame = int(row.get("frame_index") or 0)
+            except (TypeError, ValueError):
+                row_frame = 0
+            if row_frame != frame:
+                continue
+            evidence_text = " ".join(str(row.get(key) or "") for key in
+                                     ("entity", "appearance", "face_features", "evidence"))
+            shared = fact_tokens & tokens(evidence_text)
+            if shared:
+                candidates.append((row.get("entity"), shared))
+        if len(candidates) != 1:
+            continue
+        candidate, _shared = candidates[0]
+        for key in ("subject", "actor"):
+            label = " ".join(str(fact.get(key) or "").casefold().split())
+            if label and label != "camera wearer" and label not in {
+                    "environment", "setting", "scene", "location", "place", "object"}:
+                observed_labels = {" ".join(str(row.get("entity") or "").casefold().split())
+                                   for row in observations}
+                if label not in observed_labels:
+                    proposals.setdefault(label, set()).add(str(candidate))
+        for value in fact.get("affected_people") or []:
+            label = " ".join(str(value or "").casefold().split())
+            observed_labels = {" ".join(str(row.get("entity") or "").casefold().split())
+                               for row in observations}
+            if label and label not in observed_labels and label != "camera wearer":
+                proposals.setdefault(label, set()).add(str(candidate))
+    aliases = {old: next(iter(candidates)) for old, candidates in proposals.items()
+               if len(candidates) == 1}
+    if not aliases:
+        return fields
+    result = dict(fields)
+    result["people"] = [aliases.get(" ".join(str(value or "").casefold().split()), value)
+                        for value in (fields.get("people") or [])]
+    remapped = []
+    for original in facts:
+        fact = dict(original)
+        for key in ("subject", "actor"):
+            label = " ".join(str(fact.get(key) or "").casefold().split())
+            if label in aliases:
+                fact[key] = aliases[label]
+        if isinstance(fact.get("affected_people"), list):
+            fact["affected_people"] = [
+                aliases.get(" ".join(str(value or "").casefold().split()), value)
+                for value in fact["affected_people"]]
+        remapped.append(fact)
+    result["temporal_facts"] = remapped
+    return result
+
+
 def _strip_unverified_age_categories(fields: dict) -> dict:
     """Keep age only in the text-backed age field, never as a visual guess."""
     def clean(value, key=""):
@@ -522,7 +682,9 @@ def _strip_unverified_age_categories(fields: dict) -> dict:
         if isinstance(value, dict):
             return {name: clean(item, name) for name, item in value.items()}
         return value
-    return clean(fields)
+    cleaned = clean(fields)
+    cleaned = _normalize_generic_person_observation_labels(cleaned)
+    return _reconcile_person_references_by_frame(cleaned)
 
 
 def _retain_episode_objects(fields):
@@ -822,6 +984,10 @@ def _person_observation_references(fields: dict) -> list[str]:
     for row in fields.get("person_observations") or []:
         if isinstance(row, dict):
             add(row.get("entity"))
+    observed = {" ".join(str(row.get("entity") or "").casefold().split())
+                for row in fields.get("person_observations") or [] if isinstance(row, dict)}
+    non_person_actor_labels = {"environment", "surroundings", "setting", "scene",
+                               "location", "place", "object", "background"}
     for row in fields.get("temporal_facts") or []:
         if not isinstance(row, dict):
             continue
@@ -831,18 +997,12 @@ def _person_observation_references(fields: dict) -> list[str]:
             add(row.get("actor"))
         actor = str(row.get("actor") or "").strip()
         actor_key = " ".join(actor.casefold().split())
-        non_person_labels = {
-            " ".join(str(value or "").casefold().split())
-            for value in (fields.get("objects") or []) + (fields.get("environments") or [])
-            if str(value or "").strip()
-        }
-        non_person_labels.update({
-            " ".join(str(value or "").casefold().split())
-            for value in (fields.get("location"), fields.get("activity"))
-            if str(value or "").strip()
-        })
-        if actor and actor_key not in non_person_labels:
-            add(actor)
+        # Object/place/environment events may retain a local actor role such as
+        # 'server'; require a person-card match only for explicitly person-typed
+        # facts or when the role already names an observed person.
+        if actor and (is_person_fact or actor_key in explicit or actor_key in observed):
+            if actor_key not in non_person_actor_labels:
+                add(actor)
         for value in row.get("affected_people") or []:
             add(value)
     return labels
@@ -1070,6 +1230,42 @@ def _parse_json_array_prefix(raw: str) -> tuple[list, bool]:
         return rows, False
 
 
+def _prepare_truncated_structured_prefix_for_person_repair(raw: str, frame_count: int):
+    """Keep complete source-grounded array rows when Qwen truncates both structured arrays."""
+    person_text = _field(raw, "Person Observations")
+    temporal_text = _field(raw, "Temporal Facts")
+    if "[" not in person_text:
+        return None
+    person_rows, person_complete = _parse_json_array_prefix(person_text)
+    temporal_rows, temporal_complete = _parse_json_array_prefix(temporal_text)
+    if person_complete:
+        return None
+
+    base_raw = _replace_field_value(raw, "Person Observations", "[]")
+    if base_raw is None:
+        return None
+    base_raw = _replace_field_value(base_raw, "Temporal Facts", "[]")
+    if base_raw is None:
+        return None
+    parse_analysis(base_raw, strict=True)
+
+    safe_temporal_rows = _apply_temporal_fact_repair(
+        temporal_rows[:8], frame_count
+    ) if temporal_rows else []
+    patched_raw = _replace_field_value(
+        base_raw, "Person Observations", json.dumps(person_rows, ensure_ascii=False)
+    )
+    if patched_raw is None:
+        return None
+    patched_raw = _replace_field_value(
+        patched_raw, "Temporal Facts", json.dumps(safe_temporal_rows, ensure_ascii=False)
+    )
+    if patched_raw is None:
+        return None
+    parse_analysis(patched_raw, strict=True)
+    return patched_raw, len(person_rows), len(safe_temporal_rows), temporal_complete
+
+
 def _recover_truncated_temporal_fact_prefix(
     raw: str, frame_count: int, validate_source_fact_quality: bool = True
 ):
@@ -1202,7 +1398,7 @@ def _apply_temporal_fact_repair(rows: list, frame_count: int) -> list:
         confidence = str(original.get("confidence") or "").casefold()
         if confidence in {"high", "medium", "low"}:
             fact["confidence"] = confidence
-        if predicate.casefold() == "moved":
+        if predicate.casefold() == "moved" and subject_type == "object":
             has_location_pair = bool(fact.get("from_location") and fact.get("to_location"))
             has_state_pair = bool(fact.get("from_state") and fact.get("to_state"))
             if not (has_location_pair or has_state_pair):
@@ -1520,8 +1716,37 @@ def _drop_unverified_person_references(fields: dict) -> tuple[dict, list[dict]]:
 
 
 _VISIBLE_ACTION_CUE_RE = re.compile(
-    r"\b(?:approach(?:es|ed|ing)?|enter(?:s|ed|ing)?|exit(?:s|ed|ing)?|emerg(?:e|es|ed|ing)|walk(?:s|ed|ing)?|run(?:s|ning)?|sit(?:s|ting)?|stand(?:s|ing)?|turn(?:s|ed|ing)?|reach(?:es|ed|ing)?|pick(?:s|ed)? up|put(?:s|ting)?|place(?:s|d|ing)?|hand(?:s|ed|ing)? over|give(?:s|gave|n)?|receive(?:s|d|ing)?|hold(?:s|ing)?|use(?:s|d|ing)?|open(?:s|ed|ing)?|clos(?:e|es|ed|ing)|mov(?:e|es|ed|ing)|carry(?:ies|ied|ing)?|write(?:s|wrote|ing)?|eras(?:e|es|ed|ing)|smil(?:e|es|ed|ing)|laugh(?:s|ed|ing)?|rais(?:e|es|ed|ing)|lower(?:s|ed|ing)?|lift(?:s|ed|ing)?|bend(?:s|ing)?|kneel(?:s|ed|ing)?|lie(?:s|d)?|eats?|drinks?|wash(?:es|ed|ing)?|clean(?:s|ed|ing)?|rinse(?:s|d|ing)?|interact(?:s|ed|ing)?|pass(?:es|ed|ing)?|transfer(?:s|red|ring)?|tap(?:s|ped|ping)?|point(?:s|ed|ing)?|touch(?:es|ed|ing)?|hug(?:s|ged|ging)?|nod(?:s|ded|ding)?|clap(?:s|ped|ping)?|adjust(?:s|ed|ing)?|grab(?:s|bed|bing)?|step(?:s|ped|ping)?|wait(?:s|ed|ing)?|wave(?:s|d|ing)?|read(?:s|ing)?|show(?:s|ed|ing)?|inspect(?:s|ed|ing)?|examine(?:s|d|ing)?|check(?:s|ed|ing)?|pull(?:s|ed|ing)?|push(?:es|ed|ing)?|drop(?:s|ped|ping)?|set(?:s|ting)? down|put(?:s|ting)? away|remove(?:s|d|ing)?|pack(?:s|ed|ing)?|unpack(?:s|ed|ing)?|cook(?:s|ed|ing)?|cut(?:s|ting)?|serve(?:s|d|ing)?|drive(?:s|d|ing)?|ride(?:s|d|ing)?|board(?:s|ed|ing)?|arrive(?:s|d|ing)?|depart(?:s|ed|ing)?|ascend(?:s|ed|ing)?|descend(?:s|ed|ing)?|proceed(?:s|ed|ing)?|changes? expression|changed posture|bends? forward|look(?:s|ed|ing)? (?:up|down|around))\b", re.I
+    r"\b(?:"
+    r"approach(?:es|ed|ing)?|enter(?:s|ed|ing)?|exit(?:s|ed|ing)?|"
+    r"emerg(?:e|es|ed|ing)|walk(?:s|ed|ing)?|run(?:s|ning)?|ran|"
+    r"sit(?:s|ting)?|sat|stand(?:s|ing)?|stood|turn(?:s|ed|ing)?|"
+    r"reach(?:es|ed|ing)?|pick(?:s|ed)? up|put(?:s|ting)?|place(?:s|d|ing)?|"
+    r"hand(?:s|ed|ing)? over|give(?:s|n)?|gave|receive(?:s|d|ing)?|"
+    r"hold(?:s|ing)?|held|use(?:s|d|ing)?|open(?:s|ed|ing)?|clos(?:e|es|ed|ing)|"
+    r"mov(?:e|es|ed|ing)|carry(?:ies|ied|ing)?|write(?:s|wrote|ing)?|"
+    r"eras(?:e|es|ed|ing)|smil(?:e|es|ed|ing)|laugh(?:s|ed|ing)?|"
+    r"rais(?:e|es|ed|ing)|lower(?:s|ed|ing)?|lift(?:s|ed|ing)?|"
+    r"bend(?:s|ing)?|bent|kneel(?:s|ed|ing)?|knelt|lie(?:s|d)?|lay|"
+    r"eat(?:s|ing)?|ate|drink(?:s|ing)?|drank|wash(?:es|ed|ing)?|"
+    r"clean(?:s|ed|ing)?|rinse(?:s|d|ing)?|interact(?:s|ed|ing)?|"
+    r"pass(?:es|ed|ing)?|transfer(?:s|red|ring)?|tap(?:s|ped|ping)?|"
+    r"point(?:s|ed|ing)?|touch(?:es|ed|ing)?|hug(?:s|ged|ging)?|"
+    r"nod(?:s|ded|ding)?|clap(?:s|ped|ping)?|adjust(?:s|ed|ing)?|"
+    r"grab(?:s|bed|bing)?|step(?:s|ped|ping)?|wait(?:s|ed|ing)?|"
+    r"wave(?:s|d|ing)?|read(?:s|ing)?|show(?:s|ed|ing)?|"
+    r"inspect(?:s|ed|ing)?|examin(?:e|es|ed|ing)|check(?:s|ed|ing)?|squat(?:s|ted|ting)?|"
+    r"pull(?:s|ed|ing)?|push(?:es|ed|ing)?|drop(?:s|ped|ping)?|"
+    r"set(?:s|ting)? down|put(?:s|ting)? away|remove(?:s|d|ing)?|"
+    r"pack(?:s|ed|ing)?|unpack(?:s|ed|ing)?|cook(?:s|ed|ing)?|"
+    r"cut(?:s|ting)?|serve(?:s|d|ing)?|drive(?:s|d|ing)?|drove|"
+    r"ride(?:s|d|ing)?|rode|board(?:s|ed|ing)?|arrive(?:s|d|ing)?|"
+    r"depart(?:s|ed|ing)?|ascend(?:s|ed|ing)?|descend(?:s|ed|ing)?|"
+    r"proceed(?:s|ed|ing)?|driv(?:e|es|en|ing|d)|changes? expression|changed expression|"
+    r"changes? posture|changed posture|bends? forward|bent forward|"
+    r"look(?:s|ed|ing)? (?:up|down|around|at|toward(?:s)?|for)|wip(?:e|es|ed|ing)"
+    r")\b", re.I
 )
+
 
 
 _IRREGULAR_ACTION_CUES = {
@@ -1529,20 +1754,34 @@ _IRREGULAR_ACTION_CUES = {
     "sat": "sit", "ran": "run", "held": "hold", "gave": "give",
     "wrote": "write", "ate": "eat", "drank": "drink", "bent": "bend",
     "knelt": "kneel", "lay": "lie", "rode": "ride", "drove": "drive",
+    "driven": "drive", "proceeds": "move", "proceeded": "move",
+    "proceeding": "move",
 }
 
 def _canonical_action_cue(value: str) -> str:
-    token = str(value or "").casefold().strip()
+    token = re.sub(r"[_-]+", " ", str(value or "").casefold().strip())
+    token = " ".join(token.split())
     if token in _IRREGULAR_ACTION_CUES:
         return _IRREGULAR_ACTION_CUES[token]
-    compound_look = re.fullmatch(r"(?:looks?|looked|looking)\s+(up|down|around)", token)
+    # Narratives often use "proceed" for a movement already recorded as a
+    # source-to-destination move. Keep coverage semantic instead of requiring
+    # identical word choice.
+    if token == "proceed":
+        return "move"
+    if re.fullmatch(r"(?:changes?|changed) expression", token):
+        return "change expression"
+    compound_look = re.fullmatch(
+        r"(?:looks?|looked|looking)\s+(?:up|down|around|at|toward(?:s)?|for)(?:\s+.*)?", token
+    )
     if compound_look:
-        return "look " + compound_look.group(1)
+        return "look"
     if token in {"picks up", "pick up", "picked up"}:
         return "pick up"
-    if token in {"hands over", "handed over", "handing over"}:
+    if token in {"hands over", "hand over", "handed over", "handing over",
+                 "receive", "receives", "received", "accept", "accepts", "accepted"}:
+        # A transfer can be described from either participant perspective.
         return "hand over"
-    known_e = {"approach", "move", "place", "smile", "raise", "close", "change", "erase", "use", "write"}
+    known_e = {"approach", "move", "place", "smile", "raise", "close", "change", "erase", "use", "write", "wipe", "examine", "drive", "arrive", "leave", "receive", "wave", "tie", "lie", "die", "ride", "hide"}
     if token.endswith("ing"):
         base = token[:-3]
         if len(base) > 2 and base[-1] == base[-2] and not base.endswith("ss"):
@@ -1566,6 +1805,60 @@ def _canonical_action_cue(value: str) -> str:
         return token[:-1]
     return token
 
+
+def _action_cues_in_text(value: str, narrative: bool = False) -> set[str]:
+    """Extract normalized action cues, ignoring quoted product/sign text in narratives."""
+    text = str(value or "")
+    if narrative:
+        text = re.sub(r'["“][^"”]*["”]', " ", text)
+    text = re.sub(r"[_-]+", " ", text)
+    cues = set()
+    for match in _VISIBLE_ACTION_CUE_RE.finditer(text):
+        cue = _canonical_action_cue(match.group(0))
+        tail = text[match.end():]
+        prefix = text[max(text.rfind(mark, 0, match.start())
+                          for mark in (".", ";", ":", "!", "?", "\n")) + 1:match.start()]
+        # Exclude grammatical descriptions of text, framing, and facial appearance
+        # from the action inventory; those are not actions by a person. "Close-up"
+        # and "close to" describe shot scale or distance, not closing an object.
+        if cue == "close" and re.match(r"\s*(?:-\s*up|(?:to|up)\b)", tail, re.I):
+            continue
+        # First-person camera motion is viewpoint evidence, not a body action by
+        # a visible subject. "Camera wearer" remains a separate actor phrase.
+        if cue == "move" and re.search(r"\b(?:the\s+)?camera(?:\s+then)?\s*$", prefix, re.I):
+            continue
+        if cue == "read" and re.search(
+                r"\b(?:sign|label|text|display|screen|banner|notice|poster|billboard)\s*$",
+                prefix, re.I):
+            continue
+        show_prefix = re.sub(r"\bcamera wearer\b", " ", prefix, flags=re.I)
+        if cue == "show" and (
+                re.search(r"\b(?:camera|viewpoint|view|background|scene|video|clip|image|frame|shot|footage|visual effect)\b[^.!?:;]*$", show_prefix, re.I)
+                or re.search(r"\b(?:smile|grin|teeth|expression|mouth|face|eyes)\s*$", prefix, re.I)):
+            continue
+        if cue == "look" and re.search(
+                r"\b(?:camera|viewpoint|perspective|angle)\b[^.!?:;]*$", prefix, re.I):
+            continue
+        if narrative:
+            # Title-cased action spellings such as "Eat Real" and possessive
+            # product names such as "Lay's" are names, not observed verbs.
+            if (match.group(0)[:1].isupper()
+                    and re.match(r"\s+[A-Z][a-z]+\b", tail)):
+                continue
+            if re.match(r"['’]s\b", tail) and cue in {"lie", "lay"}:
+                continue
+        cues.add(cue)
+    folded = " ".join(text.casefold().split())
+    if re.search(r"\b(?:walk|walks|walked|walking|move|moves|moved|moving|step|steps|stepped|stepping|come|comes|came|coming|go|goes|went|going)\s+(?:towards?|closer to)\b", folded):
+        cues.add("approach")
+    if re.search(r"\b(?:walk|move|step|go)(?:s|ed|ing)?\s+(?:into|inside)\b", folded):
+        cues.add("enter")
+    if re.search(r"\b(?:walk|move|step|go)(?:s|ed|ing)?\s+out(?:\s+of)?\b|\bleaves?\b", folded):
+        cues.add("exit")
+    if re.search(r"\bgrab(?:s|bed|bing)?\b", folded):
+        cues.add("pick up")
+    return {cue for cue in cues if cue}
+
 def _temporal_fact_coverage_error(fields: dict) -> str:
     """Require distinct narrated actions to be represented by matching facts."""
     if not isinstance(fields, dict):
@@ -1576,11 +1869,8 @@ def _temporal_fact_coverage_error(fields: dict) -> str:
     ]
     # Use the richest single narrative field so duplicated summaries do not
     # inflate the target, while retaining distinct action types such as open/close.
-    cue_sets = [
-        {_canonical_action_cue(match.group(0))
-         for match in _VISIBLE_ACTION_CUE_RE.finditer(narrative)}
-        for narrative in narratives
-    ]
+    cue_sets = [_action_cues_in_text(narrative, narrative=True)
+                for narrative in narratives]
     cues = max(cue_sets, key=len, default=set())
     if not cues:
         return ""
@@ -1601,10 +1891,40 @@ def _temporal_fact_coverage_error(fields: dict) -> str:
         # the corresponding action. An unrelated object/location fact cannot
         # hide an omitted open, close, handoff, or other event in the summary.
         fact_text = " ".join(str(row.get(field) or "")
-                             for field in ("predicate", "value", "action"))
-        for match in _VISIBLE_ACTION_CUE_RE.finditer(fact_text):
-            supported_cues.add(_canonical_action_cue(match.group(0)))
+                             for field in ("subject", "predicate", "value", "action"))
+        fact_cues = _action_cues_in_text(fact_text)
+        if str(row.get("subject_type") or "").casefold() == "object" and re.search(
+                r"\b(?:sign|label|text|display|screen|banner|notice|poster|billboard)\b",
+                str(row.get("subject") or ""), re.I):
+            fact_cues.discard("read")
+        supported_cues.update(fact_cues)
+        from_place = " ".join(str(row.get(field) or "")
+                              for field in ("from_location", "from_state"))
+        to_place = " ".join(str(row.get(field) or "")
+                            for field in ("to_location", "to_state"))
+        # A source-backed movement between two explicitly named locations also
+        # covers a narrated exit from a passage/area whose names are not literally
+        # "inside" and "outside" (for example a jet bridge into a terminal).
+        if ("exit" in cues and str(row.get("predicate") or "").casefold()
+                in {"move", "moved", "movement"} and from_place and to_place):
+            context = " ".join(narratives).casefold()
+            source_words = [word for word in re.findall(r"[a-z0-9]+", from_place.casefold()) if len(word) > 2]
+            target_words = [word for word in re.findall(r"[a-z0-9]+", to_place.casefold()) if len(word) > 2]
+            if (source_words and target_words
+                    and any(word in context for word in source_words)
+                    and any(word in context for word in target_words)):
+                supported_cues.add("exit")
+        if re.search(r"\b(?:inside|interior|indoors|doorway|room|house|building|restaurant)\b", from_place, re.I) and re.search(
+                r"\b(?:outside|outdoors|yard|sidewalk|street|snow)\b", to_place, re.I):
+            supported_cues.update({"exit", "emerge"})
+        if re.search(r"\b(?:outside|outdoors|yard|sidewalk|street)\b", from_place, re.I) and re.search(
+                r"\b(?:inside|interior|indoors|doorway|room|house|building|restaurant)\b", to_place, re.I):
+            supported_cues.add("enter")
 
+    if ("step" in cues and supported_cues & {"walk", "move", "approach", "enter", "exit"}):
+        supported_cues.add("step")
+    if "reach" in cues and supported_cues & {"pick up", "grab"}:
+        supported_cues.add("reach")
     matched = cues & supported_cues
     required = max(1, min(8, (3 * len(cues) + 3) // 4))
     if len(matched) < required:
@@ -1625,10 +1945,12 @@ def _build_temporal_fact_coverage_repair_prompt(fields: dict, frame_count: int,
     scene = str(fields.get("scene") or "")[:1400]
     interaction = str(fields.get("interaction_details") or "")[:900]
     activity = str(fields.get("activity") or "")[:700]
-    cues = sorted({
-        _canonical_action_cue(match.group(0))
-        for match in _VISIBLE_ACTION_CUE_RE.finditer(" ".join((scene, interaction, activity)))
-    })
+    cues = sorted(_action_cues_in_text(
+        " ".join((scene, interaction, activity)), narrative=True))
+    coverage = _temporal_fact_coverage_error(fields)
+    missing_match = re.search(r"missing cues \\[(.*?)\\]", coverage)
+    missing_cues = ([value.strip() for value in missing_match.group(1).split(",")
+                     if value.strip()] if missing_match else cues)
     existing = []
     for row in fields.get("temporal_facts") or []:
         if not isinstance(row, dict):
@@ -1638,17 +1960,28 @@ def _build_temporal_fact_coverage_repair_prompt(fields: dict, frame_count: int,
     aliases = [str(row.get("entity") or "")[:100]
                for row in fields.get("person_observations") or []
                if isinstance(row, dict) and row.get("entity")]
+    person_context = [
+        {
+            "entity": str(row.get("entity") or "")[:100],
+            "appearance": str(row.get("appearance") or "")[:220],
+            "face_features": str(row.get("face_features") or "")[:180],
+            "evidence": str(row.get("evidence") or "")[:160],
+        }
+        for row in fields.get("person_observations") or []
+        if isinstance(row, dict) and row.get("entity")
+    ][:8]
     parts = [
         "Inspect ONLY the supplied ordered video frames. Scene and existing facts are hints, not proof; verify every claim against pixels.",
-        "Return one JSON array of ONLY additional visible facts not already represented. Separate each distinct action or meaningful state change into its own atomic row.",
+        "Return one compact JSON array of ONLY additional visible facts not already represented. Address only the remaining missing action cues listed below. Add at most one row per distinct subject/action or meaningful state transition across the clip; never repeat the same stable posture for every sampled frame.",
         "Include actor, affected person/object, visible before/after state or location, and order when supported. For a stable posture/expression use predicate=state, but do not treat a continuing pose as a change.",
-        "Use exact existing aliases; never number people or infer identity/relationship. Quote important readable text as displayed, not as verified truth. Do not infer speech, plans, diagnosis, advice, or unseen movement.",
-        "Omit any cue not supported by pixels. Each value <=20 words; evidence <=12 words; 1-based frame_index 1.." + str(max(1, int(frame_count))) + ". Return <=" + str(max(0, min(8, int(max_additional)))) + " rows, English only, JSON only.",
+        "Use exact existing aliases when available. For a clearly visible person with no usable alias, use a generic label such as person or visible person; never number people or infer identity/relationship. Quote important readable text as displayed, not as verified truth. Do not infer speech, plans, diagnosis, advice, or unseen movement.",
+        "Omit any cue not supported by pixels, and do not infer intent from a static pose. For each listed cue that is visibly supported, add one fact; do not leave the array empty when the frames show an action. Use the visible action as the predicate (for example walk, stand, hold, raise, lower, open, close, smile, hand_over, pick_up); use state only for a stable state, not an action. Each value <=20 words; evidence <=12 words; 1-based frame_index 1.." + str(max(1, int(frame_count))) + ". Return <=" + str(max(0, min(6, int(max_additional)))) + " rows, English only, compact JSON only.",
         "Scene hint: " + scene,
         "Interaction hint: " + interaction,
         "Activity hint: " + activity,
-        "Action cues to check: " + json.dumps(cues, ensure_ascii=True),
+        "Remaining action cues to check: " + json.dumps(missing_cues, ensure_ascii=True),
         "Existing facts (do not repeat): " + json.dumps(existing, ensure_ascii=True),
+        "Visual people and their appearance/role evidence: " + json.dumps(person_context, ensure_ascii=True),
         "Existing visual person aliases: " + json.dumps(aliases, ensure_ascii=True),
         'Schema: [{"subject_type":"person|object|place|environment|event","subject":"entity label","predicate":"state|used|moved|placed|other","value":"one supported fact","actor":"visible actor or empty","affected_people":[],"from_location":"supported or empty","to_location":"supported or empty","time_order":1,"frame_index":1,"evidence":"visible detail","confidence":"high|medium|low"}]',
     ]
@@ -1662,6 +1995,29 @@ def _structured_fact_quality_error(fields: dict) -> str:
         _temporal_fact_coverage_error(fields),
     ) if error]
     return " ".join(errors)
+
+
+def _person_object_quality_error(fields: dict) -> str:
+    """Validate identity references and object transitions independently from event coverage."""
+    errors = [error for error in (
+        _person_observation_coverage_error(fields),
+        _object_move_evidence_error(fields),
+    ) if error]
+    return " ".join(errors)
+
+
+def _unresolved_person_reference_error(fields: dict) -> str:
+    """Return dangling person aliases, excluding a separate narrative-count gap."""
+    observations = {" ".join(str(row.get("entity") or "").casefold().split())
+                    for row in fields.get("person_observations") or []
+                    if isinstance(row, dict) and row.get("entity")}
+    missing = [label for label in _person_observation_references(fields)
+               if not _camera_wearer_reference(label)
+               and " ".join(label.casefold().split()) not in observations]
+    if missing:
+        return ("Temporal Facts or People names refer to people without matching "
+                "Person Observations: " + ", ".join(missing[:8]))
+    return ""
 
 
 class PersonRepairCancelled(RuntimeError):
@@ -1722,7 +2078,7 @@ def _salvage_person_reference_gaps(
     try:
         repaired, repair_log = repair_person_references(fields)
         if (repaired is not None
-                and not _structured_fact_quality_error(repaired)
+                and not _person_object_quality_error(repaired)
                 and _has_usable_english_memory(repaired)):
             return repaired, [], repair_log
         repair_error = (
@@ -1975,28 +2331,113 @@ def video_path_of(m: dict):
     return p if p.exists() else None
 
 
+def _jpeg_frames_from_pipe(payload: bytes) -> list[bytes]:
+    """Split an image2pipe MJPEG stream into individual JPEG frames."""
+    frames = []
+    cursor = 0
+    while True:
+        begin = payload.find(b"\xff\xd8", cursor)
+        if begin < 0:
+            break
+        finish = payload.find(b"\xff\xd9", begin + 2)
+        if finish < 0:
+            break
+        frames.append(payload[begin:finish + 2])
+        cursor = finish + 2
+    return frames
+
+
+def _extract_frames_nvdec(vp: Path, start: float, end: float, times: list,
+                          fps: float) -> list[bytes] | None:
+    """Decode sampled frames with FFmpeg NVDEC when supported; None means fallback."""
+    import shutil
+    import subprocess
+
+    ffmpeg = shutil.which(os.environ.get("MEMORY_FFMPEG_BIN", "ffmpeg"))
+    device = os.environ.get("MEMORY_VIDEO_GPU", "2").strip()
+    if not ffmpeg or not device.isdigit() or not times or fps <= 0:
+        return None
+
+    first_source_frame = int(start * fps)
+    target_indices = [max(0, int(t * fps) - first_source_frame) for t in times]
+    unique_indices = sorted(set(target_indices))
+    selection = "+".join(f"eq(n\\,{index})" for index in unique_indices)
+    video_filter = f"hwdownload,format=nv12,select={selection},format=bgr24"
+    duration = max(0.0, float(end) - float(start))
+    command = [
+        ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin",
+        "-hwaccel", "cuda", "-hwaccel_device", device,
+        "-hwaccel_output_format", "cuda",
+        "-ss", f"{float(start):.6f}", "-i", str(vp), "-t", f"{duration:.6f}",
+        "-vf", video_filter, "-fps_mode", "passthrough",
+        "-frames:v", str(len(unique_indices)),
+        "-f", "image2pipe", "-c:v", "mjpeg", "-q:v", "3", "pipe:1",
+    ]
+    try:
+        result = subprocess.run(command, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, timeout=120, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    decoded = _jpeg_frames_from_pipe(result.stdout)
+    if len(decoded) != len(unique_indices):
+        return None
+    by_index = dict(zip(unique_indices, decoded))
+    return [by_index[index] for index in target_indices]
+
+
 def extract_frames(vp: Path, start: float, end, n: int = DEFAULT_FRAMES,
-                   return_times: bool = False):
-    """在片段区间内均匀抽 n 帧；可同时返回实际读取帧的源视频秒数。"""
+                   return_times: bool = False, progress_callback=None,
+                   sample_times: list[float] | None = None):
+    """Uniformly sample a clip; prefer CUDA/NVDEC decode and fall back to OpenCV."""
     import cv2
-    import numpy as np
 
     cap = cv2.VideoCapture(str(vp))
     if not cap.isOpened():
-        raise RuntimeError(f"无法打开视频: {vp}")
+        raise RuntimeError(f"\u65e0\u6cd5\u6253\u5f00\u89c6\u9891: {vp}")
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     total = cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0
     dur = (total / fps) if fps > 0 else 0.0
+    cap.release()
 
     if end is None or end <= start:
-        end = (dur or (start + 30))
+        end = dur or (start + 30)
     end = min(end, dur) if dur else end
 
-    # Video intervals are end-exclusive. Sampling exactly at end often asks
-    # OpenCV for a frame past EOF, silently dropping the final (often decisive) frame.
-    last_valid_time = max(start, end - 1.0 / fps)
-    times = [start + (last_valid_time - start) * i / max(n - 1, 1)
-             for i in range(n)] if n > 1 else [start]
+    # Keep the existing end-exclusive, evenly-spaced schedule for inference.
+    # Cached results may pass their original Qwen timestamps to reproduce the
+    # same temporal inputs when only the visual evidence assets are refreshed.
+    if sample_times is not None:
+        times = [float(value) for value in sample_times]
+        if not times or any(not math.isfinite(value) or value < start - 0.01
+                            or value > end for value in times):
+            raise ValueError("invalid cached Qwen frame timestamps")
+    else:
+        last_valid_time = max(start, end - 1.0 / fps)
+        times = [start + (last_valid_time - start) * i / max(n - 1, 1)
+                 for i in range(n)] if n > 1 else [start]
+
+    bufs = _extract_frames_nvdec(vp, start, end, times, fps)
+    if bufs is not None:
+        if progress_callback:
+            try:
+                progress_callback({"stage": "frame_decode_gpu",
+                                   "message": f"FFmpeg CUDA/NVDEC decoded frames on GPU {os.environ.get('MEMORY_VIDEO_GPU', '2')}"})
+            except Exception:
+                pass
+        return (bufs, [round(float(t), 3) for t in times]) if return_times else bufs
+
+    if progress_callback:
+        try:
+            progress_callback({"stage": "frame_decode_cpu",
+                               "message": "CUDA/NVDEC is unavailable for this clip; using the OpenCV CPU decoder fallback"})
+        except Exception:
+            pass
+    # OpenCV wheels without a usable CUDA/NVDEC backend use the CPU decoder.
+    cap = cv2.VideoCapture(str(vp))
+    if not cap.isOpened():
+        raise RuntimeError(f"\u65e0\u6cd5\u6253\u5f00\u89c6\u9891: {vp}")
     bufs = []
     frame_times = []
     try:
@@ -2012,22 +2453,22 @@ def extract_frames(vp: Path, start: float, end, n: int = DEFAULT_FRAMES,
     finally:
         cap.release()
     if not bufs:
-        raise RuntimeError(f"抽帧失败: {vp}")
+        raise RuntimeError(f"\u62bd\u5e27\u5931\u8d25: {vp}")
     return (bufs, frame_times) if return_times else bufs
-
-
-# ---------------------------------------------------------------------------
-# 感知客户端
-# ---------------------------------------------------------------------------
 
 class QwenPerceiver:
     def __init__(self, api_url: str = DEFAULT_API, num_frames: int = DEFAULT_FRAMES,
-                 cache_file: Path = CACHE_FILE):
+                 cache_file: Path = CACHE_FILE, api_urls: list[str] | None = None):
         configured_urls = [
-            value.strip().rstrip("/")
-            for value in os.environ.get("QWEN_API_URLS", "").split(",")
-            if value.strip()
+            str(value).strip().rstrip("/") for value in (api_urls or [])
+            if str(value).strip()
         ]
+        if not configured_urls:
+            configured_urls = [
+                value.strip().rstrip("/")
+                for value in os.environ.get("QWEN_API_URLS", "").split(",")
+                if value.strip()
+            ]
         self.api_urls = configured_urls or [api_url.rstrip("/")]
         self.api_url = self.api_urls[0]
         self._api_url_lock = threading.Lock()
@@ -2450,7 +2891,8 @@ class QwenPerceiver:
                     emit("cache_person_repair", "缓存命中但人物观察不完整，正在用原视频帧补齐")
                     try:
                         repair_frames, repair_times = extract_frames(
-                            vp, start, end, self.num_frames, return_times=True)
+                            vp, start, end, self.num_frames, return_times=True,
+                            progress_callback=emit)
                         if not repair_frames:
                             raise RuntimeError("source frames unavailable for cached person repair")
                         raw_repair_outputs = []
@@ -2552,7 +2994,8 @@ class QwenPerceiver:
         try:
             emit("extract_frames", "正在从视频片段抽取关键帧")
             bufs, frame_times_s = extract_frames(
-                vp, start, end, self.num_frames, return_times=True)
+                vp, start, end, self.num_frames, return_times=True,
+                progress_callback=emit)
             base_prompt = build_prompt(len(bufs))
             files = [("images", (f"f{i}.jpg", b, "image/jpeg"))
                      for i, b in enumerate(bufs)]
@@ -2786,6 +3229,27 @@ class QwenPerceiver:
                     and "Person Observations is not a complete JSON array"
                     in str(validation_error or "")):
                 try:
+                    prefix_recovery = _prepare_truncated_structured_prefix_for_person_repair(
+                        raw, len(bufs)
+                    )
+                    if prefix_recovery:
+                        raw, recovered_people, recovered_facts, temporal_complete = prefix_recovery
+                        temporal_fact_repair_metadata = {
+                            "source": "complete_json_prefix_before_same_video_person_repair",
+                            "person_prefix_rows": recovered_people,
+                            "temporal_prefix_rows": recovered_facts,
+                            "temporal_array_was_complete": temporal_complete,
+                            "raw_model_output_invalid": True,
+                        }
+                        emit("repair_people",
+                             "Retained complete fact prefixes before same-video person repair")
+                except (ValueError, TypeError, json.JSONDecodeError):
+                    pass
+
+            if (fields is None and validation_error_kind == "schema"
+                    and "Person Observations is not a complete JSON array"
+                    in str(validation_error or "")):
+                try:
                     base_raw = _replace_field_value(raw, "Person Observations", "[]")
                     if base_raw is None:
                         raise ValueError("Person Observations field was not found")
@@ -2837,7 +3301,7 @@ class QwenPerceiver:
                         repaired_fields, repair_payload, references, len(bufs))
                     repaired_fields = sanitize_unverified_moves(repaired_fields)
                     repair_quality_error = (
-                        _structured_fact_quality_error(repaired_fields)
+                        _person_object_quality_error(repaired_fields)
                         if validate_source_fact_quality else "")
                     if repair_quality_error:
                         raise ValueError(repair_quality_error)
@@ -3029,7 +3493,7 @@ class QwenPerceiver:
                                         len(map_rows) if isinstance(map_rows, list)
                                         else len(map_rows) if isinstance(map_rows, dict) else 0
                                     )
-                                    mapped_error = _structured_fact_quality_error(mapped_fields)
+                                    mapped_error = _person_object_quality_error(mapped_fields)
                                     if not mapped_error:
                                         repaired_fields = mapped_fields
                                         repair_error = ""
@@ -3146,9 +3610,69 @@ class QwenPerceiver:
 
             if (fields is None and validate_source_fact_quality
                     and candidate_fields is not None
-                    and validation_error_kind == "scene_fact_quality"
-                    and not _person_observation_coverage_error(candidate_fields)
-                    and not _object_move_evidence_error(candidate_fields)
+                    and validation_error_kind == "scene_fact_quality"):
+                try:
+                    sanitized_fields, removed_person_claims, repair_log = (
+                        _salvage_person_reference_gaps(
+                            candidate_fields, repair_person_references
+                        )
+                    )
+                except PersonRepairCancelled:
+                    return self._cancelled_result()
+                record_person_repair(repair_log)
+                if sanitized_fields is not None:
+                    fields = sanitized_fields
+                    candidate_fields = fields
+                    validation_error = None
+                    validation_error_kind = None
+
+            # If the model exhausted the same-frame repair and emitted no complete
+            # Temporal Facts row at all, keep the independently parsed scene,
+            # people, location, activity, objects, and environment. This fallback
+            # is limited to an actually open array and still enforces the same
+            # person/object evidence gates; it never fabricates or partially parses
+            # a fact row.
+            if (fields is None and validation_error_kind == "schema"
+                    and "Temporal Facts is not a complete JSON array"
+                    in str(validation_error or "")):
+                temporal_text = _field(raw, "Temporal Facts").strip()
+                partial_rows, complete_array = _parse_json_array_prefix(temporal_text)
+                if (temporal_text.startswith("[") and not complete_array
+                        and not partial_rows):
+                    try:
+                        scene_only_raw = _replace_field_value(raw, "Temporal Facts", "[]")
+                        if scene_only_raw is None:
+                            raise ValueError("Temporal Facts field was not found")
+                        scene_only_fields = parse_analysis(scene_only_raw, strict=True)
+                        quality_error = (_structured_fact_quality_error(scene_only_fields)
+                                         if validate_source_fact_quality else "")
+                        if quality_error:
+                            raise ValueError(quality_error)
+                        if not _has_usable_english_memory(scene_only_fields):
+                            raise ValueError("no substantive memory remained after removing the incomplete array")
+                        fields = scene_only_fields
+                        raw_model_output = raw
+                        raw = scene_only_raw
+                        candidate_fields = fields
+                        temporal_fact_repair_metadata = {
+                            "source": "same_video_frames_incomplete_array_empty_fallback",
+                            "facts_added": 0,
+                            "complete_facts_retained": 0,
+                            "raw_model_output_invalid": True,
+                        }
+                        validation_error = None
+                        validation_error_kind = None
+                        emit("repair_temporal_facts",
+                             "Kept validated scene details; the incomplete event-fact array was omitted")
+                    except (ValueError, TypeError, json.JSONDecodeError) as fallback_exc:
+                        validation_error = (
+                            f"{validation_error}; safe scene-only fallback failed: "
+                            f"{str(fallback_exc)[:120]}"
+                        )
+
+            if (validate_source_fact_quality
+                    and candidate_fields is not None
+                    and (fields is not None or validation_error_kind == "scene_fact_quality")
                     and _temporal_fact_coverage_error(candidate_fields)):
                 try:
                     existing_facts = [row for row in candidate_fields.get("temporal_facts") or []
@@ -3210,9 +3734,18 @@ class QwenPerceiver:
                         raise ValueError("Temporal Facts field was not found")
                     repaired_fields = parse_analysis(patched_raw, strict=True)
                     repaired_fields = sanitize_unverified_moves(repaired_fields)
-                    coverage_error = _structured_fact_quality_error(repaired_fields)
-                    if coverage_error:
-                        raise ValueError(coverage_error)
+                    baseline_reference_error = _unresolved_person_reference_error(candidate_fields)
+                    baseline_move_error = _object_move_evidence_error(candidate_fields)
+                    repaired_reference_error = _unresolved_person_reference_error(repaired_fields)
+                    repaired_move_error = _object_move_evidence_error(repaired_fields)
+                    repair_safety_error = " ".join(error for error in (
+                        repaired_reference_error
+                        if repaired_reference_error != baseline_reference_error else "",
+                        repaired_move_error if repaired_move_error != baseline_move_error else "",
+                        _temporal_fact_coverage_error(repaired_fields),
+                    ) if error)
+                    if repair_safety_error:
+                        raise ValueError(repair_safety_error)
                     raw_model_output = raw
                     raw = patched_raw
                     fields = repaired_fields
@@ -3220,78 +3753,30 @@ class QwenPerceiver:
                     temporal_fact_repair_metadata = {
                         "source": "same_video_frames_atomic_coverage_repair",
                         "facts_added": len(combined) - len(existing_facts),
+                        "person_count_gap_deferred": bool(
+                            _person_observation_coverage_error(fields)),
                     }
-                    validation_error = None
-                    validation_error_kind = None
-                    emit("repair_temporal_facts", "原子事件事实已补齐并通过来源校验")
+                    # Keep validated event facts even when a separate narrative
+                    # person-count gap still needs its own source review.
+                    person_gap = _person_observation_coverage_error(fields)
+                    validation_error = person_gap or None
+                    validation_error_kind = "scene_fact_quality" if person_gap else None
+                    emit("repair_temporal_facts", "原子事件事实已补齐并通过独立来源校验")
                 except (ValueError, TypeError, json.JSONDecodeError, requests.RequestException) as repair_exc:
                     validation_error = (
                         f"{validation_error}; focused temporal coverage repair failed: "
                         f"{str(repair_exc)[:240]}"
                     )
 
-            if (fields is None and validate_source_fact_quality
-                    and candidate_fields is not None
-                    and validation_error_kind == "scene_fact_quality"):
-                try:
-                    sanitized_fields, removed_person_claims, repair_log = (
-                        _salvage_person_reference_gaps(
-                            candidate_fields, repair_person_references
-                        )
-                    )
-                except PersonRepairCancelled:
-                    return self._cancelled_result()
-                record_person_repair(repair_log)
-                if sanitized_fields is not None:
-                    fields = sanitized_fields
-                    validation_error = None
-                    validation_error_kind = None
-
-            # If the model exhausted the same-frame repair and emitted no complete
-            # Temporal Facts row at all, keep the independently parsed scene,
-            # people, location, activity, objects, and environment. This fallback
-            # is limited to an actually open array and still enforces the same
-            # person/object evidence gates; it never fabricates or partially parses
-            # a fact row.
-            if (fields is None and validation_error_kind == "schema"
-                    and "Temporal Facts is not a complete JSON array"
-                    in str(validation_error or "")):
-                temporal_text = _field(raw, "Temporal Facts").strip()
-                partial_rows, complete_array = _parse_json_array_prefix(temporal_text)
-                if (temporal_text.startswith("[") and not complete_array
-                        and not partial_rows):
-                    try:
-                        scene_only_raw = _replace_field_value(raw, "Temporal Facts", "[]")
-                        if scene_only_raw is None:
-                            raise ValueError("Temporal Facts field was not found")
-                        scene_only_fields = parse_analysis(scene_only_raw, strict=True)
-                        quality_error = (_structured_fact_quality_error(scene_only_fields)
-                                         if validate_source_fact_quality else "")
-                        if quality_error:
-                            raise ValueError(quality_error)
-                        if not _has_usable_english_memory(scene_only_fields):
-                            raise ValueError("no substantive memory remained after removing the incomplete array")
-                        fields = scene_only_fields
-                        raw_model_output = raw
-                        raw = scene_only_raw
-                        candidate_fields = fields
-                        temporal_fact_repair_metadata = {
-                            "source": "same_video_frames_incomplete_array_empty_fallback",
-                            "facts_added": 0,
-                            "complete_facts_retained": 0,
-                            "raw_model_output_invalid": True,
-                        }
-                        validation_error = None
-                        validation_error_kind = None
-                        emit("repair_temporal_facts",
-                             "Kept validated scene details; the incomplete event-fact array was omitted")
-                    except (ValueError, TypeError, json.JSONDecodeError) as fallback_exc:
-                        validation_error = (
-                            f"{validation_error}; safe scene-only fallback failed: "
-                            f"{str(fallback_exc)[:120]}"
-                        )
-
             quality_warning = None
+            if fields is not None and validate_source_fact_quality:
+                quality_warning = _temporal_fact_coverage_error(fields) or None
+                if quality_warning:
+                    quality_repair_metadata = {
+                        **(quality_repair_metadata or {}),
+                        "non_blocking_temporal_coverage_warning": quality_warning[:500],
+                    }
+                    emit("quality_warning", "事件事实修复未能完全覆盖；保留已核实内容并标记待复核")
             if (fields is None and allow_quality_warning
                     and candidate_fields is not None
                     and validation_error_kind == "scene_fact_quality"
@@ -3355,12 +3840,16 @@ class QwenPerceiver:
             out["quality_warning"] = quality_warning
         if raw_model_output is not None and raw_model_output != raw:
             out["raw_model_output"] = raw_model_output
+        out["source"] = "qwen"
         with self._cache_lock:
-            self.cache[mid] = out
+            # The cache stores structured results and timestamps only. Keep the
+            # potentially large JPEG payload transient and return it to the memory
+            # writer so the exact images uploaded to Qwen can be persisted there.
+            self.cache[mid] = dict(out)
             self._dirty_cache_keys.add(mid)
             if persist_cache:
                 self._save_cache()
-        out["source"] = "qwen"
+        out["qwen_input_frame_bytes"] = bufs
         return out
 
     def ground_objects(self, objects, frames, cancel_event=None, progress_callback=None):

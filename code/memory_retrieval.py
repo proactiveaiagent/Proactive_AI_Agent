@@ -37,10 +37,46 @@ class MemoryRetrievalMixin:
         revision = self.memory.get("metadata", {}).get("semantic_index_revision", 0)
         cache = self._lexical_search_cache
         if cache is None or cache.get("revision") != revision:
+            archive = self.memory["layer7"]["moments"]
+            # Keep one best source-backed record per video segment. Legacy runs
+            # can contain duplicate writes; retrieval should not count them as
+            # separate history or let them crowd out distinct episodes.
+            best_by_source = {}
+            for moment_id, moment in archive.items():
+                if (not isinstance(moment, dict) or moment.get("merged_into")
+                        or moment.get("stale")):
+                    continue
+                provenance = moment.get("source_provenance") or {}
+                source_time = moment.get("source_time") or {}
+                multimodal = moment.get("multimodal") or {}
+                source_id = str(provenance.get("source_segment_id")
+                                or source_time.get("source_segment_id")
+                                or multimodal.get("source_id") or "")
+                if not source_id:
+                    continue
+                quality = (
+                    240 * len(moment.get("temporal_facts") or [])
+                    + 160 * len(moment.get("person_observations") or [])
+                    + 100 * len(moment.get("object_observations") or [])
+                    + 80 * bool(moment.get("source_evidence"))
+                    + sum(len(str(moment.get(key) or "")) for key in
+                          ("scene", "user_action", "interaction_details", "activity", "location"))
+                )
+                rank = (quality, str(moment.get("timestamp") or ""), str(moment_id))
+                previous = best_by_source.get(source_id)
+                if previous is None or rank > previous[0]:
+                    best_by_source[source_id] = (rank, str(moment_id))
+            canonical_ids = {value[1] for value in best_by_source.values()}
             documents = [
                 self._retrieval_group_moment(moment)
-                for moment in self.memory["layer7"]["moments"].values()
-                if not moment.get("merged_into")
+                for moment_id, moment in archive.items()
+                if (isinstance(moment, dict) and not moment.get("merged_into")
+                    and not moment.get("stale")
+                    and (not (
+                        (moment.get("source_provenance") or {}).get("source_segment_id")
+                        or (moment.get("source_time") or {}).get("source_segment_id")
+                        or (moment.get("multimodal") or {}).get("source_id")
+                    ) or str(moment_id) in canonical_ids))
             ]
             cache = _build_memory_search_index(documents)
             cache["revision"] = revision
@@ -297,6 +333,7 @@ class MemoryRetrievalMixin:
                 ("活动", moment.get("activity")),
                 ("物品", json.dumps(moment.get("objects") or [], ensure_ascii=False)),
                 ("物品观察", json.dumps(moment.get("object_observations") or [], ensure_ascii=False)),
+                ("物品状态与位置", json.dumps(moment.get("object_states") or [], ensure_ascii=False)),
                 ("环境", json.dumps(moment.get("environments") or [], ensure_ascii=False)),
                 ("人物观察", json.dumps(moment.get("person_observations") or [], ensure_ascii=False)),
                 ("时间事实", json.dumps(moment.get("temporal_facts") or [], ensure_ascii=False)),

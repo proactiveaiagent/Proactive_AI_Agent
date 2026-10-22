@@ -38,9 +38,10 @@ _ENGLISH_TERMS = tuple(_TERM_ALIASES)
 _ENGLISH_TERM_RE = re.compile(
     r"\b(" + "|".join(sorted(_ENGLISH_TERMS, key=len, reverse=True)) + r")\b", re.I)
 _CAMERA_FACING_RE = re.compile(
-    r"\b(?:toward the camera|at the camera|facing the camera|approach(?:es|ing)? the camera|"
-    r"walk(?:s|ing)? toward the camera|looks? at the camera|smil\w+ at the camera)\b", re.I)
-_APPROACH_RE = re.compile(r"\b(?:approached|reached|walked toward|came up to|went up to)\b", re.I)
+    r"\b(?:toward(?:s)? (?:the )?camera|at the camera|facing (?:the )?camera|"
+    r"approach(?:es|ing)? (?:the )?camera|walk(?:s|ing)? toward(?:s)? (?:the )?camera|"
+    r"looks? at the camera|smil\w+ at the camera)\b", re.I)
+_APPROACH_RE = re.compile(r"\b(?:approach(?:es|ed|ing)?|reach(?:es|ed|ing)?|walk(?:s|ed|ing)? toward|come up to|came up to|go(?:es|ing)? up to|went up to|step(?:s|ped|ping)? toward|move(?:s|d|ing)? toward)\b", re.I)
 _SPEAKER_IS_CAMERA_WEARER = re.compile(r"^\s*(?:camera wearer|the camera wearer)\b", re.I)
 _INTRODUCE_RE = re.compile(r"(?:这是|这就是|这位是|那个是|这个是|她是|他是|介绍一?下)")
 _SELF_CN_RE = re.compile(r"我(?:是|叫)\s*")
@@ -62,6 +63,9 @@ def terms_in_text(text):
         found.append(match.group(0))
     for match in _ENGLISH_TERM_RE.finditer(str(text or "")):
         found.append(_TERM_ALIASES[match.group(1).casefold()])
+    # ASR may render 姥姥 as the homophone 老老 in an explicit New Year greeting.
+    if re.search(r"老老.{0,4}(?:过年好|新年好|拜年|好孩子)", str(text or "")):
+        found.append("姥姥")
     return list(dict.fromkeys(found))
 
 
@@ -77,6 +81,16 @@ def _usage_of(term, quote):
         if re.search(pattern + r"[“\"']?\s*" + escaped, text, re.I):
             return "introduction"
     if re.search(_ADDRESS_PREPOSITION_CN_RE.pattern + escaped, text):
+        return "address"
+    if re.search(r"(?:谢谢|感谢)(?:您|你)?\s*" + escaped, text):
+        return "address"
+    if re.search(r"\b(?:thanks(?:\s+to)?|thank\s+you\s+to)\s+" + escaped + r"\b", text, re.I):
+        return "address"
+    # New-Year greetings address the following family role directly (for example
+    # “姥姥过年好”); requiring a separate “对/给” particle misses this common form.
+    if re.search(escaped + r"\s*(?:过年好|新年好|拜年|你好|您好)", text):
+        return "address"
+    if term == "姥姥" and re.search(r"老老(?:过年|新年)?好", text):
         return "address"
     if re.search(escaped + _ADDRESS_PARTICLE_CN_RE.pattern, text, re.I):
         return "address"
@@ -105,27 +119,44 @@ def _approach_recipients(visual_facts):
             continue
         predicate = _clean(fact.get("predicate"), 60).casefold()
         actor = _clean(fact.get("actor") or fact.get("subject"), 120)
-        target = _clean(fact.get("value"), 120)
-        if not actor or not target or not predicate:
+        target = _clean(fact.get("value"), 240)
+        if not actor or not target:
             continue
-        if _APPROACH_RE.search(predicate) and not _SPEAKER_IS_CAMERA_WEARER.match(actor):
+        # Action verbs are often in the fact value ("moved: approached ..."),
+        # not the controlled predicate ("moved"). Inspect both while retaining
+        # the full target phrase for later unique-entity matching.
+        action_text = f"{predicate} {target}"
+        if _APPROACH_RE.search(action_text) and not _SPEAKER_IS_CAMERA_WEARER.match(actor):
             recipients.setdefault(actor.lower(), []).append(target)
     return recipients
 
 
-def _candidate_for_term(term, usage, observations, visual_facts):
-    """Pick the one visible person the clip itself singles out, or return None."""
+def _candidate_for_term(term, usage, observations, visual_facts, quote=""):
+    """Resolve spoken roles only when the clip supplies a unique visual participant."""
     rows = [row for row in observations or []
             if isinstance(row, dict) and _clean(row.get("entity"), 120)]
     if not rows:
         return None, ""
+    if usage in {"address", "introduction"}:
+        # If an existing visual observation already carries the exact spoken role
+        # label, attach the quote as support instead of leaving a valid label
+        # unaudited merely because other people are also visible.
+        exact = [row for row in rows
+                 if _clean(row.get("entity"), 120).casefold() == _clean(term, 120).casefold()]
+        if len(exact) == 1:
+            return exact[0], "当前可见人物已有同名身份标签，语音在同片中明确称呼/介绍该身份"
+    facing = [row for row in rows if _CAMERA_FACING_RE.search(_person_text(row))]
+    speakers = [row for row in rows if _visibly_speaking(row)]
     if usage == "self":
-        # Without diarization or active-speaker evidence, a self-reference can
-        # belong to the camera wearer rather than any person shown in the clip.
+        # Self-identification belongs to its speaker. Link only a unique visible
+        # speaker, or a sole camera-facing participant in an explicit interaction.
+        if len(speakers) == 1:
+            return speakers[0], "同片画面唯一可见说话者与明确自我介绍对应"
+        if len(facing) == 1:
+            return facing[0], "画面中唯一朝镜头互动的人物与明确自我介绍对应"
         return None, ""
     if usage == "address":
-        # A vocative names the listener, never the speaking person. Link it only
-        # when an observed approach identifies who received the address.
+        # A vocative identifies the listener, never the speaker.
         recipients = _approach_recipients(visual_facts)
         approached = []
         for row in rows:
@@ -136,11 +167,19 @@ def _candidate_for_term(term, usage, observations, visual_facts):
                 approached.append(row)
         approached = list({id(row): row for row in approached}.values())
         if len(approached) == 1:
-            return approached[0], "clip 里另一位人物走向/问候的正是这位人物"
+            return approached[0], "画面中的靠近/问候动作指向这位称呼对象"
+        direct_greeting = bool(re.search(
+            r"(?:过年好|新年好|拜年|你好|您好|\b(?:hi|hello|hey|good\s+(?:morning|afternoon|evening))\b)",
+            str(quote or ""), re.I))
+        if len(rows) == 1 and direct_greeting:
+            return rows[0], "唯一可见人物与明确问候/拜年称呼相对应"
+        if len(speakers) == 1 and len(rows) > 1:
+            listeners = [row for row in rows if row is not speakers[0]]
+            if len(listeners) == 1:
+                return listeners[0], "画面中唯一说话者与唯一可见听者构成互动"
         return None, ""
-    facing = [row for row in rows if _CAMERA_FACING_RE.search(_person_text(row))]
     if len(facing) == 1:
-        return facing[0], "clip 里只有这一位人物面朝镜头移动或微笑"
+        return facing[0], "画面里只有这一位人物面朝镜头互动"
     if len(rows) == 1:
         return rows[0], "clip 只拍到一位可见人物"
     recipients = _approach_recipients(visual_facts)
@@ -222,16 +261,17 @@ def _visibly_speaking(row):
 
 
 def _child_role_for_address(term, row):
+    """Infer a speaker's family role from a parent vocative, never from age."""
     term = str(term or "").casefold()
-    parents = {"dad", "father", "爸爸", "父亲", "爸", "mom", "mother",
+    parents = {"dad", "father", "mom", "mother", "爸爸", "父亲", "爸",
                "妈妈", "母亲", "妈"}
     if term not in parents:
         return ""
     text = " ".join(str(row.get(key) or "") for key in
                     ("entity", "appearance", "face_features", "evidence"))
-    if re.search(r"\b(?:man|male|boy)\b", text, re.I):
+    if re.search(r"\b(?:man|male)\b", text, re.I):
         return "son"
-    if re.search(r"\b(?:woman|female|girl)\b", text, re.I):
+    if re.search(r"\b(?:woman|female)\b", text, re.I):
         return "daughter"
     return "child"
 
@@ -240,7 +280,7 @@ def _attach_speaker_role(row, role, info):
     quote = _clean(info.get("quote"), _QUOTE_LIMIT)
     addressed = _clean(info.get("term"), 60) or quote
     basis = (f"语音原句“{quote}”中说话者称对方为“{addressed}”；"
-             f"画面证据显示该人物正在说话，据此记录其为对方的{role}，置信度中。")
+             f"同片画面将当前人物唯一定位为说话者，据此记录为对方的{role}，置信度中。")
     aliases = [item for item in (row.get("spoken_aliases") or [])
                if isinstance(item, dict)
                and not (str(item.get("alias") or "").casefold() in
@@ -254,9 +294,7 @@ def _attach_speaker_role(row, role, info):
     row["entity"] = role
     row["profile_context"] = f"画面中的说话者称对方为“{addressed}”；对方未与当前人物合并。"
     relations = [value for value in (row.get("relationships") or [])
-                if isinstance(value, str)
-                and not re.search(r"(?:father|mother) of the speaker|被称呼为(?:dad|father|mom|mother)",
-                                  value, re.I)]
+                 if isinstance(value, str)]
     relation = f"说话者被画面定位为{role}；语音称呼对方为“{addressed}”"
     if relation not in relations:
         relations.append(relation)
@@ -276,6 +314,7 @@ def attach_spoken_identity(observations, speech_facts, visual_facts=None):
         return {"linked": linked, "unlinked": unlinked}
 
     participants = {}
+    co_mentions = {}
     for fact in speech_facts or []:
         if not isinstance(fact, dict):
             continue
@@ -287,39 +326,42 @@ def attach_spoken_identity(observations, speech_facts, visual_facts=None):
             spoke_at = float(ref.get("audio_start_s") or 0.0)
         except (TypeError, ValueError):
             spoke_at = 0.0
-        for term in terms_in_text(quote):
+        quote_terms = terms_in_text(quote)
+        for term in quote_terms:
             usage = _usage_of(term, quote)
             if usage == "mention":
                 continue
+            co_mentions.setdefault(term, set()).update(
+                other for other in quote_terms
+                if other != term and _usage_of(other, quote) != "mention")
             entry = participants.get(term)
             if entry is None or (_USAGE_RANK[usage], spoke_at) < (
                     _USAGE_RANK[entry["usage"]], entry["spoke_at"]):
                 participants[term] = {"term": term, "usage": usage, "quote": quote,
                                       "spoke_at": spoke_at, "evidence_ref": ref}
 
-    # One visible person can only answer to one spoken term. Claims compete in order
-    # of evidence strength (introduction, then self-report, then address) and the
-    # speaker's turn time; the losers stay unlinked instead of piling aliases onto
-    # the same card.
+    # One visible person normally maps to one spoken identity. When one utterance
+    # explicitly distinguishes two addressed roles, a sole remaining participant
+    # can receive a low-confidence link after the first role is grounded.
     claims = []
     for term, info in participants.items():
         visible_speakers = [row for row in rows_by_id.values() if _visibly_speaking(row)]
         if info["usage"] == "address" and len(visible_speakers) == 1:
             speaker = visible_speakers[0]
-            reverse_role = _child_role_for_address(term, speaker)
-            if reverse_role:
-                _attach_speaker_role(speaker, reverse_role, info)
-                why = "同片画面显示该人物正在说话，语音称呼对方为父/母辈称谓"
-                linked.append({"term": reverse_role,
+            speaker_role = _child_role_for_address(term, speaker)
+            if speaker_role:
+                _attach_speaker_role(speaker, speaker_role, info)
+                linked.append({"term": speaker_role,
                                "entity": _clean(speaker.get("entity"), 120),
                                "usage": "speaker_role", "confidence": "medium",
-                               "basis": why})
+                               "basis": "唯一可见说话者称对方为父/母辈，性别标签只用于区分儿子/女儿，不推测年龄"})
                 unlinked.append({"term": term, "usage": info["usage"],
                                  "quote": info["quote"],
-                                 "reason": "这是说话者对听者的称呼，听者身份不与说话者合并"})
+                                 "reason": "称呼指向听者；听者未与说话者合并"})
                 continue
         candidate, why = _candidate_for_term(term, info["usage"],
-                                             list(rows_by_id.values()), visual_facts)
+                                             list(rows_by_id.values()), visual_facts,
+                                             quote=info["quote"])
         if candidate is None:
             unlinked.append({"term": term, "usage": info["usage"], "quote": info["quote"],
                              "reason": ("自称说话人未与可见人物同步，身份保持未知"
@@ -332,10 +374,21 @@ def attach_spoken_identity(observations, speech_facts, visual_facts=None):
     for rank, spoke_at, term, info, candidate, why in sorted(
             claims, key=lambda claim: (claim[0], claim[1], claim[2])):
         holder = taken_by.get(id(candidate))
+        match_confidence = "medium"
         if holder and holder != term:
-            unlinked.append({"term": term, "usage": info["usage"], "quote": info["quote"],
-                             "reason": f"同一位可见人物已按更早的语音线索关联为{holder}"})
-            continue
+            remaining = [row for row in rows_by_id.values() if id(row) not in taken_by]
+            if holder in co_mentions.get(term, set()) and len(remaining) == 1:
+                # One utterance distinguishes two addressees; after the directly
+                # grounded person is assigned, the sole remaining visible person
+                # is a low-confidence visual candidate for the other role.
+                candidate = remaining[0]
+                match_confidence = "low"
+                why = (f"同一句语音分别称呼{holder}和{term}；{holder}已由直接称呼/互动关联到另一人物，"
+                       "唯一剩余可见人物作为低置信度候选；语音未做说话人分离")
+            else:
+                unlinked.append({"term": term, "usage": info["usage"], "quote": info["quote"],
+                                 "reason": f"同一位可见人物已按更早的语音线索关联为{holder}"})
+                continue
         taken_by[id(candidate)] = term
         aliases = [item for item in (candidate.get("spoken_aliases") or [])
                    if isinstance(item, dict)]
@@ -343,9 +396,13 @@ def attach_spoken_identity(observations, speech_facts, visual_facts=None):
             aliases.append({
                 "alias": term,
                 "status": "probable_visual_match",
-                "confidence": "medium",
+                "confidence": match_confidence,
                 "basis": _basis(term, info["usage"], info["quote"], why),
                 "evidence_ref": dict(info["evidence_ref"]),
+                "visual_evidence_ref": dict(candidate.get("evidence_ref") or {}),
+                "evidence_refs": [dict(ref) for ref in
+                                  (info.get("evidence_ref"), candidate.get("evidence_ref"))
+                                  if isinstance(ref, dict)],
             })
             candidate["spoken_aliases"] = aliases[-MAX_ALIASES_PER_PERSON:]
         relationships = [item for item in (candidate.get("relationships") or [])
@@ -356,6 +413,11 @@ def attach_spoken_identity(observations, speech_facts, visual_facts=None):
         if relationship not in relationships:
             relationships.append(relationship)
             candidate["relationships"] = relationships[-MAX_RELATIONSHIPS_PER_PERSON:]
+        old_entity = _clean(candidate.get("entity"), 120)
+        if old_entity and old_entity.casefold() != term.casefold():
+            if not candidate.get("visual_entity"):
+                candidate["visual_entity"] = old_entity
+            candidate["entity"] = term
         linked.append({"term": term, "entity": _clean(candidate.get("entity"), 120),
-                       "usage": info["usage"], "confidence": "medium", "basis": why})
+                       "usage": info["usage"], "confidence": match_confidence, "basis": why})
     return {"linked": linked, "unlinked": unlinked}

@@ -1,228 +1,495 @@
 #!/usr/bin/env python3
-"""Repair source-grounded people and event gaps in the 35 custom video memories."""
+"""Source-grounded, generic repair for temporal-fact gaps in custom video memories."""
 from __future__ import annotations
-import copy, json, os, re, sys, tempfile, time, fcntl
+
+import argparse
+import fcntl
+import json
+import os
+import re
+import tempfile
+import time
+import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+
 import requests
-ROOT=Path(__file__).resolve().parents[2]
-sys.path[:0]=[str(ROOT/'scripts'/'memory'), str(ROOT/'code')]
-from interactive_runner import feishu_test_moments
-from qwen_perceive import (_build_person_repair_prompt, _parse_person_repair,
-    _apply_person_repair, _person_reference_labels, _build_temporal_fact_repair_prompt,
-    _parse_json_array, _parse_json_array_prefix, _apply_temporal_fact_repair,
-    _object_move_evidence_error, _structured_fact_quality_error, clip_range,
-    extract_frames, video_path_of, QwenPerceiver)
-from grounding_cache import PersistentObjectGroundingCache
-from multimodal_memory import MultimodalAssetStore
-CACHE=ROOT/'data/egolife/runs/qwen_cache_memory_prompt_v3.json'
-GROUNDING=ROOT/'data/egolife/runs/interactive_object_grounding_cache.sqlite3'
-API=os.environ.get('QWEN_API_URL','http://127.0.0.1:8007').rstrip('/')
-LOW_FACT_IDS={'FEISHU_5_4_c21aee7538','FEISHU_7_1_41aeb05dab','FEISHU_7_2_325c12353f','FEISHU_9_1_fabdd91b9a'}
-PERSON_REVIEW_IDS={'FEISHU_2_1_b4d69d0493','FEISHU_5_3_570dc77996','FEISHU_7_1_41aeb05dab','FEISHU_7_2_325c12353f','FEISHU_10_1_1d077083a6','FEISHU_12_2_3ce4e03600','FEISHU_12_3_d781904f40','FEISHU_3_1_3adf23f5bb','FEISHU_3_3_6f73e3eba3','FEISHU_5_1_90383d197b','FEISHU_9_1_fabdd91b9a'}
-AGE_PATTERNS=[
- (r'\b(?:elderly|older|younger|young|old)\s+(?:woman|man|adult|person|people)\b','person'),
- (r'\b(?:elderly|older|younger|young|old)\s+(?:women|men|adults|persons)\b','people'),
- (r'\b(?:baby|infant|toddler|newborn|child|boy|girl)\b','person'),
- (r'\b(?:babies|infants|toddlers|newborns|children|boys|girls)\b','people'),
+
+ROOT = Path(__file__).resolve().parents[2]
+import sys
+sys.path.insert(0, str(ROOT / "scripts" / "memory"))
+
+from interactive_runner import feishu_test_moments  # noqa: E402
+from qwen_perceive import (  # noqa: E402
+    PROMPT_VERSION,
+    _action_cues_in_text,
+    _apply_temporal_fact_repair,
+    _build_temporal_fact_coverage_repair_prompt,
+    _camera_wearer_reference,
+    _object_move_evidence_error,
+    _parse_json_array,
+    _parse_json_array_prefix,
+    _temporal_fact_coverage_error,
+    _unresolved_person_reference_error,
+    clip_range,
+    extract_frames,
+    video_path_of,
+)
+
+CACHE = ROOT / "data" / "egolife" / "runs" / "qwen_cache_memory_prompt_v3.json"
+_GENERIC_PERSON_FACT_SUBJECTS = {
+    "person", "the person", "visible person", "people", "travelers",
+    "travellers", "person in frame", "anonymous person",
+}
+API_URLS = [
+    value.strip().rstrip("/")
+    for value in os.environ.get(
+        "QWEN_API_URLS",
+        "http://127.0.0.1:8001,http://127.0.0.1:8002,http://127.0.0.1:8003,http://127.0.0.1:8004",
+    ).split(",")
+    if value.strip()
 ]
-def deage(text):
-    out=str(text or '')
-    out=re.sub(r'\bchildren\s+and\s+adults\b','people',out,flags=re.I)
-    out=re.sub(r'\bchildren\s+or\s+adults\b','people',out,flags=re.I)
-    for pat,repl in AGE_PATTERNS: out=re.sub(pat,repl,out,flags=re.I)
-    out=re.sub(r'\bperson\s+in\s+(?=yellow onesie|blue outfit|brown jacket|dark clothing)','person in ',out,flags=re.I)
-    out=re.sub(r'\s+',' ',out).strip()
-    out=re.sub(r'\bperson\s+person\b','person',out,flags=re.I)
-    return out
 
-def normalize_fields(fields):
-    f=copy.deepcopy(fields)
-    alias_map={}
-    observations=[]
-    for old in f.get('person_observations') or []:
-        if not isinstance(old,dict): continue
-        row=dict(old)
-        old_entity=str(row.get('entity') or '')
-        row['entity']=deage(old_entity)
-        alias_map[old_entity]=row['entity']
-        for key in ('appearance','face_features','evidence'):
-            if row.get(key): row[key]=deage(row[key])
-        if row.get('age_basis')!='visible_text' or not str(row.get('age') or '').isdigit():
-            row['age']=''; row['age_basis']='unknown'
-        observations.append(row)
-    f['person_observations']=observations
-    def remap(text):
-        out=str(text or '')
-        for old,new in sorted(alias_map.items(),key=lambda x:len(x[0]),reverse=True):
-            if old and new!=old: out=re.sub(r'(?<![\w])'+re.escape(old)+r'(?![\w])',lambda _m,n=new:n,out,flags=re.I)
-        return deage(out)
-    for key in ('scene','location','activity','interaction_details','user_action','time_occasion'):
-        if f.get(key): f[key]=remap(f[key])
-    for key in ('people','objects','environments'):
-        vals=f.get(key) or []
-        if isinstance(vals,list):
-            cleaned=[]
-            for value in vals:
-                label=remap(value)
-                if key=='objects' and re.match(r'^(?:a|an|the\s+)?(?:person|people)\b',label,re.I): continue
-                if label and label not in cleaned: cleaned.append(label)
-            f[key]=cleaned
-    facts=[]
-    for fact in f.get('temporal_facts') or []:
-        if not isinstance(fact,dict): continue
-        row=dict(fact)
-        for key in ('subject','predicate','value','actor','evidence','from_location','to_location','from_state','to_state','time_scope'):
-            if row.get(key): row[key]=remap(row[key])
-        if isinstance(row.get('affected_people'),list): row['affected_people']=[remap(x) for x in row['affected_people']]
-        facts.append(row)
-    f['temporal_facts']=facts
-    return f
 
-def request_images(prompt, images, label):
-    last=None
-    for attempt in range(3):
+def request_images(api_url: str, prompt: str, images: list[bytes], label: str) -> str:
+    response = requests.post(
+        api_url + "/analyze_video",
+        files=[("images", (f"{label}_{index + 1}.jpg", image, "image/jpeg"))
+               for index, image in enumerate(images)],
+        data={"prompt": prompt, "request_id": uuid.uuid4().hex},
+        timeout=900,
+    )
+    if response.status_code != 200:
+        raise RuntimeError(f"HTTP {response.status_code}: {response.text[:240]}")
+    return str(response.json().get("analysis") or "")
+
+
+def _narrative_claim_audit_prompt(fields: dict, coverage_gap: str) -> str:
+    allowed = ("scene", "user_action", "interaction_details", "activity")
+    narratives = {key: str(fields.get(key) or "")[:1600] for key in allowed}
+    facts = [row for row in fields.get("temporal_facts") or []
+             if isinstance(row, dict)][:16]
+    return "\n".join((
+        "Audit the narrative against ONLY the supplied ordered frames and source-linked temporal facts.",
+        "Do not add facts, infer intent, infer an action from its aftermath, or remove any action that is visibly supported.",
+        "If a narrated action is not directly supported by these frames, remove only that unsupported action from the affected narrative field. Keep all other supported details and preserve the original wording where possible.",
+        "Return JSON only with a 'fields' object containing scene, user_action, interaction_details, and activity. Leave supported fields unchanged. Do not include temporal facts.",
+        "Current coverage warning: " + coverage_gap[:500],
+        "Narrative fields: " + json.dumps(narratives, ensure_ascii=False),
+        "Existing source-linked facts: " + json.dumps(facts, ensure_ascii=False),
+    ))
+
+
+def _validated_narrative_updates(original: dict, candidate: dict, coverage_gap: str):
+    if not isinstance(candidate, dict):
+        return {}, "model response has no fields object"
+    allowed = ("scene", "user_action", "interaction_details", "activity")
+    missing_match = re.search(r"missing cues \[(.*?)\]", coverage_gap)
+    missing = {value.strip() for value in missing_match.group(1).split(",") if value.strip()} if missing_match else set()
+    updates = {}
+    for key in allowed:
+        if key not in candidate:
+            continue
+        before = str(original.get(key) or "")
+        after = str(candidate.get(key) or "").strip()
+        if after == before:
+            continue
+        if len(after) > max(len(before), 1600) or (before and not after):
+            return {}, f"unsafe narrative length change in {key}"
+        before_words = re.findall(r"[a-z0-9]+|[\u4e00-\u9fff]", before.casefold())
+        after_words = re.findall(r"[a-z0-9]+|[\u4e00-\u9fff]", after.casefold())
+        if after_words and sum(word in set(before_words) for word in after_words) / len(after_words) < 0.82:
+            return {}, f"rewrite in {key} changed too much source wording"
+        before_cues = _action_cues_in_text(before, narrative=True)
+        after_cues = _action_cues_in_text(after, narrative=True)
+        if after_cues - before_cues:
+            return {}, f"rewrite in {key} introduced action cues"
+        if (before_cues - after_cues) - missing:
+            return {}, f"rewrite in {key} removed cues not listed as unsupported"
+        updates[key] = after
+    return updates, ""
+
+
+def _known_person_aliases(fields: dict) -> set[str]:
+    aliases = {
+        " ".join(str(row.get("entity") or "").casefold().split())
+        for row in fields.get("person_observations") or []
+        if isinstance(row, dict) and row.get("entity")
+    }
+    aliases.update(" ".join(str(value or "").casefold().split())
+                   for value in fields.get("people") or [] if str(value or "").strip())
+    return aliases
+
+
+def _normalize_missing_subject_types(rows: list, fields: dict) -> list:
+    """Fill a missing type only when the subject matches a known same-clip entity."""
+    people = _known_person_aliases(fields)
+    people.update(" ".join(str(value or "").casefold().split())
+                  for value in fields.get("people") or [] if str(value or "").strip())
+    objects = {" ".join(str(value or "").casefold().split())
+               for value in fields.get("objects") or [] if str(value or "").strip()}
+    typed = {}
+    for fact in fields.get("temporal_facts") or []:
+        if isinstance(fact, dict) and fact.get("subject") and fact.get("subject_type"):
+            typed[" ".join(str(fact["subject"]).casefold().split())] = str(
+                fact["subject_type"]).casefold()
+    location = " ".join(str(fields.get("location") or "").casefold().split())
+    output = []
+    for original in rows:
+        if not isinstance(original, dict):
+            output.append(original)
+            continue
+        row = dict(original)
+        if not str(row.get("subject_type") or "").strip():
+            subject = " ".join(str(row.get("subject") or "").casefold().split())
+            if subject in people or subject in _GENERIC_PERSON_FACT_SUBJECTS or _camera_wearer_reference(subject):
+                row["subject_type"] = "person"
+            elif subject in objects or typed.get(subject) == "object":
+                row["subject_type"] = "object"
+            elif location and subject == location:
+                row["subject_type"] = "place"
+        output.append(row)
+    return output
+
+
+def _keep_source_linked_people(row: dict, aliases: set[str]) -> dict | None:
+    """Do not add a new person identity from an event-repair pass."""
+    fact = dict(row)
+    subject_type = str(fact.get("subject_type") or "").casefold()
+    subject = " ".join(str(fact.get("subject") or "").casefold().split())
+    if subject_type == "person" and subject in _GENERIC_PERSON_FACT_SUBJECTS:
+        # Keep anonymous, visibly supported actions as events, not durable person
+        # identities; the identity/reference validator must not invent a person card.
+        fact["subject_type"] = "event"
+        fact["subject"] = "visible person activity"
+        subject_type = "event"
+    elif (subject_type == "person" and subject not in aliases
+          and not _camera_wearer_reference(subject)):
+        return None
+    actor = str(fact.get("actor") or "").strip()
+    actor_key = " ".join(actor.casefold().split())
+    if (actor and actor_key not in aliases
+            and not _camera_wearer_reference(actor_key)):
+        fact.pop("actor", None)
+    affected = fact.get("affected_people")
+    if isinstance(affected, list):
+        fact["affected_people"] = [
+            person for person in affected
+            if " ".join(str(person or "").casefold().split()) in aliases
+            or _camera_wearer_reference(person)
+        ]
+    return fact
+
+
+def _merge_facts(existing: list, additions: list, aliases: set[str]) -> list:
+    merged = [dict(row) for row in existing if isinstance(row, dict)]
+    seen = {
+        tuple(" ".join(str(row.get(key) or "").casefold().split())
+              for key in ("subject_type", "subject", "predicate", "value"))
+        for row in merged
+    }
+    for original in additions:
+        row = _keep_source_linked_people(original, aliases)
+        if row is None:
+            continue
+        key = tuple(" ".join(str(row.get(name) or "").casefold().split())
+                    for name in ("subject_type", "subject", "predicate", "value"))
+        if key not in seen and len(merged) < 16:
+            merged.append(row)
+            seen.add(key)
+    return merged
+
+
+def write_entry(moment_id: str, entry: dict) -> None:
+    lock_path = CACHE.with_name(CACHE.name + ".lock")
+    CACHE.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    with os.fdopen(fd, "a+b") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        disk = json.loads(CACHE.read_text(encoding="utf-8")) if CACHE.exists() else {}
+        current = disk.get(moment_id) or {}
+        if current.get("prompt_version") != PROMPT_VERSION:
+            raise RuntimeError(f"{moment_id}: cache version changed during repair; refusing stale write")
+        merged = dict(current)
+        merged.update(entry)
+        merged["ts"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        disk[moment_id] = merged
+        fd, temp_path = tempfile.mkstemp(prefix=CACHE.name + ".", suffix=".tmp",
+                                         dir=str(CACHE.parent))
         try:
-            resp=requests.post(API+'/analyze_video',files=[('images',(f'{label}_{n+1}.jpg',b,'image/jpeg')) for n,b in enumerate(images)],data={'prompt':prompt,'request_id':f'memory-gap-{label}-{attempt}'},timeout=240)
-            if resp.status_code!=200: raise RuntimeError(f'HTTP {resp.status_code}: {resp.text[:200]}')
-            return str(resp.json().get('analysis') or '')
-        except Exception as exc:
-            last=exc
-            if attempt<2: time.sleep(2*(attempt+1))
-    raise RuntimeError(str(last))
-
-def write_entry(mid, entry):
-    lock_path=CACHE.with_name(CACHE.name+'.lock')
-    CACHE.parent.mkdir(parents=True,exist_ok=True)
-    fd=os.open(lock_path,os.O_CREAT|os.O_RDWR,0o600)
-    with os.fdopen(fd,'a+b') as lock:
-        fcntl.flock(lock.fileno(),fcntl.LOCK_EX)
-        disk=json.loads(CACHE.read_text(encoding='utf-8')) if CACHE.exists() else {}
-        current=disk.get(mid,{})
-        if isinstance(current,dict) and current.get('prompt_version')==entry.get('prompt_version'):
-            # Preserve newer perception source metadata while keeping this explicit quality repair.
-            merged=dict(current); merged.update(entry); entry=merged
-        entry['ts']=time.strftime('%Y-%m-%d %H:%M:%S')
-        disk[mid]=entry
-        fd,tmp=tempfile.mkstemp(prefix=CACHE.name+'.',suffix='.tmp',dir=str(CACHE.parent))
-        try:
-            with os.fdopen(fd,'w',encoding='utf-8') as out:
-                json.dump(disk,out,ensure_ascii=False,indent=2); out.flush(); os.fsync(out.fileno())
-            os.replace(tmp,CACHE)
+            with os.fdopen(fd, "w", encoding="utf-8") as output:
+                json.dump(disk, output, ensure_ascii=False, indent=2)
+                output.flush()
+                os.fsync(output.fileno())
+            os.replace(temp_path, CACHE)
         finally:
-            if os.path.exists(tmp): os.unlink(tmp)
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
 
-def main():
-    moments=feishu_test_moments('feishu:all')
-    if len(moments)!=35: raise RuntimeError(f'expected 35 custom clips, got {len(moments)}')
-    health=requests.get(API+'/health',timeout=8).json()
-    if not health.get('model_loaded'): raise RuntimeError('Qwen endpoint is not ready')
-    media=object.__new__(MultimodalAssetStore)
-    grounding=PersistentObjectGroundingCache(GROUNDING,ROOT)
-    moment_by_id={m.get('id'):m for m in moments}
-    cache=json.loads(CACHE.read_text(encoding='utf-8'))
-    updates=[]
-    only_ids={value.strip() for value in os.environ.get('MEMORY_REPAIR_IDS','').split(',') if value.strip()}
-    selected_ids=only_ids or (PERSON_REVIEW_IDS|LOW_FACT_IDS)
-    for mid in sorted(selected_ids):
-        m=moment_by_id.get(mid); entry=copy.deepcopy(cache.get(mid) or {})
-        fields=normalize_fields(entry.get('fields') or {})
-        if not m or not fields: print(mid,'SKIP missing moment/cache'); continue
-        video=video_path_of(m); start,end=clip_range(m)
-        frames,_times=extract_frames(video,start,end,6,return_times=True)
-        if not frames: print(mid,'FAIL no source frames'); continue
-        changed=[]
-        if mid in PERSON_REVIEW_IDS:
-            refs=_person_reference_labels(fields)
-            context={k:fields.get(k) for k in ('scene','location','activity','interaction_details','user_action','people','person_observations','temporal_facts') if fields.get(k)}
-            prompt=_build_person_repair_prompt(context,refs)
-            prompt+='\nSTRICT ADDITION: do not use any age-category terms such as baby, child, young, elderly, adult, boy, or girl in an alias or description. Describe only visible details. In first-person clips, if hands, forearms, or feet are visible, record the local subject with a descriptive alias such as camera wearer with a gray-gloved hand (never the role alone), describe only those visible parts, and state that the face or full body is outside the view. Age must remain blank unless readable text directly identifies a numeric age for this person. A human figure is a person, never an object. '
-            if mid=='FEISHU_7_1_41aeb05dab':
-                prompt+='The frames visibly contain one seated human figure with short dark hair, a light blue short-sleeved shirt, gray shorts, sitting on a light floor mat and holding a yellow duck-shaped toy. This is one of the people that must appear in person_observations, not objects. Describe the visible figure from pixels only; do not call it a baby or infer age. '
-            if mid=='FEISHU_2_1_b4d69d0493':
-                prompt+='In the last sampled frame, several travelers are visibly present around the baggage carousel. Inspect the whole frame carefully. Return separate observations for at least two clearly visible figures when their clothing or position distinguishes them, even when faces are too small to resolve; state that facial details are not discernible. Do not return an empty array for visible distant people. Keep aliases descriptive and grounded in clothing/position, never numbered. '
-            prompt+='Return a complete JSON object with the required person_observations array; no prose.'
-            raw=request_images(prompt,frames,'person_'+mid)
-            payload=_parse_person_repair(raw)
-            repaired=_apply_person_repair(fields,payload,refs,len(frames))
-            observations=repaired.get('person_observations') or []
-            if mid=='FEISHU_7_1_41aeb05dab' and not observations:
-                retry=prompt+' The visible seated figure is plainly human; returning an empty array would be incorrect. Retry from the six attached frames.'
-                raw=request_images(retry,frames,'person_retry_'+mid)
-                payload=_parse_person_repair(raw)
-                repaired=_apply_person_repair(fields,payload,refs,len(frames))
-                observations=repaired.get('person_observations') or []
-            if mid=='FEISHU_2_1_b4d69d0493' and len(observations)<2:
-                retry=prompt+' The final frame clearly contains more than one human figure; inspect it again and return each visibly distinguishable figure with clothing/position only. Never infer age, gender, or identity. '
-                raw=request_images(retry,frames,'person_retry_'+mid)
-                payload=_parse_person_repair(raw)
-                repaired=_apply_person_repair(fields,payload,refs,len(frames))
-                observations=repaired.get('person_observations') or []
-            if not observations:
-                raise RuntimeError(f'{mid}: visual person pass returned no valid observations')
-            repaired['people']=list(dict.fromkeys(list(repaired.get('people') or [])+[r['entity'] for r in observations if r.get('entity')]))
-            # A visible human accidentally listed as an object is removed from the object inventory.
-            if mid=='FEISHU_7_1_41aeb05dab':
-                repaired['objects']=[x for x in repaired.get('objects') or [] if not re.search(r'\b(?:baby|infant|child|person|human)\b',str(x),re.I)]
-            fields=normalize_fields(repaired)
-            entry['person_frame_review']={'status':'repaired','method':'targeted_source_frame_repair_v2','repaired_people':len(fields.get('person_observations') or []),'repair_error':'','removed_count':0,'removed_items':[],'raw_model_output_preserved':True}
-            entry['person_frame_review_raw']=raw
-            changed.append('people')
-        if mid in LOW_FACT_IDS:
-            existing=fields.get('temporal_facts') or []
-            max_add=max(1,min(5,8-len(existing)))
-            aliases=[r.get('entity') for r in fields.get('person_observations') or [] if r.get('entity')]
-            prompt=_build_temporal_fact_repair_prompt(len(frames))
-            prompt+=f'\nSTRICT OUTPUT: return no more than {max_add} short JSON rows (maximum 8 total after merging), all JSON on one complete array, no markdown or commentary. Use exact person aliases only from this list: {json.dumps(aliases,ensure_ascii=True)}. Do not infer a person who is not visually distinguishable; do not treat an off-screen camera wearer as visible. Age-category words and exact ages are prohibited unless numeric age is readable in linked on-screen text. Prioritize distinct observed actions and before/after states, visible object locations, setting and activity. Existing facts (do not duplicate): {json.dumps(existing,ensure_ascii=True)}. Scene context for frame navigation only, not ground truth: {json.dumps({k:fields.get(k) for k in ("scene","location","activity","interaction_details","user_action","objects","environments")},ensure_ascii=True)}'
-            raw=request_images(prompt,frames,'facts_'+mid)
-            try: raw_rows=_parse_json_array(raw)
-            except Exception:
-                raw_rows,complete=_parse_json_array_prefix(raw)
-                if not raw_rows or not complete: raise
-            rows=_apply_temporal_fact_repair(raw_rows[:max_add],len(frames))
-            merged=list(existing); seen={(str(x.get('subject_type','')).casefold(),str(x.get('subject','')).casefold(),str(x.get('predicate','')).casefold(),re.sub(r'\s+',' ',str(x.get('value','')).strip()).casefold()) for x in merged if isinstance(x,dict)}
-            added=0
-            for row in rows:
-                key=(str(row.get('subject_type','')).casefold(),str(row.get('subject','')).casefold(),str(row.get('predicate','')).casefold(),re.sub(r'\s+',' ',str(row.get('value','')).strip()).casefold())
-                if key not in seen and len(merged)<16: merged.append(row); seen.add(key); added+=1
-            fields['temporal_facts']=merged
-            err=_object_move_evidence_error(fields)
-            if err: raise ValueError(err)
-            entry['temporal_fact_repair']={'status':'added' if added else 'no_additional_facts','method':'targeted_source_frame_fact_repair_v2','facts_added':added,'total_facts':len(merged),'model_rows_returned':len(raw_rows)}
-            entry['temporal_fact_repair_raw']=raw
-            changed.append('facts')
-        # Normalize age guesses throughout all structured content and preserve raw model output separately.
-        fields=normalize_fields(fields)
-        entry['fields']=fields
-        entry['source']='cache_frame_quality_repair_v2'
-        entry['custom_frame_review_version']='2026-10-18-v2'
-        entry['custom_frame_review_at']=time.strftime('%Y-%m-%dT%H:%M:%S')
-        # Persist the model output and corrected fields before crop grounding so a later crop failure cannot lose them.
-        write_entry(mid,entry)
-        person_rows=[r for r in fields.get('person_observations') or [] if r.get('entity') and r.get('appearance')]
-        crop_result={'status':'no_people','people':len(person_rows),'grounded':0}
-        if person_rows:
-            candidate_frames=media.sample_visual_candidates(video,start,end,source_id=mid,count=7)
-            if candidate_frames:
-                labels=['person-crop-v1: '+r['entity']+' | '+r['appearance'] for r in person_rows[:8]]
-                key=grounding.key(mid,labels,candidate_frames)
-                cached,latency=grounding.get(key)
-                lookup='hit'
-                if cached is None:
-                    cached=QwenPerceiver(api_url=API,cache_file=CACHE).ground_people(person_rows,candidate_frames)
-                    grounding.put(key,cached); lookup='created'
-                items=cached.get('items') or []
-                crop_result={'status':lookup,'people':len(person_rows),'grounded':sum(i.get('status')=='grounded' for i in items if isinstance(i,dict)),'crop_candidates':sum(bool(i.get('frame_boxes')) for i in items if isinstance(i,dict)),'lookup_ms':latency}
-        current=json.loads(CACHE.read_text(encoding='utf-8')).get(mid,{})
-        current['person_crop_preheat']=crop_result
-        write_entry(mid,current)
-        print(mid,'updated='+','.join(changed),'people='+str(len(fields.get('person_observations') or [])),'facts='+str(len(fields.get('temporal_facts') or [])),'crop='+json.dumps(crop_result,ensure_ascii=False),flush=True)
-    # Perform an age-language sweep on every reviewed custom memory, including rows outside targeted repair.
-    snapshot=json.loads(CACHE.read_text(encoding='utf-8'))
-    total=0
-    for mid,e in snapshot.items():
-        if not mid.startswith('FEISHU_') or not e.get('custom_frame_review_version'): continue
-        before=e.get('fields') or {}; after=normalize_fields(before)
-        if after!=before:
-            e['fields']=after; e['source']='cache_frame_quality_repair_v2'; e['custom_frame_review_version']='2026-10-18-v2'; e['custom_frame_review_at']=time.strftime('%Y-%m-%dT%H:%M:%S'); write_entry(mid,e); total+=1
-    print('AGE_LANGUAGE_SWEEP changed='+str(total),flush=True)
-if __name__=='__main__': main()
+
+def repair_one(moment: dict, snapshot_entry: dict, api_url: str, passes: int = 2,
+               replay_raw_only: bool = False) -> dict:
+    moment_id = str(moment.get("id") or "")
+    entry = dict(snapshot_entry)
+    fields = dict(entry.get("fields") or {})
+    before_error = _temporal_fact_coverage_error(fields)
+    if not before_error:
+        return {"id": moment_id, "status": "already_complete", "facts_added": 0}
+    if entry.get("prompt_version") != PROMPT_VERSION:
+        return {"id": moment_id, "status": "version_mismatch", "facts_added": 0}
+
+    repair_meta = entry.get("temporal_fact_repair") or {}
+    frames = []
+    if replay_raw_only:
+        frame_count = max(1, int(repair_meta.get("source_frame_count") or 6))
+    else:
+        video = video_path_of(moment)
+        if video is None:
+            return {"id": moment_id, "status": "missing_video", "facts_added": 0}
+        start, end = clip_range(moment)
+        frames = extract_frames(video, start, end, 6)
+        if not frames:
+            return {"id": moment_id, "status": "no_frames", "facts_added": 0}
+        frame_count = len(frames)
+
+    existing = list(fields.get("temporal_facts") or [])
+    cached_raw = (entry.get("temporal_fact_repair_raw") or []
+                  if repair_meta.get("method") in {
+                      "generic_same_video_temporal_coverage_repair_v1",
+                      "generic_same_video_temporal_coverage_repair_v2",
+                      "generic_same_video_temporal_coverage_repair_v3",
+                  }
+                  else [])
+    raw_responses = []
+    raw_reused = 0
+    errors = []
+    total_added = 0
+
+    def apply_raw(raw: str, pass_label: str) -> bool:
+        nonlocal existing, total_added
+        gap = _temporal_fact_coverage_error({**fields, "temporal_facts": existing})
+        if not gap:
+            return True
+        room = min(8, max(0, 16 - len(existing)))
+        if room <= 0:
+            errors.append(f"{pass_label}: 16-fact limit reached before coverage was complete")
+            return False
+        try:
+            try:
+                raw_rows = _parse_json_array(raw)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                raw_rows, complete = _parse_json_array_prefix(raw)
+                if not raw_rows:
+                    raise ValueError("model did not return any complete JSON fact rows")
+                # Keep only complete JSON objects before a truncated tail;
+                # source/evidence and merge validators still apply to each row.
+            raw_rows = _normalize_missing_subject_types(raw_rows[:room], fields)
+            additions = _apply_temporal_fact_repair(raw_rows, frame_count)
+            if not additions:
+                errors.append(f"{pass_label}: no valid source-backed facts returned")
+                return False
+            previous = existing
+            candidate = _merge_facts(existing, additions, _known_person_aliases(fields))
+            candidate_fields = {**fields, "temporal_facts": candidate}
+            baseline_move_error = _object_move_evidence_error(fields)
+            baseline_reference_error = _unresolved_person_reference_error(fields)
+            move_error = _object_move_evidence_error(candidate_fields)
+            reference_error = _unresolved_person_reference_error(candidate_fields)
+            new_move_error = move_error if move_error != baseline_move_error else ""
+            new_reference_error = reference_error if reference_error != baseline_reference_error else ""
+            if new_move_error or new_reference_error:
+                errors.append(f"{pass_label}: rejected unsafe additions: " + "; ".join(
+                    value for value in (new_move_error, new_reference_error) if value))
+                return False
+            existing = candidate
+            total_added += max(0, len(existing) - len(previous))
+            return True
+        except Exception as exc:
+            errors.append(f"{pass_label}: {str(exc)[:260]}")
+            return False
+
+    for cached_index, raw in enumerate(cached_raw[:max(1, min(2, passes))]):
+        if not _temporal_fact_coverage_error({**fields, "temporal_facts": existing}):
+            break
+        raw_responses.append(str(raw))
+        raw_reused += 1
+        apply_raw(str(raw), f"cached pass {cached_index + 1}")
+
+    for pass_index in range(max(1, min(2, passes))):
+        if replay_raw_only or not _temporal_fact_coverage_error(
+                {**fields, "temporal_facts": existing}):
+            break
+        gap = _temporal_fact_coverage_error({**fields, "temporal_facts": existing})
+        if not gap:
+            break
+        room = min(8, max(0, 16 - len(existing)))
+        if room <= 0:
+            errors.append("16-fact limit reached before coverage was complete")
+            break
+        prompt = _build_temporal_fact_coverage_repair_prompt(
+            {**fields, "temporal_facts": existing}, len(frames), room
+        )
+        prompt += (
+            "\nReturn grounded facts for the remaining action cues when visible. Use exact person aliases "
+            "already present in Person Observations; if a visible person has no alias, use a generic label "
+            "such as person or visible person. Do not create a name or infer identity. Preserve "
+            "event order; omit an action only when the supplied frames do not support it. A person's "
+            "movement may be recorded from visible direction/transition; object movement requires both "
+            "before and after location or state. Every JSON row MUST include subject_type, subject, "
+            "predicate, value, frame_index, and evidence. subject_type must be exactly person, object, "
+            "place, environment, or event; use person only for an existing visual alias, and object only "
+            "for an item in the existing object list or typed facts. Output no duplicate frame-by-frame "
+            "rows for the same stable state or action."
+        )
+        try:
+            raw = request_images(api_url, prompt, frames, f"facts_{moment_id}_{pass_index + 1}")
+            raw_responses.append(raw)
+            apply_raw(raw, f"pass {pass_index + 1}")
+        except Exception as exc:
+            errors.append(f"pass {pass_index + 1}: {str(exc)[:260]}")
+
+    fields["temporal_facts"] = existing
+    after_error = _temporal_fact_coverage_error(fields)
+    narrative_audit = {"status": "not_needed", "fields_changed": [],
+                       "coverage_before": after_error[:500], "errors": []}
+    if after_error and not replay_raw_only:
+        try:
+            audit_raw = request_images(
+                api_url, _narrative_claim_audit_prompt(fields, after_error), frames,
+                f"narrative_{moment_id}")
+            start, end = audit_raw.find("{"), audit_raw.rfind("}")
+            if start < 0 or end < start:
+                raise ValueError("model did not return a JSON object")
+            audit_payload = json.loads(audit_raw[start:end + 1])
+            updates, validation_error = _validated_narrative_updates(
+                fields, audit_payload.get("fields"), after_error)
+            if validation_error:
+                narrative_audit["errors"].append(validation_error)
+                narrative_audit["status"] = "rejected"
+            elif updates:
+                before_fields = dict(fields)
+                fields.update(updates)
+                revised_error = _temporal_fact_coverage_error(fields)
+                if len(revised_error) > len(after_error):
+                    fields = before_fields
+                    narrative_audit["errors"].append("updated narratives increased the coverage gap")
+                    narrative_audit["status"] = "rejected"
+                else:
+                    narrative_audit["status"] = "repaired" if not revised_error else "partial"
+                    narrative_audit["fields_changed"] = sorted(updates)
+                    after_error = revised_error
+            else:
+                narrative_audit["status"] = "no_change"
+            entry["narrative_claim_repair_raw"] = audit_raw[:12000]
+        except Exception as exc:
+            narrative_audit["status"] = "failed"
+            narrative_audit["errors"].append(str(exc)[:260])
+    narrative_audit["coverage_after"] = after_error[:500]
+    entry["narrative_claim_repair"] = narrative_audit
+    entry["fields"] = fields
+    entry["source"] = "cache_temporal_fact_repair"
+    entry["temporal_fact_repair"] = {
+        "status": "repaired" if not after_error else "partial" if total_added else "unresolved",
+        "method": "generic_same_video_temporal_coverage_repair_v3",
+        "passes": len(raw_responses),
+        "raw_reused": raw_reused,
+        "facts_added": total_added,
+        "total_facts": len(existing),
+        "coverage_before": before_error[:500],
+        "coverage_after": after_error[:500],
+        "errors": errors[:4],
+        "source_frame_count": frame_count,
+        "repaired_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    if raw_responses:
+        entry["temporal_fact_repair_raw"] = raw_responses
+    quality = dict(entry.get("quality_repair") or {})
+    if after_error:
+        quality["non_blocking_temporal_coverage_warning"] = after_error[:500]
+        entry["quality_warning"] = after_error[:500]
+    else:
+        quality.pop("non_blocking_temporal_coverage_warning", None)
+        old_warning = str(entry.get("quality_warning") or "")
+        if old_warning.startswith("The scene contains "):
+            entry.pop("quality_warning", None)
+    entry["quality_repair"] = quality or None
+    write_entry(moment_id, entry)
+    return {
+        "id": moment_id,
+        "status": entry["temporal_fact_repair"]["status"],
+        "facts_added": total_added,
+        "facts_total": len(existing),
+        "remaining_gap": after_error[:220],
+        "errors": errors[:2],
+    }
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--dry-run", action="store_true", help="list temporal gaps without calling models")
+    parser.add_argument("--workers", type=int, default=4, help="concurrent existing Qwen endpoints; max 4")
+    parser.add_argument("--passes", type=int, default=2, help="focused repair passes per clip; max 2")
+    parser.add_argument("--clip-ids", default="", help="optional comma-separated IDs for diagnosis")
+    parser.add_argument("--replay-raw-only", action="store_true",
+                        help="reprocess stored repair outputs without calling any model endpoint")
+    args = parser.parse_args()
+
+    moments = feishu_test_moments("feishu:all")
+    if len(moments) != 35:
+        raise RuntimeError(f"expected 35 custom clips, got {len(moments)}")
+    cache = json.loads(CACHE.read_text(encoding="utf-8"))
+    requested = {value.strip() for value in args.clip_ids.split(",") if value.strip()}
+    tasks = []
+    for moment in moments:
+        moment_id = str(moment.get("id") or "")
+        entry = cache.get(moment_id) or {}
+        fields = entry.get("fields") or {}
+        if entry.get("prompt_version") != PROMPT_VERSION:
+            continue
+        if _temporal_fact_coverage_error(fields) and (not requested or moment_id in requested):
+            tasks.append((moment, entry))
+    print(f"custom clips={len(moments)} temporal gaps={len(tasks)} prompt={PROMPT_VERSION}", flush=True)
+    if args.dry_run:
+        for moment, entry in tasks:
+            fields = entry.get("fields") or {}
+            print(moment.get("id"), "facts=", len(fields.get("temporal_facts") or []),
+                  "gap=", _temporal_fact_coverage_error(fields)[:280], flush=True)
+        return
+    if requested and not tasks:
+        raise RuntimeError("none of the requested clips has a current-version temporal coverage gap")
+    healthy = []
+    if not args.replay_raw_only:
+        if not API_URLS:
+            raise RuntimeError("no Qwen API endpoints configured")
+        for api_url in API_URLS[:4]:
+            response = requests.get(api_url + "/health", timeout=8)
+            health = response.json()
+            if health.get("model_loaded") and health.get("gpu", {}).get("name"):
+                healthy.append(api_url)
+        if not healthy:
+            raise RuntimeError("no healthy GPU-backed Qwen endpoints; refusing repair")
+    workers = max(1, min(4, max(1, len(healthy)), max(1, args.workers)))
+    results = []
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="temporal-cache-repair") as pool:
+        futures = {
+            pool.submit(repair_one, moment, entry,
+                        healthy[index % len(healthy)] if healthy else "",
+                        args.passes, args.replay_raw_only): moment
+            for index, (moment, entry) in enumerate(tasks)
+        }
+        for future in as_completed(futures):
+            moment = futures[future]
+            try:
+                result = future.result()
+            except Exception as exc:
+                result = {"id": moment.get("id"), "status": "failed", "error": str(exc)[:400]}
+            results.append(result)
+            print(json.dumps(result, ensure_ascii=False), flush=True)
+    completed = sum(row.get("status") == "repaired" for row in results)
+    partial = sum(row.get("status") == "partial" for row in results)
+    failed = sum(row.get("status") == "failed" for row in results)
+    print(f"completed={completed} partial={partial} failed={failed} attempted={len(results)}", flush=True)
+
+
+if __name__ == "__main__":
+    main()

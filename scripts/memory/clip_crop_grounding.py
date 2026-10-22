@@ -14,7 +14,7 @@ from collections import OrderedDict
 from pathlib import Path
 
 _MODEL_ID = "openai/clip-vit-large-patch14"
-_METHOD = "torch-cuda-hog+clip-grid-v3-no-score-threshold"
+_METHOD = "torch-cuda-hog+clip-grid-v6-qwen-frame-anchored-face-identity-no-score-threshold"
 _MODEL = None
 _PROCESSOR = None
 _DEVICE = None
@@ -209,6 +209,52 @@ def _text_for(row, kind):
     return label, [f"a photo of {label}", f"a close-up photo of {label}"]
 
 
+def _person_visual_anchor_indices(value, frames):
+    """Return only frame indices explicitly linked to this person's visual evidence."""
+    if not isinstance(value, dict):
+        return []
+    indices = set()
+    direct = value.get("frame_index")
+    try:
+        direct = int(direct)
+        if 1 <= direct <= len(frames):
+            indices.add(direct)
+    except (TypeError, ValueError):
+        pass
+    refs = [value.get("evidence_ref")]
+    refs.extend(value.get("evidence_refs") or [])
+    for ref in refs:
+        if not isinstance(ref, dict) or ref.get("modality") != "visual":
+            continue
+        raw_index = ref.get("frame_index")
+        try:
+            index = int(raw_index)
+            if 1 <= index <= len(frames):
+                indices.add(index)
+                continue
+        except (TypeError, ValueError):
+            pass
+        raw_time = ref.get("frame_time_s")
+        try:
+            at = float(raw_time)
+        except (TypeError, ValueError):
+            continue
+        nearest = min(range(len(frames)), key=lambda i: abs(
+            float(frames[i].get("at_s") or 0) - at)) if frames else -1
+        if nearest >= 0 and abs(float(frames[nearest].get("at_s") or 0) - at) <= 0.35:
+            indices.add(nearest + 1)
+    if indices and value.get("frame_time_s") is not None:
+        try:
+            at = float(value["frame_time_s"])
+            nearest = min(range(len(frames)), key=lambda i: abs(
+                float(frames[i].get("at_s") or 0) - at)) if frames else -1
+            if nearest >= 0 and abs(float(frames[nearest].get("at_s") or 0) - at) <= 0.35:
+                indices.add(nearest + 1)
+        except (TypeError, ValueError):
+            pass
+    return sorted(indices)
+
+
 def _ground(rows, frames, kind, progress_callback=None):
     label_key = "person" if kind == "person" else "object"
     limit = 8 if kind == "person" else 12
@@ -218,7 +264,10 @@ def _ground(rows, frames, kind, progress_callback=None):
         if not label or label.casefold() in seen:
             continue
         seen.add(label.casefold())
-        candidates.append({"value": value, "label": label[:100], "prompts": prompts})
+        candidate = {"value": value, "label": label[:100], "prompts": prompts}
+        if kind == "person":
+            candidate["anchor_frames"] = _person_visual_anchor_indices(value, frames)
+        candidates.append(candidate)
         if len(candidates) >= limit:
             break
     base = {"schema": 1, "status": "completed", "model": _METHOD,
@@ -251,7 +300,11 @@ def _ground(rows, frames, kind, progress_callback=None):
                 pass
         proposals, proposal_images = [], []
         frame_rows = list(enumerate(frames[:7], 1))
-        if len(frame_rows) > 4:
+        if kind == "person":
+            # Face clarity and pose can change sharply between input moments;
+            # compare every supplied frame instead of four temporal anchors.
+            anchor_positions = list(range(len(frame_rows)))
+        elif len(frame_rows) > 4:
             last = len(frame_rows) - 1
             anchor_positions = sorted({0, round(last / 3), round(2 * last / 3), last})
         else:
@@ -329,30 +382,55 @@ def _ground(rows, frames, kind, progress_callback=None):
         for candidate_index, candidate in enumerate(candidates):
             ranked = sorted(((float(score[candidate_index]), index)
                              for index, score in enumerate(scores)
-                             if kind != "person" or not any(
-                                 proposals[index][0] == used_frame
-                                 and _iou(proposals[index][1], used_box) > .50
-                                 for used_frame, used_box in assigned_people)), reverse=True)
+                             if (kind != "person" or
+                                 (proposals[index][0] in candidate["anchor_frames"] and not any(
+                                  proposals[index][0] == used_frame
+                                  and _iou(proposals[index][1], used_box) > .20
+                                  for used_frame, used_box in assigned_people)))), reverse=True)
             if not ranked:
                 ranked = [(0.0, 0)]
-            best_score, best_index = ranked[0]
+            selected = []
+            if kind == "person":
+                # One best region per sampled moment; retain all available
+                # moments without a similarity threshold.
+                used_frames = set()
+                for score, index in ranked:
+                    frame_index, bbox = proposals[index]
+                    if frame_index in used_frames:
+                        continue
+                    selected.append((score, index))
+                    used_frames.add(frame_index)
+                    assigned_people.append((frame_index, bbox))
+                    if len(selected) >= min(6, len(candidate["anchor_frames"])):
+                        break
+            else:
+                selected = ranked[:1]
+            if not selected:
+                output_items.append({label_key: candidate["label"],
+                                     "status": "uncertain",
+                                     "appearance": (str(candidate["value"].get("appearance") or "")
+                                                    if kind == "person" else ""),
+                                     "frame_indices": [], "frame_boxes": [],
+                                     "reason": "no_direct_visual_anchor_for_person"
+                                               if kind == "person" else "no_candidate_region"})
+                continue
+            best_score, best_index = selected[0]
             frame_index, bbox = proposals[best_index]
-            # CLIP only ranks available regions. Do not reject a crop based on a
-            # similarity threshold; downstream memory/review decides how to use it.
-            accepted = True
-            if accepted and kind == "person":
-                assigned_people.append((frame_index, bbox))
             item = {label_key: candidate["label"],
-                    "status": "visible_unlabeled" if accepted else "uncertain",
+                    "status": "visible_unlabeled",
                     "appearance": (str(candidate["value"].get("appearance") or "")
-                                   if kind == "person" and accepted else ""),
-                    "frame_indices": [frame_index] if accepted else [],
-                    "frame_boxes": ([{"frame_index": frame_index,
-                                      "bbox": [round(float(v),5) for v in bbox],
-                                      "score": round(best_score,5),
-                                      "method": _METHOD}] if accepted else []),
+                                   if kind == "person" else ""),
+                    "frame_indices": list(dict.fromkeys(
+                        proposals[index][0] for _score, index in selected)),
+                     "anchor_frame_indices": list(candidate["anchor_frames"]) if kind == "person" else [],
+                    "frame_boxes": [{"frame_index": proposals[index][0],
+                                     "bbox": [round(float(v),5) for v in proposals[index][1]],
+                                     "score": round(score,5),
+                                     "method": _METHOD}
+                                    for score, index in selected],
                     "score": round(best_score,5),
-                    "reason": "best_available_region_no_score_gate"}
+                    "reason": "Qwen_visual_evidence_anchored_frames_no_crop_quality_threshold"
+                              if kind == "person" else "best_available_region_no_score_gate"}
             output_items.append(item)
         base["items"] = output_items
         base["prompt_version"] = _METHOD

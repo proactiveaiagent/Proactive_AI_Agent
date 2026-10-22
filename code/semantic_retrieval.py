@@ -17,7 +17,7 @@ from pathlib import Path
 
 MODEL_ID = "thenlper/gte-base"
 SCHEMA_VERSION = "1"
-DOCUMENT_VERSION = "2"
+DOCUMENT_VERSION = "3"
 FIELD_LABELS = {
     "scene": "Scene",
     "user_action": "Action",
@@ -27,6 +27,7 @@ FIELD_LABELS = {
     "activity": "Activity",
     "environments": "Environment",
     "objects": "Objects",
+    "object_states": "Object states and locations",
     "notes": "Additional observed context",
     "time_occasion": "Time",
 }
@@ -128,6 +129,18 @@ def memory_text(moment: dict) -> str:
     )
     for row in _observation_rows(moment.get("object_observations")):
         line = _row_text("Object observation", row, object_fields)
+        if line:
+            parts.append(line)
+
+    for row in _observation_rows(moment.get("object_states")):
+        fields = [
+            ("object", "object"), ("predicate", "transition"),
+            ("state", "state"), ("location", "location"),
+            ("status", "status"), ("scope", "scope"),
+            ("confidence", "confidence"), ("observed_at_s", "observed at seconds"),
+            ("inferred_at_s", "inferred at seconds"), ("evidence", "evidence"),
+        ]
+        line = _row_text("Object state/location", row, tuple(fields))
         if line:
             parts.append(line)
 

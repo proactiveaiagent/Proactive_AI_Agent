@@ -317,6 +317,11 @@ def _moment_index_tags(moment: Dict) -> Dict[str, list]:
         if isinstance(row, dict):
             add("objects", row.get("object"))
 
+    for state in moment.get("object_states") or []:
+        if isinstance(state, dict):
+            add("objects", state.get("object"))
+            add("locations", state.get("location"))
+
     for fact in moment.get("temporal_facts") or []:
         if not isinstance(fact, dict):
             continue
@@ -344,166 +349,87 @@ def _moment_index_tags(moment: Dict) -> Dict[str, list]:
 
 
 def _build_entity_visuals(moment: Dict) -> dict:
-    """Link each memory entity to existing image assets without duplicating image bytes."""
+    """Index only person/object crops; context remains in the event text and timeline."""
     media = moment.get("multimodal") or {}
     if not isinstance(media, dict):
-        return {"schema": 1, "assets": [], "items": []}
+        return {"schema": 2, "assets": [], "items": []}
     assets, asset_index, items = [], {}, []
-    provided_entity_visuals = media.get("entity_visuals") or {}
-    provided_assets = (provided_entity_visuals.get("assets") or []
-                       if isinstance(provided_entity_visuals, dict) else [])
-    provided_context_items = [
-        item for item in (provided_entity_visuals.get("items") or [])
-        if isinstance(item, dict)
-        and item.get("entity_type") in {"scene", "location", "environment", "activity", "event"}
-    ] if isinstance(provided_entity_visuals, dict) else []
     source_id = str((moment.get("source_provenance") or {}).get("source_segment_id") or
                     media.get("source_id") or "")
 
-    def asset_id(ref, role=None):
-        if not isinstance(ref, dict) or not isinstance(ref.get("asset"), str) or not ref["asset"].startswith("assets/"):
+    def asset_id(ref):
+        if not isinstance(ref, dict) or not isinstance(ref.get("asset"), str):
             return None
         asset = ref["asset"].replace(chr(92), "/")
-        key = (asset, role or ref.get("visual_role") or "")
+        if not asset.startswith("assets/"):
+            return None
+        role = str(ref.get("visual_role") or "")
+        # entity_visuals is intentionally limited to dedicated entity crops.
+        if role == "person_crop" or (role == "face_crop" and (ref.get("identity_verified") is not True or not str(ref.get("identity_assignment") or "").startswith("qwen_visual_anchor+"))):
+            return None
+        if role not in {"face_crop", "object_crop"}:
+            return None
+        key = (asset, role)
         if key not in asset_index:
-            row = {"asset": asset, "visual_role": key[1] or "source_frame"}
-            for name in ("bytes", "mime", "dhash", "at_s", "source_id", "quality_tier", "crop_bbox"):
+            row = {"asset": asset, "visual_role": role}
+            for name in ("bytes", "mime", "dhash", "at_s", "source_id", "quality_tier",
+                         "crop_bbox", "face_bbox", "detector", "detector_confidence",
+                         "identity_verified", "identity_assignment",
+                          "image_quality", "source_asset"):
                 value = ref.get(name)
                 if value not in (None, ""):
                     row[name] = copy.deepcopy(value)
             if not row.get("source_id") and source_id:
                 row["source_id"] = source_id
-            if ref.get("source_asset"):
-                row["source_asset"] = str(ref["source_asset"]).replace(chr(92), "/")
             asset_index[key] = len(assets)
             assets.append(row)
         return asset_index[key]
 
-    def add_item(kind, entity, description, refs, fallback_refs=None, status="linked"):
-        entity = " ".join(str(entity or "").split()).strip()
-        if not entity:
-            return
-        indices = []
-        for ref in refs or []:
-            index = asset_id(ref)
-            if index is not None and index not in indices:
-                indices.append(index)
-        if not indices:
-            for ref in fallback_refs or []:
-                index = asset_id(ref, "scene_context_fallback")
+    def add_items(kind, name_key, description_key, observations, visual_group, visual_name_key):
+        visual_group = visual_group if isinstance(visual_group, dict) else {}
+        visual_items = visual_group.get("items") or []
+        by_name = {str(row.get(visual_name_key) or "").strip().casefold(): row
+                   for row in visual_items if isinstance(row, dict)}
+        for observation in observations or []:
+            if not isinstance(observation, dict):
+                continue
+            name = " ".join(str(observation.get(name_key) or "").split()).strip()
+            if not name:
+                continue
+            visual = by_name.get(name.casefold()) or {}
+            refs = visual.get("frame_refs") or []
+            indices = []
+            for ref in refs:
+                index = asset_id(ref)
                 if index is not None and index not in indices:
                     indices.append(index)
-        items.append({"entity_type": kind, "entity": entity[:500],
-                      "description": " ".join(str(description or "").split())[:600],
-                      "status": status if indices else "no_visual_evidence",
-                      "asset_indices": indices[:8]})
+            items.append({
+                "entity_type": kind, "entity": name[:500],
+                "description": " ".join(str(observation.get(description_key) or
+                                      visual.get("appearance") or "").split())[:600],
+                "status": str(visual.get("status") or
+                               ("grounded" if indices else "no_visual_evidence")),
+                "asset_indices": indices[:16],
+            })
 
-    scene_frames = []
-    for ref in media.get("visual_frames") or []:
-        if isinstance(ref, dict):
-            scene_frames.append({**ref, "visual_role": "scene_context"})
-    if not scene_frames and isinstance(media.get("visual"), dict):
-        scene_frames.append({**media["visual"], "visual_role": "scene_context"})
-    scene_frames = scene_frames[:4]
+    person_observations = moment.get("person_observations") or []
+    if not person_observations:
+        group = media.get("person_visuals") or {}
+        person_observations = [{"entity": row.get("person"),
+                                "appearance": row.get("appearance")}
+                               for row in (group.get("items") or []) if isinstance(row, dict)]
+    add_items("person", "entity", "appearance", person_observations,
+              media.get("person_visuals"), "person")
 
-    # Person/object crops are the preferred evidence. Keep a full scene frame as
-    # a fallback so an entity is still inspectable when a crop could not be made.
-    person_visuals = media.get("person_visuals") or {}
-    person_items = person_visuals.get("items") or [] if isinstance(person_visuals, dict) else []
-    people_by_name = {str(row.get("person") or "").casefold(): row
-                      for row in person_items if isinstance(row, dict)}
-    for row in moment.get("person_observations") or []:
-        if not isinstance(row, dict):
-            continue
-        name = str(row.get("entity") or "").strip()
-        visual = people_by_name.get(name.casefold()) or {}
-        refs = visual.get("frame_refs") or []
-        add_item("person", name, row.get("appearance") or visual.get("appearance"),
-                 refs, scene_frames, "grounded" if refs else "context_fallback")
-
-    object_visuals = media.get("object_visuals") or {}
-    object_items = object_visuals.get("items") or [] if isinstance(object_visuals, dict) else []
-    objects_by_name = {str(row.get("object") or "").casefold(): row
-                        for row in object_items if isinstance(row, dict)}
-    observations = moment.get("object_observations") or []
-    if not observations:
-        observations = [{"object": row.get("object"), "appearance": row.get("appearance")}
-                        for row in object_items if isinstance(row, dict)]
-    for row in observations:
-        if not isinstance(row, dict):
-            continue
-        name = str(row.get("object") or "").strip()
-        visual = objects_by_name.get(name.casefold()) or {}
-        refs = visual.get("frame_refs") or []
-        add_item("object", name, row.get("appearance") or visual.get("appearance"),
-                 refs, scene_frames, "grounded" if refs else "context_fallback")
-
-    if not provided_context_items:
-        add_item("scene", moment.get("scene"), "", scene_frames, status="context")
-    if moment.get("location") and not provided_context_items:
-        add_item("location", moment.get("location"), "", scene_frames[1:2] or scene_frames,
-                 status="context")
-    if not provided_context_items:
-        for environment in moment.get("environments") or []:
-            add_item("environment", environment, "", scene_frames, status="context")
-
-    # Activity-level images are selected from the observed event times where possible.
-    facts = [row for row in moment.get("temporal_facts") or [] if isinstance(row, dict)]
-    activity_refs = []
-    for fact in facts:
-        if fact.get("modality") not in (None, "visual"):
-            continue
-        ref = fact.get("evidence_ref") or {}
-        try:
-            at = float(ref.get("frame_time_s", fact.get("frame_time_s")))
-        except (TypeError, ValueError):
-            continue
-        if not math.isfinite(at):
-            continue
-        if scene_frames:
-            best = min(scene_frames, key=lambda frame: abs(float(frame.get("at_s") or 0) - at))
-            if best not in activity_refs:
-                activity_refs.append(best)
-    if not activity_refs:
-        activity_refs = scene_frames
-    if moment.get("activity") and not provided_context_items:
-        add_item("activity", moment.get("activity"), "", activity_refs[:4], status="context")
-    for fact in ([] if provided_context_items else facts[:16]):
-        kind = str(fact.get("subject_type") or "").casefold()
-        if kind not in {"event", "person", "object", "place", "environment"}:
-            continue
-        label = " · ".join(str(fact.get(key) or "").strip()
-                            for key in ("subject", "predicate", "value") if fact.get(key))
-        ref = fact.get("evidence_ref") or {}
-        refs = []
-        try:
-            at = float(ref.get("frame_time_s", fact.get("frame_time_s")))
-        except (TypeError, ValueError):
-            at = None
-        if at is not None and scene_frames:
-            refs = [min(scene_frames, key=lambda frame: abs(float(frame.get("at_s") or 0) - at))]
-        add_item("event", label, str(fact.get("time_scope") or ""), refs,
-                 scene_frames, "event_frame" if refs else "context_fallback")
-    for item in provided_context_items:
-        entity_type = str(item.get("entity_type") or "")
-        entity = " ".join(str(item.get("entity") or "").split()).strip()
-        if not entity:
-            continue
-        indices = []
-        for index in item.get("asset_indices") or []:
-            if not isinstance(index, int) or isinstance(index, bool) or not 0 <= index < len(provided_assets):
-                continue
-            asset_index_value = asset_id(provided_assets[index])
-            if asset_index_value is not None and asset_index_value not in indices:
-                indices.append(asset_index_value)
-        items.append({
-            "entity_type": entity_type, "entity": entity[:500],
-            "description": " ".join(str(item.get("description") or "").split())[:600],
-            "status": str(item.get("status") or ("grounded" if indices else "no_visual_evidence")),
-            "asset_indices": indices[:8],
-        })
-    return {"schema": 1, "assets": assets, "items": items[:64]}
-
+    object_observations = moment.get("object_observations") or []
+    if not object_observations:
+        group = media.get("object_visuals") or {}
+        object_observations = [{"object": row.get("object"),
+                                "appearance": row.get("appearance")}
+                               for row in (group.get("items") or []) if isinstance(row, dict)]
+    add_items("object", "object", "appearance", object_observations,
+              media.get("object_visuals"), "object")
+    return {"schema": 2, "assets": assets, "items": items[:128]}
 
 def _migrate_profile(profile: Dict) -> Dict:
     """把旧 layer6.profile（name/basic_info/preferences/habits）迁移到规格书骨架字段。
@@ -940,6 +866,7 @@ def _empty_moment() -> Dict:
         "person_observations": [],   # source-linked appearance and explicitly stated age
         "temporal_facts": [],        # source-linked plans and object/person state changes
         "object_observations": [],   # grounded appearance and location cues with frame provenance
+        "object_states": [],         # last explicit object location observed within this clip
         "source_time": {},           # source-relative date/time, distinct from ingest time
         "source_evidence": "",  # timestamped source-video speech; speaker is not inferred
         # Part 2
@@ -968,7 +895,7 @@ def _clean_source_fact_rows(rows, kind: str, limit: int) -> list:
                 "affected_people", "from_location", "to_location", "from_state",
                 "to_state", "time_scope", "time_order", "frame_index",
                 "frame_time_s", "modality", "evidence", "status", "confidence",
-                "evidence_ref"})
+                "evidence_ref", "evidence_refs"})
     output = []
     seen_people = {}
 
@@ -1073,6 +1000,18 @@ def _clean_source_fact_rows(rows, kind: str, limit: int) -> list:
                     ref = clean_ref(item.get("evidence_ref"))
                     if ref:
                         cleaned_alias["evidence_ref"] = ref
+                    visual_ref = clean_ref(item.get("visual_evidence_ref"))
+                    if visual_ref:
+                        cleaned_alias["visual_evidence_ref"] = visual_ref
+                    evidence_refs = []
+                    for source_ref in item.get("evidence_refs") or []:
+                        cleaned_ref = clean_ref(source_ref)
+                        if cleaned_ref and cleaned_ref not in evidence_refs:
+                            evidence_refs.append(cleaned_ref)
+                    if visual_ref and visual_ref not in evidence_refs:
+                        evidence_refs.append(visual_ref)
+                    if evidence_refs:
+                        cleaned_alias["evidence_refs"] = evidence_refs[:4]
                     aliases.append(cleaned_alias)
                 if aliases:
                     row[key] = aliases
@@ -1142,64 +1081,457 @@ def _clean_source_fact_rows(rows, kind: str, limit: int) -> list:
 
 
 def normalize_object_transition_facts(moment: Dict) -> Dict:
-    """Make an explicitly moved item the fact subject while preserving its actor."""
+    """Bind explicit object-state actions to the named object, preserving the actor.
+
+    Older perception rows sometimes used a person (often ``camera wearer``) as the
+    subject of a wallet/drawer transition. We only repair that shape when an object
+    already present in this clip's grounded inventory is explicitly named next to an
+    object-action verb in the evidence/value text.
+    """
     if not isinstance(moment, dict):
         return moment
-    facts = moment.get("temporal_facts") or []
+    facts = moment.get("temporal_facts")
     if not isinstance(facts, list):
         return moment
+    people = {str(value).strip().casefold() for value in moment.get("people") or []
+              if str(value).strip()}
+    people.update(str(row.get("entity") or "").strip().casefold()
+                  for row in moment.get("person_observations") or []
+                  if isinstance(row, dict) and str(row.get("entity") or "").strip())
+    human_label_re = re.compile(
+        r"^(?:camera wearer|unidentified speaker|person(?:\s+\d+)?|woman(?:\s+\d+)?|"
+        r"man(?:\s+\d+)?|boy(?:\s+\d+)?|girl(?:\s+\d+)?|child(?:ren)?|"
+        r"male|female|he|she|they|人物\s*\d+|人)$", re.I)
+    action_label_re = re.compile(r"^(?:moves?|walks?|runs?|approaches?|enters?|leaves?|"
+                                 r"turns?|looks?|smiles?|speaks?|talks?)\b", re.I)
+    actions = re.compile(
+        r"\b(?:placed|place|put|stored|store|returned|return|picked\s+up|picked_up|"
+        r"lifted|held|handed|set\s+down|dropped|opened|open|closed|close|moved|move|"
+        r"relocated|transferred)\b", re.I)
+
+    def is_person(label):
+        folded = " ".join(str(label or "").split()).casefold()
+        return not folded or folded in people or bool(human_label_re.fullmatch(folded))
+
+    def mention_spans(label, text):
+        label = " ".join(str(label or "").split()).strip()
+        if not label:
+            return []
+        if re.search(r"[\u4e00-\u9fff]", label):
+            return [(m.start(), m.end()) for m in re.finditer(re.escape(label), text, re.I)]
+        return [(m.start(), m.end()) for m in re.finditer(
+            r"(?<![\w])" + re.escape(label) + r"(?![\w])", text, re.I)]
+
     objects = moment.get("objects")
     if not isinstance(objects, list):
         objects = []
-    human_terms = re.compile(
-        r"\b(?:person|people|man|woman|boy|girl|child|he|she|they)\b", re.I)
+    candidates = []
+    def add_candidate(value):
+        label = " ".join(str(value or "").split()).strip(" .,:;-")[:120]
+        if (label and not is_person(label) and not action_label_re.search(label)
+                and label.casefold() not in {item.casefold() for item in candidates}):
+            candidates.append(label)
+    for value in objects:
+        add_candidate(value)
+    for row in moment.get("object_observations") or []:
+        if isinstance(row, dict):
+            add_candidate(row.get("object"))
+    for fact in facts:
+        if isinstance(fact, dict) and str(fact.get("subject_type") or "").casefold() == "object":
+            add_candidate(fact.get("subject"))
+
     for fact in facts:
         if not isinstance(fact, dict):
             continue
         predicate = str(fact.get("predicate") or "").casefold().strip()
-        if predicate not in {"move", "moved", "relocate", "relocated", "transfer", "transferred"}:
-            continue
         value = str(fact.get("value") or "").strip()
-        if not value:
+        evidence = str(fact.get("evidence") or "").strip()
+        text = " ".join(part for part in (value, evidence) if part)
+        if not text:
             continue
-        current_subject = str(fact.get("subject") or "").strip()
+        current_subject = " ".join(str(fact.get("subject") or "").split()).strip()
         original_type = str(fact.get("subject_type") or "").casefold()
         actor = str(fact.get("actor") or "").strip()
-        if (original_type == "object" and actor
-                and re.match(r"^(?:from|to|toward|towards|into|out of)\s+", current_subject, re.I)):
-            # A place phrase produced by an older extractor is not an object. If
-            # the fact names a person actor, preserve the movement as that person's event.
-            fact["subject_type"] = "person"
-            fact["subject"] = actor
+        current_is_person = original_type == "person" or is_person(current_subject)
+        action_match = actions.search(text)
+        if current_is_person and action_match:
+            before_action = []
+            all_matches = []
+            for candidate in candidates:
+                spans = mention_spans(candidate, text)
+                if spans:
+                    all_matches.append(candidate)
+                    prior = [span for span in spans if span[1] <= action_match.start()]
+                    if prior:
+                        before_action.append((max(prior, key=lambda span: span[1])[1], candidate))
+            candidate = ""
+            if before_action:
+                nearest_end = max(item[0] for item in before_action)
+                nearest = list(dict.fromkeys(item[1] for item in before_action if item[0] == nearest_end))
+                if len(nearest) == 1:
+                    candidate = nearest[0]
+            else:
+                # Some valid transitive forms put the item after the verb
+                # ("put wallet in drawer"). Do not bind a later-mentioned item
+                # to an intransitive action ("drawer pulled open, revealing wallet").
+                verb = action_match.group(0).casefold()
+                if verb in {"placed", "place", "put", "stored", "store", "returned",
+                            "picked", "lifted", "handed", "dropped"}:
+                    after = []
+                    for candidate_name in all_matches:
+                        pattern = (r"\b" + re.escape(verb) + r"(?:\s+up|\s+back)?\s+"
+                                   r"(?:(?:the|a|an)\s+)?" + re.escape(candidate_name) + r"\b")
+                        if re.search(pattern, text, re.I):
+                            after.append(candidate_name)
+                    if len(set(after)) == 1:
+                        candidate = after[0]
+            if not candidate:
+                state_hint = str(fact.get("to_state") or "").strip().casefold()
+                state_word = ({"open": "open", "opened": "open", "closed": "closed",
+                               "close": "closed", "shut": "closed", "ajar": "ajar"}
+                              .get(state_hint) or
+                              {"open": "open", "opened": "open", "closed": "closed",
+                               "close": "closed", "shut": "closed", "ajar": "ajar"}.get(predicate))
+                if state_word:
+                    state_pattern = r"\b" + {
+                        "open": r"open(?:ed)?",
+                        "closed": r"(?:closed|shut)",
+                        "ajar": r"ajar",
+                    }[state_word] + r"\b"
+                    state_words = list(re.finditer(state_pattern, evidence, re.I))
+                    container_candidates = []
+                    for candidate_name in candidates:
+                        spans = mention_spans(candidate_name, evidence)
+                        if any(abs(span[1] - state_match.start()) <= 40
+                               or abs(span[0] - state_match.end()) <= 40
+                               for span in spans for state_match in state_words):
+                            container_candidates.append(candidate_name)
+                    if len(set(container_candidates)) == 1:
+                        candidate = container_candidates[0]
+                        if str(fact.get("to_location") or "").strip().casefold() in {
+                                "open", "opened", "closed", "close", "shut", "ajar"}:
+                            fact.pop("to_location", None)
+                        fact["predicate"] = "opened" if state_word == "open" else state_word
+            if candidate:
+                # A visual event row can carry the actor, while the thing that
+                # changed becomes the searchable fact subject.
+                if not actor and current_subject and not is_person(candidate):
+                    actor = current_subject
+                state = str(fact.get("to_state") or "").strip().casefold()
+                if state in {"open", "opened", "closed", "close", "ajar"}:
+                    # Do not transfer a container's state to the item it contains.
+                    direct_state = re.search(
+                        re.escape(candidate) + r"\b.{0,36}\b(?:is|was|stays?|remains?)?\s*"
+                        r"(?:open|opened|closed|close|ajar)\b", text, re.I)
+                    if not direct_state:
+                        fact.pop("to_state", None)
+                fact["subject_type"] = "object"
+                fact["subject"] = candidate
+                if actor:
+                    fact["actor"] = actor
+                if fact.get("confidence") not in {"high", "medium", "low"}:
+                    fact["confidence"] = "medium"
+                action_text = text[max(0, action_match.start()-12):action_match.end()+24].casefold()
+                if re.search(r"\bput\s+back\b|\breturned\b", action_text):
+                    fact["predicate"] = "put_back"
+                elif predicate in {"place", "placed", "put", "store", "stored", "set down", "set_down"}:
+                    fact["predicate"] = "stored" if "stor" in action_text else "placed"
+                if not fact.get("to_location"):
+                    destination = re.search(
+                        r"\b(?:into|inside|in|onto|on)\s+(?:the\s+|a\s+|an\s+)?"
+                        r"([a-z][a-z0-9_-]{1,39})\b", text, re.I)
+                    if destination:
+                        prep = destination.group(0).split()[0].casefold()
+                        noun = destination.group(1).strip().lower()
+                        fact["to_location"] = (f"inside the {noun}" if prep in {"into", "inside"}
+                                               else f"in the {noun}" if prep == "in"
+                                               else f"on the {noun}")[:180]
+                add_candidate(candidate)
+        elif original_type == "object" and current_subject and not is_person(current_subject):
+            action_match = actions.search(text)
+            if action_match:
+                spans = mention_spans(current_subject, text)
+                before = any(end <= action_match.start() for _start, end in spans)
+                verb = action_match.group(0).casefold()
+                direct_after = (verb in {"placed", "place", "put", "stored", "store",
+                                          "returned", "picked", "lifted", "handed", "dropped"}
+                                and bool(re.search(
+                                    r"\b" + re.escape(verb) + r"(?:\s+up|\s+back)?\s+"
+                                    r"(?:(?:the|a|an)\s+)?" + re.escape(current_subject) + r"\b",
+                                    text, re.I)))
+                if not before and not direct_after and actor:
+                    # Undo a prior ambiguous assignment when the evidence actually
+                    # describes another object (e.g. drawer opening before wallet appears).
+                    fact["subject_type"] = "person"
+                    fact["subject"] = actor
+                    continue
+            add_candidate(current_subject)
+
+    # Drop person labels and obvious verb fragments mistakenly emitted as objects.
+    cleaned_objects = []
+    seen_objects = set()
+    for value in candidates:
+        key = value.casefold()
+        if key not in seen_objects:
+            seen_objects.add(key)
+            cleaned_objects.append(value)
+    if cleaned_objects or "objects" in moment:
+        moment["objects"] = cleaned_objects[:40]
+
+    # Fill missing object-event order from source timestamps. Do not rewrite
+    # explicit orders; a missing final transition must not collapse to order 0.
+    for fact in facts:
+        if not isinstance(fact, dict) or str(fact.get("subject_type") or "").casefold() != "object":
             continue
-        if original_type == "object" and current_subject:
-            candidate = current_subject
-        else:
-            match = re.match(
-                r"^(?:moved|relocated|transferred|placed)\s+(?:(?:the|a|an)\s+)?(.+?)\s+(?:from|out of|off|onto|to)\b",
-                value, re.I)
-            if not match:
-                match = re.match(
-                    r"^(?:(?:the|a|an)\s+)?(.+?)\s+(?:from|out of|off|onto|to)\b",
-                    value, re.I)
-            candidate = match.group(1) if match else ""
-            candidate = re.sub(r"^(?:the|a|an)\s+", "", candidate.strip(), flags=re.I)
-        candidate = " ".join(candidate.split()).strip(" .,:;-")[:120]
-        if not candidate or human_terms.search(candidate):
+        if not (fact.get("to_location") or fact.get("to_state")):
             continue
-        if not actor and original_type == "person":
-            actor = current_subject
-        if actor:
-            fact["actor"] = actor
-        fact["subject_type"] = "object"
-        fact["subject"] = candidate
-        if not any(str(item).casefold() == candidate.casefold() for item in objects):
-            objects.append(candidate)
-    if objects:
-        moment["objects"] = list(dict.fromkeys(
-            str(item).strip() for item in objects if str(item).strip()
-            and not re.match(r"^(?:from|to|toward|towards|into|out of)\s+", str(item).strip(), re.I)))[:40]
+        try:
+            order = int(fact.get("time_order") or 0)
+            frame_time = float(fact.get("frame_time_s"))
+        except (TypeError, ValueError):
+            continue
+        if order > 0 or not math.isfinite(frame_time) or frame_time < 0:
+            continue
+        preceding_orders = []
+        for other in facts:
+            if (not isinstance(other, dict) or other is fact
+                    or str(other.get("subject_type") or "").casefold() != "object"):
+                continue
+            try:
+                other_time = float(other.get("frame_time_s"))
+                other_order = int(other.get("time_order") or 0)
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(other_time) and other_time < frame_time and other_order > 0:
+                preceding_orders.append(other_order)
+        fact["time_order"] = max(preceding_orders, default=0) + 1
+
+    # Collapse only exact duplicate extraction rows; distinct times/states remain.
+    unique_facts = []
+    seen_facts = set()
+    for fact in facts:
+        if not isinstance(fact, dict):
+            unique_facts.append(fact)
+            continue
+        signature = tuple(str(fact.get(key) or "").strip().casefold() for key in
+                          ("subject_type", "subject", "predicate", "to_location",
+                           "to_state", "evidence", "frame_time_s", "time_order"))
+        if signature in seen_facts:
+            continue
+        seen_facts.add(signature)
+        unique_facts.append(fact)
+    moment["temporal_facts"] = unique_facts
     return moment
+
+def derive_object_states(moment: Dict) -> list:
+    """Derive clip-scoped object state, including bounded container-closure continuity."""
+    if not isinstance(moment, dict):
+        return []
+    source_id = str((moment.get("source_provenance") or {}).get("source_segment_id") or "")
+    transitions = {"placed", "put", "stored", "moved", "move", "relocated",
+                   "transferred", "returned", "put_back", "picked_up", "picked up",
+                   "retrieved", "removed", "taken", "set_down", "dropped", "handed",
+                   "carried", "opened", "open", "closed", "close", "held"}
+    state_only = {"open", "opened", "closed", "close", "held", "picked_up", "picked up",
+                  "retrieved", "removed", "taken", "carried"}
+    facts = [row for row in (moment.get("temporal_facts") or []) if isinstance(row, dict)]
+
+    def number(value, default=-1.0):
+        try:
+            value = float(value)
+            return value if math.isfinite(value) else default
+        except (TypeError, ValueError, OverflowError):
+            return default
+
+    def order(value):
+        try:
+            return int(value or 0)
+        except (TypeError, ValueError, OverflowError):
+            return 0
+
+    def fact_time(fact):
+        return number(fact.get("frame_time_s"), number(fact.get("audio_start_s"), -1.0))
+
+    latest = {}
+    for fact in facts:
+        if str(fact.get("subject_type") or "").casefold() != "object":
+            continue
+        predicate = re.sub(r"[ -]+", "_", str(fact.get("predicate") or "").strip().casefold())
+        if predicate not in transitions:
+            continue
+        location = " ".join(str(fact.get("to_location") or "").split())[:180]
+        state = " ".join(str(fact.get("to_state") or "").split())[:180]
+        if location.casefold() in {"open", "opened", "closed", "close", "ajar"}:
+            state = state or location
+            location = ""
+        if state and location and state.casefold() == location.casefold():
+            state = ""
+        if not state and location:
+            if predicate in {"put_back", "returned"}:
+                state = "put back"
+            elif predicate in {"stored", "placed", "set_down", "dropped"}:
+                state = "stored" if predicate == "stored" else "placed"
+            elif predicate in {"moved", "move", "relocated", "transferred"}:
+                state = "relocated"
+            elif predicate in {"carried", "held"}:
+                state = "held"
+        if not state and predicate in state_only:
+            state = {
+                "open": "open", "opened": "open", "close": "closed",
+                "closed": "closed", "held": "held", "picked_up": "picked up",
+                "picked up": "picked up", "retrieved": "retrieved",
+                "removed": "removed", "taken": "taken", "carried": "carried",
+            }[predicate]
+        if predicate in {"picked_up", "picked up", "retrieved", "removed", "taken",
+                         "carried", "held"} and not location:
+            location = "in hand" if predicate in {"picked_up", "picked up", "carried", "held"} else ""
+        if not state and not location:
+            continue
+        object_name = " ".join(str(fact.get("subject") or "").split())[:180]
+        if not object_name:
+            continue
+        frame_time = fact_time(fact)
+        time_order = order(fact.get("time_order"))
+        rank = (frame_time, time_order, bool(location), bool(state))
+        key = object_name.casefold()
+        if key in latest and latest[key][0] >= rank:
+            continue
+        evidence_ref = fact.get("evidence_ref")
+        refs = fact.get("evidence_refs")
+        if not isinstance(evidence_ref, dict) and isinstance(refs, list) and refs:
+            evidence_ref = next((ref for ref in refs if isinstance(ref, dict)), None)
+        confidence = fact.get("confidence")
+        if confidence not in {"high", "medium", "low"}:
+            if (str(fact.get("modality") or "").casefold() == "visual"
+                    and str(fact.get("evidence") or "").strip()
+                    and isinstance(evidence_ref, dict)
+                    and evidence_ref.get("modality") == "visual"):
+                confidence = "medium"
+            else:
+                confidence = "unknown"
+        row = {
+            "object": object_name, "location": location, "state": state,
+            "predicate": str(fact.get("predicate") or "")[:80],
+            "status": "last_observed_in_clip", "scope": "source_clip",
+            "confidence": confidence,
+            "modality": fact.get("modality") or "unknown",
+            "evidence": str(fact.get("evidence") or "")[:500],
+            "time_order": time_order,
+        }
+        if frame_time >= 0:
+            row["observed_at_s"] = round(frame_time, 3)
+        if source_id:
+            row["source_segment_id"] = source_id
+        if isinstance(evidence_ref, dict):
+            row["evidence_ref"] = copy.deepcopy(evidence_ref)
+        if isinstance(refs, list):
+            row["evidence_refs"] = copy.deepcopy([ref for ref in refs if isinstance(ref, dict)])
+        latest[key] = (rank, row)
+
+    # If an item is visibly placed in a container and that same container is
+    # visibly closed later with no intervening removal, preserve the contained
+    # location as a medium-confidence inference bounded to this source clip.
+    container_stop = {"the", "a", "an", "inside", "into", "in", "within", "on", "onto",
+                      "upper", "lower", "top", "bottom", "closed", "open"}
+    removal_actions = {"picked_up", "picked up", "retrieved", "removed", "taken",
+                       "carried", "handed", "transferred", "moved", "relocated"}
+    for put in facts:
+        if str(put.get("subject_type") or "").casefold() != "object":
+            continue
+        obj = " ".join(str(put.get("subject") or "").split())[:180]
+        destination = " ".join(str(put.get("to_location") or "").split())[:180]
+        put_predicate = re.sub(r"[ -]+", "_", str(put.get("predicate") or "").strip().casefold())
+        if not obj or not destination or put_predicate not in {
+                "placed", "put", "stored", "returned", "put_back", "set_down", "dropped"}:
+            continue
+        put_time = fact_time(put)
+        if put_time < 0:
+            continue
+        destination_tokens = {
+            token.casefold() for token in re.findall(r"[\w-]+", destination)
+            if token.casefold() not in container_stop and len(token) > 1
+        }
+        if not destination_tokens:
+            continue
+        close_rows = []
+        for close in facts:
+            close_predicate = re.sub(r"[ -]+", "_", str(close.get("predicate") or "").strip().casefold())
+            close_state = str(close.get("to_state") or "").strip().casefold()
+            if close_predicate not in {"closed", "close", "shut"} and close_state not in {"closed", "close", "shut"}:
+                continue
+            close_time = fact_time(close)
+            if close_time <= put_time:
+                continue
+            close_subject = " ".join(str(close.get("subject") or "").split()).casefold()
+            close_evidence = " ".join(str(close.get(key) or "")
+                                      for key in ("evidence", "value", "subject")).casefold()
+            subject_tokens = {token.casefold() for token in re.findall(r"[\w-]+", close_subject)
+                              if token.casefold() not in container_stop}
+            evidence_tokens = {token.casefold() for token in re.findall(r"[\w-]+", close_evidence)
+                               if token.casefold() not in container_stop}
+            container_tokens = subject_tokens or evidence_tokens
+            if not (destination_tokens & container_tokens):
+                continue
+            close_rows.append((close_time, order(close.get("time_order")), close))
+        if not close_rows:
+            continue
+        close_time, close_order, close = min(close_rows, key=lambda row: (row[0], row[1]))
+        object_key = obj.casefold()
+        intervening = []
+        for fact in facts:
+            if (str(fact.get("subject_type") or "").casefold() != "object"
+                    or " ".join(str(fact.get("subject") or "").split()).casefold() != object_key):
+                continue
+            time = fact_time(fact)
+            if put_time < time <= close_time and fact is not put:
+                intervening.append(fact)
+        intervening.sort(key=lambda fact: (fact_time(fact), order(fact.get("time_order"))))
+        invalidated = False
+        for fact in intervening:
+            predicate = re.sub(r"[ -]+", "_", str(fact.get("predicate") or "").strip().casefold())
+            location = " ".join(str(fact.get("to_location") or "").split()).casefold()
+            if predicate in removal_actions:
+                invalidated = True
+            elif location and not any(token in location for token in destination_tokens):
+                invalidated = True
+            elif predicate in {"placed", "put", "stored", "returned", "put_back"} and location:
+                invalidated = not any(token in location for token in destination_tokens)
+        if invalidated:
+            continue
+        close_ref = close.get("evidence_ref")
+        put_ref = put.get("evidence_ref")
+        evidence_refs = [copy.deepcopy(ref) for ref in (put_ref, close_ref) if isinstance(ref, dict)]
+        close_order = close_order or order(put.get("time_order")) + 1
+        evidence = (
+            f"{obj} was placed at {put_time:.3f}s in {destination}; "
+            f"the matching container was observed closed at {close_time:.3f}s; "
+            "no intervening removal from that container is present in the clip record."
+        )
+        row = {
+            "object": obj,
+            "location": destination,
+            "state": "remained stored when container closed",
+            "predicate": "inferred_retained_at_container_close",
+            "status": "inferred_from_container_closure",
+            "scope": "source_clip",
+            "confidence": "medium",
+            "modality": "visual_inference",
+            "evidence": evidence[:500],
+            "time_order": order(put.get("time_order")),
+            "inferred_after_time_order": close_order,
+            "observed_at_s": round(put_time, 3),
+            "inferred_at_s": round(close_time, 3),
+            "evidence_refs": evidence_refs,
+        }
+        if source_id:
+            row["source_segment_id"] = source_id
+        if isinstance(put_ref, dict):
+            row["evidence_ref"] = copy.deepcopy(put_ref)
+        rank = (close_time, close_order, True, True)
+        if object_key not in latest or latest[object_key][0] < rank:
+            latest[object_key] = (rank, row)
+
+    return [entry[1] for entry in sorted(latest.values(), key=lambda item: item[1]["object"].casefold())]
 
 
 def object_visual_observations(moment: Dict, limit: int = 16) -> list:
@@ -1345,8 +1677,10 @@ def entity_graph_summary(layer7: Dict, limit: int = 8) -> Dict:
                 audio_refs, ("asset", "bytes", "mime", "at_s", "duration_s", "source_id")),
             "person_crops": compact_refs(
                 [ref for item in (media.get("person_visuals") or {}).get("items") or []
-                 for ref in item.get("frame_refs") or []],
-                ("asset", "bytes", "mime", "at_s", "source_id", "visual_role", "crop_bbox")),
+                 for ref in item.get("frame_refs") or []
+                 if ref.get("visual_role") == "face_crop" and ref.get("identity_verified") is True and str(ref.get("identity_assignment") or "").startswith("qwen_visual_anchor+")],
+                ("asset", "bytes", "mime", "at_s", "source_id", "visual_role", "face_bbox",
+                 "identity_verified", "identity_assignment")),
             "object_crops": compact_refs(
                 [ref for item in (media.get("object_visuals") or {}).get("items") or []
                  for ref in item.get("frame_refs") or []],
@@ -1565,7 +1899,7 @@ class PersonMemory(MemoryRetrievalMixin):
     def _ensure_rich_entity_memory(self) -> bool:
         """One-time additive migration for entity indexes, event types and visual links."""
         metadata = self.memory.setdefault("metadata", {})
-        if int(metadata.get("rich_entity_memory_version", 0) or 0) >= 1:
+        if int(metadata.get("rich_entity_memory_version", 0) or 0) >= 3:
             return False
         changed = False
         layer7 = self.memory.setdefault("layer7", {})
@@ -1576,6 +1910,7 @@ class PersonMemory(MemoryRetrievalMixin):
             before = copy.deepcopy(moment)
             _upgrade_legacy_person_labels(moment)
             normalize_object_transition_facts(moment)
+            moment["object_states"] = derive_object_states(moment)
             media = moment.get("multimodal")
             if isinstance(media, dict):
                 entity_visuals = _build_entity_visuals(moment)
@@ -1588,7 +1923,80 @@ class PersonMemory(MemoryRetrievalMixin):
                     if window_moment.get("id") == moment_id and window_moment != moment:
                         self.memory[layer_key][index] = moment
                         changed = True
+        # The same uploaded source can be retried into two different moment IDs.
+        # Collapse only identical source fingerprints, keeping the richest audited row.
+        groups = {}
+        for moment_id, moment in list(moments.items()):
+            if not isinstance(moment, dict) or moment.get("merged_into"):
+                continue
+            provenance = moment.get("source_provenance") or {}
+            source_id = str(provenance.get("source_segment_id") or "").strip()
+            source_video = str(provenance.get("source_video_sha256") or "").strip()
+            source_clip = str(provenance.get("source_clip_sha256") or "").strip()
+            if source_id:
+                groups.setdefault((source_id, source_video, source_clip), []).append(moment_id)
+        id_remap = {}
+        for _signature, group_ids in groups.items():
+            if len(group_ids) < 2:
+                continue
+            def richness(moment_id):
+                row = moments[moment_id]
+                feedback = row.get("feedback") or {}
+                corrections = feedback.get("corrections") or {}
+                return (len(corrections), len(row.get("person_observations") or []),
+                        len(row.get("temporal_facts") or []),
+                        len(((row.get("multimodal") or {}).get("entity_visuals") or {}).get("assets") or []),
+                        str(row.get("timestamp") or ""))
+            keep_id = max(group_ids, key=richness)
+            for duplicate_id in group_ids:
+                if duplicate_id == keep_id:
+                    continue
+                id_remap[duplicate_id] = keep_id
+                moments.pop(duplicate_id, None)
+                changed = True
+        if id_remap:
+            for index_key in LAYER7_INDICES:
+                index = layer7.setdefault(index_key, {})
+                for tag, ids in list(index.items()):
+                    remapped = list(dict.fromkeys(id_remap.get(mid, mid) for mid in ids
+                                                  if id_remap.get(mid, mid) in moments))
+                    if remapped:
+                        index[tag] = remapped
+                    else:
+                        index.pop(tag, None)
+            for layer_key in ("layer1", "layer2", "layer3"):
+                seen_window_ids = set()
+                rows = []
+                for row in self.memory.get(layer_key, []):
+                    mid = id_remap.get(row.get("id"), row.get("id"))
+                    if mid not in moments or mid in seen_window_ids:
+                        continue
+                    seen_window_ids.add(mid)
+                    rows.append(moments[mid])
+                self.memory[layer_key] = rows
+            for layer_no in (4, 5, 6):
+                layer = self.memory.setdefault(f"layer{layer_no}", {})
+                refs = layer.get("source_moment_ids") or []
+                layer["source_moment_ids"] = list(dict.fromkeys(
+                    id_remap.get(mid, mid) for mid in refs
+                    if id_remap.get(mid, mid) in moments))
+                layer["source_moment_count"] = len(layer["source_moment_ids"])
+                if layer["source_moment_count"] < len(moments):
+                    layer["source_link_coverage"] = "partial"
+            metadata = self.memory.setdefault("metadata", {})
+            metadata["total_moments"] = len(moments)
         _clean_layer7_indices(layer7)
+        # Rebuild tags from canonical moments so removed IDs cannot remain searchable.
+        for index_key in LAYER7_INDICES:
+            layer7[index_key] = {}
+        for moment_id, moment in moments.items():
+            if not isinstance(moment, dict) or moment.get("merged_into"):
+                continue
+            for index_key, tags in _moment_index_tags(moment).items():
+                index = layer7.setdefault(index_key, {})
+                for tag in tags:
+                    if moment_id not in index.setdefault(tag, []):
+                        index[tag].append(moment_id)
         for index_key in LAYER7_INDICES:
             index = layer7.setdefault(index_key, {})
             for tag, ids in list(index.items()):
@@ -1609,7 +2017,7 @@ class PersonMemory(MemoryRetrievalMixin):
                     if moment_id not in ids:
                         ids.append(moment_id)
                         changed = True
-        metadata["rich_entity_memory_version"] = 1
+        metadata["rich_entity_memory_version"] = 3
         return True
 
     def clean_layer7_indices(self) -> Dict[str, List[str]]:
@@ -1754,6 +2162,32 @@ class PersonMemory(MemoryRetrievalMixin):
                     provenance["source_video_id"])
             if provenance:
                 moment["source_provenance"] = provenance
+        moment["object_states"] = derive_object_states(moment)
+
+        # Replaying the same source clip is an upsert, not a second memory event.
+        incoming_provenance = moment.get("source_provenance") or {}
+        source_segment_id = str(incoming_provenance.get("source_segment_id") or "")
+        if source_segment_id:
+            archive = self.memory.get("layer7", {}).get("moments", {})
+            for existing_id, existing in archive.items():
+                if not isinstance(existing, dict) or existing.get("merged_into"):
+                    continue
+                old_provenance = existing.get("source_provenance") or {}
+                if str(old_provenance.get("source_segment_id") or "") != source_segment_id:
+                    continue
+                hash_conflict = any(
+                    old_provenance.get(key) and incoming_provenance.get(key)
+                    and str(old_provenance[key]) != str(incoming_provenance[key])
+                    for key in ("source_video_sha256", "source_clip_sha256"))
+                if hash_conflict:
+                    continue
+                refresh_fields = {
+                    key: copy.deepcopy(moment[key]) for key in self.UPDATE_FIELDS
+                    if key in moment
+                }
+                self.refresh_source_moment(
+                    str(existing_id), refresh_fields, incoming_provenance, source_segment_id)
+                return str(existing_id)
 
         moment_id = self._new_moment_id()
         moment["id"] = moment_id
@@ -1993,13 +2427,14 @@ class PersonMemory(MemoryRetrievalMixin):
                 key: copy.deepcopy(source.get(key))
                 for key in ("id", "timestamp", "scene", "user_action",
                             "interaction_details", "person_observations",
-                            "temporal_facts", "object_observations", "source_time", "people",
+                            "temporal_facts", "object_observations", "object_states", "source_time", "people",
                             "location", "activity", "objects", "environments",
                             "source_evidence", "multimodal", "highlighted")
                 if source.get(key) is not None
             })
         normalize_object_transition_facts(result)
         result["object_observations"] = object_visual_observations(result)
+        result["object_states"] = derive_object_states(result)
         result["_merged_sources_records"] = source_records
         result["_merged_search_text"] = " ".join(
             json.dumps(row, ensure_ascii=False) for row in source_records
@@ -2899,7 +3334,7 @@ class PersonMemory(MemoryRetrievalMixin):
     UPDATE_FIELDS = ("scene", "user_action", "needs", "solutions",
                      "people", "location", "activity", "notes", "source_evidence",
                      "interaction_details", "person_observations", "temporal_facts",
-                     "source_time", "environments", "objects")
+                     "source_time", "environments", "objects", "multimodal")
 
     def _validated_updates(self, updates: Dict) -> Dict:
         """按记忆 schema 筛选可更新字段和值类型。"""
@@ -2917,6 +3352,9 @@ class PersonMemory(MemoryRetrievalMixin):
                 continue
             if field == "temporal_facts" and isinstance(value, list):
                 clean[field] = _clean_source_fact_rows(value, "fact", 32)
+                continue
+            if field == "multimodal" and isinstance(value, dict) and value.get("schema") == 1:
+                clean[field] = copy.deepcopy(value)
                 continue
             if field == "source_time" and isinstance(value, dict):
                 time_value = {}
@@ -2999,9 +3437,13 @@ class PersonMemory(MemoryRetrievalMixin):
             if moment.get(field) != value:
                 moment[field] = value
                 changed_fields.append(field)
+        normalize_object_transition_facts(moment)
+        derived_states = derive_object_states(moment)
+        if moment.get("object_states") != derived_states:
+            moment["object_states"] = derived_states
+            changed_fields.append("object_states")
         if not changed_fields:
             return False
-        normalize_object_transition_facts(moment)
         if isinstance(moment.get("multimodal"), dict):
             entity_visuals = _build_entity_visuals(moment)
             if entity_visuals.get("items"):
@@ -3081,7 +3523,7 @@ class PersonMemory(MemoryRetrievalMixin):
         provenance_keys = (
             "source_video_id", "source_segment_id", "clip_start_s", "clip_end_s",
             "source_video_sha256", "source_clip_sha256", "perception_prompt_version",
-            "list_parser_version", "extraction_batch_id",
+            "list_parser_version", "extraction_batch_id", "content_summary_version",
         )
         new_provenance = {
             key: source_provenance[key] for key in provenance_keys
@@ -3092,9 +3534,14 @@ class PersonMemory(MemoryRetrievalMixin):
                 new_provenance["source_video_id"])
         provenance_changed = any(
             old_provenance.get(key) != value for key, value in new_provenance.items())
+        normalize_object_transition_facts(moment)
+        derived_states = derive_object_states(moment)
+        if moment.get("object_states") != derived_states:
+            previous_fields["object_states"] = copy.deepcopy(moment.get("object_states"))
+            moment["object_states"] = derived_states
+            changed_fields.append("object_states")
         if not changed_fields and not provenance_changed:
             return False
-        normalize_object_transition_facts(moment)
         if isinstance(moment.get("multimodal"), dict):
             entity_visuals = _build_entity_visuals(moment)
             if entity_visuals.get("items"):

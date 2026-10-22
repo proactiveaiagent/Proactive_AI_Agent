@@ -82,6 +82,7 @@ class PersistentObjectGroundingCache:
         db.execute("PRAGMA busy_timeout=8000")
         db.execute("CREATE TABLE IF NOT EXISTS grounding_cache (cache_key TEXT PRIMARY KEY,payload TEXT NOT NULL,created_at REAL NOT NULL,last_access REAL NOT NULL)")
         db.execute("CREATE TABLE IF NOT EXISTS grounding_source_cache (source_key TEXT PRIMARY KEY,payload TEXT NOT NULL,created_at REAL NOT NULL,last_access REAL NOT NULL)")
+        db.execute("CREATE TABLE IF NOT EXISTS face_detection_cache (cache_key TEXT PRIMARY KEY,payload TEXT NOT NULL,created_at REAL NOT NULL,last_access REAL NOT NULL)")
         try: os.chmod(self.path,0o600)
         except OSError: pass
         return db
@@ -108,6 +109,70 @@ class PersistentObjectGroundingCache:
                 db.execute("DELETE FROM grounding_cache WHERE cache_key IN (SELECT cache_key FROM grounding_cache ORDER BY last_access DESC LIMIT -1 OFFSET 5000)")
             return True
         except (OSError,sqlite3.Error,TypeError,ValueError):
+            return False
+
+    @staticmethod
+    def _usable_face_payload(payload):
+        """Face detections have a distinct schema from entity grounding results."""
+        if not isinstance(payload, dict) or payload.get("status") != "completed":
+            return False
+        if payload.get("model") != "YOLOv8n-Face":
+            return False
+        frames = payload.get("faces")
+        frame_count = payload.get("frame_count")
+        if not isinstance(frames, list) or not isinstance(frame_count, int):
+            return False
+        if frame_count < 0 or len(frames) != frame_count:
+            return False
+        for detections in frames:
+            if not isinstance(detections, list):
+                return False
+            for face in detections:
+                bbox = face.get("bbox") if isinstance(face, dict) else None
+                if not isinstance(bbox, list) or len(bbox) != 4:
+                    return False
+        return True
+
+    def get_faces(self, cache_key):
+        if not cache_key:
+            return None, 0
+        start = time.perf_counter()
+        try:
+            with self._connect() as db:
+                row = db.execute(
+                    "SELECT payload FROM face_detection_cache WHERE cache_key=?",
+                    (cache_key,),
+                ).fetchone()
+                if not row:
+                    return None, round((time.perf_counter() - start) * 1000)
+                db.execute(
+                    "UPDATE face_detection_cache SET last_access=? WHERE cache_key=?",
+                    (time.time(), cache_key),
+                )
+            payload = json.loads(row[0])
+            valid = self._usable_face_payload(payload)
+            return (payload if valid else None), round((time.perf_counter() - start) * 1000)
+        except (OSError, sqlite3.Error, ValueError, TypeError):
+            return None, round((time.perf_counter() - start) * 1000)
+
+    def put_faces(self, cache_key, payload):
+        if not cache_key or not self._usable_face_payload(payload):
+            return False
+        try:
+            now = time.time()
+            with self._connect() as db:
+                db.execute(
+                    "INSERT OR REPLACE INTO face_detection_cache "
+                    "VALUES (?,?,?,?)",
+                    (cache_key, _json(payload), now, now),
+                )
+                db.execute(
+                    "DELETE FROM face_detection_cache WHERE cache_key IN "
+                    "(SELECT cache_key FROM face_detection_cache "
+                    "ORDER BY last_access DESC LIMIT -1 OFFSET 5000)"
+                )
+            return True
+        except (OSError, sqlite3.Error, TypeError, ValueError):
             return False
 
     def get_source(self, source_key):

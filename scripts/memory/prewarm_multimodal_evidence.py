@@ -36,6 +36,7 @@ from qwen_perceive import (
 from grounding_cache import PersistentObjectGroundingCache  # noqa: E402
 from multimodal_memory import MultimodalAssetStore, _run_ffmpeg  # noqa: E402
 from audio_transcript_cache import PersistentTranscriptCache  # noqa: E402
+from face_detection import detect_faces, expanded_face_sample_times  # noqa: E402
 
 RUNS = ROOT / "data" / "egolife" / "runs"
 QWEN_CACHE = RUNS / "qwen_cache_memory_prompt_v3.json"
@@ -44,7 +45,7 @@ SPEECH_CACHE = RUNS / "interactive_audio_transcript_cache.json"
 API_URLS = [
     value.strip().rstrip("/")
     for value in os.environ.get("QWEN_API_URLS", os.environ.get(
-        "QWEN_API_URL", "http://127.0.0.1:8000"
+        "QWEN_API_URL", "http://127.0.0.1:8001,http://127.0.0.1:8002,http://127.0.0.1:8003,http://127.0.0.1:8004"
     )).split(",") if value.strip()
 ]
 API = API_URLS[0]
@@ -554,7 +555,8 @@ def _cache_text_needs_full_reperception(entry: dict) -> bool:
             or _contains_cjk(entry.get("raw", "")))
 
 
-def resolve_cached_perception(perceiver: QwenPerceiver, moment: dict, entry: dict) -> dict:
+def resolve_cached_perception(perceiver: QwenPerceiver, moment: dict, entry: dict,
+                              refresh_quality_gap: bool = False) -> dict:
     """Refresh scenes as a whole; use focused repairs only for person coverage."""
     result = perceiver.perceive(moment, force=False, persist_cache=False, allow_quality_warning=True)
     if result.get("source") == "error" or not result.get("fields"):
@@ -563,7 +565,8 @@ def resolve_cached_perception(perceiver: QwenPerceiver, moment: dict, entry: dic
     fields = result["fields"]
     quality_error = (_structured_fact_quality_error(fields)
                      or _temporal_fact_coverage_error(fields))
-    if quality_error and not result.get("quality_warning"):
+    if quality_error and (refresh_quality_gap or not result.get("quality_warning")
+                          or result.get("source") == "cache_quality_warning"):
         # Person-only repair cannot restore missing event or state facts.
         result = perceiver.perceive(moment, force=True, persist_cache=False, allow_quality_warning=True)
         if result.get("source") == "error" or not result.get("fields"):
@@ -617,11 +620,33 @@ def run(limit: int | None = None, dry_run: bool = False,
         scope = "all selectable profiles" if all_profiles else "custom test set"
     if limit:
         moments = moments[:max(1, int(limit))]
-    perceiver = QwenPerceiver(cache_file=QWEN_CACHE)
+    perceiver = QwenPerceiver(api_urls=API_URLS, cache_file=QWEN_CACHE)
     grounding_cache = PersistentObjectGroundingCache(GROUNDING_CACHE, ROOT)
     # sample_visual_candidates is a read-only method; no media assets are written.
     media = object.__new__(MultimodalAssetStore)
     speech_cache = PersistentTranscriptCache(SPEECH_CACHE)
+
+    def warm_face_cache(source_id, video, start, end, frame_times):
+        face_times = expanded_face_sample_times(
+            start, end, frame_times, max_samples=12)
+        highres = media.sample_visual_candidates(
+            video, start, end, source_id=source_id,
+            count=len(face_times) or 7, full_resolution=True,
+            sample_times=face_times or None)
+        if not highres:
+            return {"face_cache_failed": 1}
+        key = grounding_cache.key(
+            source_id, ["yolov8n-face-detections-v2-dense"], highres)
+        cached, _ = grounding_cache.get_faces(key)
+        if isinstance(cached, dict) and cached.get("model") == "YOLOv8n-Face":
+            return {"face_cache_hit": 1}
+        faces = detect_faces(highres)
+        if grounding_cache.put_faces(key, {"schema": 1, "status": "completed",
+                                           "model": "YOLOv8n-Face", "frame_count": len(highres),
+                                           "faces": faces}):
+            return {"face_cache_new": 1}
+        return {"face_cache_failed": 1}
+
     totals = {
         "clips": len(moments), "perception_cache_hits": 0, "perception_refreshed": 0,
         "perception_new": 0, "perception_repaired": 0, "perception_failed": 0,
@@ -631,6 +656,7 @@ def run(limit: int | None = None, dry_run: bool = False,
         "audio_hit": 0, "audio_new": 0, "audio_failed": 0, "audio_silent": 0,
         "person_grounding_hit": 0, "person_grounding_new": 0,
         "person_grounding_failed": 0, "person_grounding_not_needed": 0,
+        "face_cache_hit": 0, "face_cache_new": 0, "face_cache_failed": 0,
     }
 
     if crop_only:
@@ -638,6 +664,7 @@ def run(limit: int | None = None, dry_run: bool = False,
                        "object_failed": 0, "object_not_needed": 0,
                        "person_hit": 0, "person_new": 0,
                        "person_failed": 0, "person_not_needed": 0,
+                       "face_cache_hit": 0, "face_cache_new": 0, "face_cache_failed": 0,
                        "source_mismatch_or_no_fields": 0}
 
         def crop_one(moment):
@@ -681,13 +708,20 @@ def run(limit: int | None = None, dry_run: bool = False,
             people = [row for row in fields.get("person_observations") or []
                       if isinstance(row, dict) and str(row.get("entity") or "").strip()][:8]
             if people:
-                person_labels = ["person-crop-v1: " + str(row.get("entity") or "").strip()
-                                 + " | " + str(row.get("appearance") or "").strip()
+                frame_times = entry.get("frame_times_s") or []
+                person_frames = media.sample_visual_candidates(
+                    video, start, end, source_id=mid, count=len(frame_times) or 7,
+                    sample_times=frame_times or None)
+                person_labels = ["person-crop-v8-qwen-anchor-cache-key-mutual-face-identity: " + str(row.get("entity") or "").strip()
+                                 + " | " + str(row.get("appearance") or "").strip() + " | anchors=" + ir._person_anchor_cache_suffix(row)
                                  for row in people]
-                key = grounding_cache.key(mid, person_labels, frames)
+                face_result = warm_face_cache(mid, video, start, end, frame_times)
+                for stat in ("face_cache_hit", "face_cache_new", "face_cache_failed"):
+                    crop_totals[stat] += int(face_result.get(stat, 0) or 0)
+                key = grounding_cache.key(mid, person_labels, person_frames)
                 cached = grounding_cache.get(key)[0]
                 if cached is None:
-                    cached = perceiver.ground_people(people, frames)
+                    cached = perceiver.ground_people(people, person_frames)
                     if grounding_cache.put(key, cached):
                         result["person_new"] = 1
                     else:
@@ -776,11 +810,13 @@ def run(limit: int | None = None, dry_run: bool = False,
                 totals["person_grounding_not_needed"] += 1
             elif video:
                 start, end = clip_range(moment)
+                frame_times = entry.get("frame_times_s") or []
                 person_frames = media.sample_visual_candidates(
-                    video, start, end, source_id=mid, count=7)
+                    video, start, end, source_id=mid, count=len(frame_times) or 7,
+                    sample_times=frame_times or None)
                 person_labels = [
-                    "person-crop-v1: " + str(row.get("entity") or "").strip()
-                    + " | " + str(row.get("appearance") or "").strip()
+                    "person-crop-v8-qwen-anchor-cache-key-mutual-face-identity: " + str(row.get("entity") or "").strip()
+                    + " | " + str(row.get("appearance") or "").strip() + " | anchors=" + ir._person_anchor_cache_suffix(row)
                     for row in person_rows[:8] if isinstance(row, dict)
                 ]
                 if person_frames and person_labels:
@@ -829,21 +865,17 @@ def run(limit: int | None = None, dry_run: bool = False,
             or needs_person_observation_review(fields, entry)
         )
         had_current_prompt = bool(entry and entry.get("prompt_version") == PROMPT_VERSION)
-        if entry and fields and had_current_prompt and _source_fingerprint_matches(entry, moment):
-            # Exact-source cache rows remain reusable for interactive execution
-            # when strict quality review finds gaps; keep the warning visible.
+        if (entry and fields and had_current_prompt
+                and _source_fingerprint_matches(entry, moment) and not had_quality_gap):
             result = dict(entry)
             result["fields"] = dict(fields)
-            result["source"] = "cache_quality_warning" if had_quality_gap else "cache"
-            if had_quality_gap:
-                result["quality_warning"] = (
-                    _structured_fact_quality_error(fields)
-                    or _temporal_fact_coverage_error(fields)
-                    or _person_observation_coverage_error(fields)
-                    or "source-matched cache has a quality review gap"
-                )
+            result["source"] = "cache"
         else:
-            result = resolve_cached_perception(perceiver, moment, entry)
+            # A source-matched row is fast to reuse only when it passes the
+            # current content checks. During explicit prewarm, regenerate rows
+            # with known gaps instead of reporting a hit with a permanent warning.
+            result = resolve_cached_perception(
+                perceiver, moment, entry, refresh_quality_gap=had_quality_gap)
         return index, mid, had_quality_gap, bool(entry), had_current_prompt, result
 
     with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="perception-warm") as pool:
@@ -858,13 +890,21 @@ def run(limit: int | None = None, dry_run: bool = False,
                 continue
             if result.get("source") == "error" or not result.get("fields"):
                 totals["perception_failed"] += 1
-                log(f"perception cache repair failed {mid}: {str(result.get('error') or '')[:160]}")
+                log(f"perception cache repair failed {mid}: {str(result.get('error') or '')[:500]}")
             else:
+                fields = result.get("fields") or {}
+                repair_metadata = result.get("quality_repair") or {}
+                quality_gap = bool(
+                    result.get("quality_warning")
+                    or repair_metadata.get("non_blocking_temporal_coverage_warning")
+                    or _structured_fact_quality_error(fields)
+                    or needs_person_observation_review(fields, result)
+                )
+                if quality_gap:
+                    totals["perception_quality_warning_hits"] += 1
                 source = result.get("source")
                 if source in {"cache", "cache_quality_warning"}:
                     totals["perception_cache_hits"] += 1
-                    if source == "cache_quality_warning":
-                        totals["perception_quality_warning_hits"] += 1
                 elif source in {"qwen_repair", "quality_repair", "parser_repair", "cache_person_repair"} or (
                         had_quality_gap and had_current_prompt and source == "qwen"):
                     totals["perception_repaired"] += 1
@@ -965,23 +1005,28 @@ def run(limit: int | None = None, dry_run: bool = False,
         if not video:
             return {"person_grounding_failed": 1, "id": mid, "error": "video asset unavailable"}
         start, end = clip_range(moment)
-        frames = media.sample_visual_candidates(video, start, end, source_id=mid, count=7)
-        labels = ["person-crop-v1: " + str(row.get("entity") or "").strip()
-                  + " | " + str(row.get("appearance") or "").strip() for row in rows[:8]]
+        frame_times = entry.get("frame_times_s") or []
+        frames = media.sample_visual_candidates(
+            video, start, end, source_id=mid, count=len(frame_times) or 7,
+            sample_times=frame_times or None)
+        labels = ["person-crop-v8-qwen-anchor-cache-key-mutual-face-identity: " + str(row.get("entity") or "").strip()
+                  + " | " + str(row.get("appearance") or "").strip() + " | anchors=" + ir._person_anchor_cache_suffix(row) for row in rows[:8]]
         if not frames or not labels:
             return {"person_grounding_failed": 1, "id": mid, "error": "person-frame sample unavailable"}
+        face_result = warm_face_cache(mid, video, start, end, frame_times)
         key = grounding_cache.key(mid, labels, frames)
         cached, _ = grounding_cache.get(key)
         if cached is not None:
-            return {"person_grounding_hit": 1}
+            return {"person_grounding_hit": 1, **face_result}
         try:
             result = perceiver.ground_people(rows, frames)
             if grounding_cache.put(key, result) and result.get("status") == "completed":
-                return {"person_grounding_new": 1}
-            return {"person_grounding_failed": 1, "id": mid,
+                return {"person_grounding_new": 1, **face_result}
+            return {"person_grounding_failed": 1, "id": mid, **face_result,
                     "error": str(result.get("message") or result.get("status") or "not cached")[:160]}
         except Exception as exc:
-            return {"person_grounding_failed": 1, "id": mid, "error": str(exc)[:160]}
+            return {"person_grounding_failed": 1, "id": mid, **face_result,
+                    "error": str(exc)[:160]}
 
     with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="person-ground-warm") as pool:
         futures = {pool.submit(ground_person_one, index, moment): index
@@ -992,13 +1037,16 @@ def run(limit: int | None = None, dry_run: bool = False,
             except Exception as exc:
                 result = {"person_grounding_failed": 1, "error": str(exc)[:160]}
             for key in ("person_grounding_hit", "person_grounding_new",
-                        "person_grounding_failed", "person_grounding_not_needed"):
+                        "person_grounding_failed", "person_grounding_not_needed",
+                        "face_cache_hit", "face_cache_new", "face_cache_failed"):
                 totals[key] += int(result.get(key, 0) or 0)
             if result.get("error"):
                 log(f"person-frame grounding issue {result.get('id','')}: {result['error']}")
             if completed % PROGRESS_EVERY == 0 or completed == len(moments):
                 log(f"person-frame cache {completed}/{len(moments)}: hit {totals['person_grounding_hit']}, "
-                    f"new {totals['person_grounding_new']}, failed {totals['person_grounding_failed']}")
+                    f"new {totals['person_grounding_new']}, failed {totals['person_grounding_failed']}; "
+                    f"YOLO face cache hit/new/failed {totals['face_cache_hit']}/"
+                    f"{totals['face_cache_new']}/{totals['face_cache_failed']}")
 
     # Decode and transcribe audio in parallel; each miss is sent round-robin to
     # an API server bound to one GPU. Cache writes remain atomic and serialized.
@@ -1105,33 +1153,33 @@ def run(limit: int | None = None, dry_run: bool = False,
         entry = perceiver.cache.get(mid) or {}
         fields = entry.get("fields") or {}
         people = [row for row in fields.get("person_observations") or []
-                  if isinstance(row, dict) and str(row.get("entity") or "").strip()][:16]
-        if not people or not _source_fingerprint_matches(entry, moment):
+                  if isinstance(row, dict)]
+        if not any(str(row.get("entity") or "").strip() for row in people):
+            return {"skipped": 1}
+        if not _source_fingerprint_matches(entry, moment):
             return {"skipped": 1}
         speech = transcript_from_cache(moment)
         if not speech:
             return {"skipped": 1}
-        transcript_hash = hashlib.sha256(speech.encode("utf-8")).hexdigest()
-        cache_key = hashlib.sha256(json.dumps({
-            "source": mid, "transcript": transcript_hash,
-            "people": [(str(row.get("entity") or ""), str(row.get("appearance") or ""))
-                       for row in people],
-            "version": "person-profile-from-speech-v1",
-        }, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
-        if profile_cache.get(cache_key) is not None:
-            return {"hit": 1}
         video = video_path_of(moment)
         if not video:
             return {"failed": 1, "id": mid, "error": "video asset unavailable"}
         start, end = clip_range(moment)
+        frame_times = entry.get("frame_times_s") or []
         frames = media.sample_visual_candidates(
-            video, start, end, source_id=mid, count=7)
+            video, start, end, source_id=mid, count=len(frame_times) or 7,
+            sample_times=frame_times or None)
         if not frames:
             return {"failed": 1, "id": mid, "error": "profile frame sampling failed"}
+        cache_key = ir.person_profile_cache_key(
+            mid, speech, people, frames, fields.get("temporal_facts") or [])
+        if profile_cache.get(cache_key) is not None:
+            return {"hit": 1}
         # Retry against the round-robin pool if a busy API rejects one request.
         for attempt in range(3):
             profile_runner._enrich_person_profiles_from_speech(
-                people, speech, frames, mid)
+                people, speech, frames, mid,
+                visual_facts=fields.get("temporal_facts") or [])
             if profile_cache.get(cache_key) is not None:
                 return {"new": 1}
             if attempt < 2:
