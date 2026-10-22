@@ -396,6 +396,11 @@ def _build_entity_visuals(moment: Dict) -> dict:
             name = " ".join(str(observation.get(name_key) or "").split()).strip()
             if not name:
                 continue
+            if kind == "person":
+                pov_key = " ".join(name.casefold().replace("’", "'").replace("-", " ").split())
+                if (pov_key in {"camera wearer", "the camera wearer", "user", "the user", "pov"}
+                        or re.fullmatch(r"(?:(?:the )?(?:camera wearer's|camera wearer|wearer's|user's|first person|pov)\s+)?(?:left |right )?(?:hand|hands|arm|arms|leg|legs|foot|feet|body)", pov_key)):
+                    continue
             visual = by_name.get(name.casefold()) or {}
             refs = visual.get("frame_refs") or []
             indices = []
@@ -888,7 +893,7 @@ def _clean_source_fact_rows(rows, kind: str, limit: int) -> list:
     """Validate compact, source-linked facts; collapse repeated person-frame descriptions."""
     allowed = ({"entity", "appearance", "face_features", "apparent_age_range", "apparent_age_basis", "age", "age_basis", "frame_index",
                 "frame_time_s", "evidence", "confidence", "evidence_ref", "evidence_refs",
-                "spoken_aliases", "relationships", "profile_context",
+                "spoken_aliases", "relationships", "roles", "profile_context",
                 "profile_confidence"}
                if kind == "person" else
                {"subject_type", "subject", "predicate", "value", "actor",
@@ -907,7 +912,7 @@ def _clean_source_fact_rows(rows, kind: str, limit: int) -> list:
         if isinstance(segment, str) and segment.strip():
             ref["source_segment_id"] = segment.strip()[:128]
         modality = source_ref.get("modality")
-        if modality in {"visual", "speech"}:
+        if modality in {"visual", "speech", "cross_modal"}:
             ref["modality"] = modality
         frame_index = source_ref.get("frame_index")
         if isinstance(frame_index, int) and not isinstance(frame_index, bool) and frame_index > 0:
@@ -978,6 +983,13 @@ def _clean_source_fact_rows(rows, kind: str, limit: int) -> list:
                 ))[:8]
                 if relationships:
                     row[key] = relationships
+            elif key == "roles" and isinstance(value, list):
+                roles = list(dict.fromkeys(
+                    " ".join(str(item).split()).strip()[:80]
+                    for item in value if isinstance(item, str) and item.strip()
+                ))[:6]
+                if roles:
+                    row[key] = roles
             elif key == "profile_confidence":
                 if value in {"high", "medium", "low"}:
                     row[key] = value
@@ -1047,12 +1059,12 @@ def _clean_source_fact_rows(rows, kind: str, limit: int) -> list:
                 row.pop("apparent_age_basis", None)
         if row.get("confidence") not in {"high", "medium", "low"}:
             row.pop("confidence", None)
-        if row.get("modality") not in {"visual", "speech"}:
+        if row.get("modality") not in {"visual", "speech", "cross_modal"}:
             row.pop("modality", None)
         if row.get("status") not in {
                 "observed", "stated", "self_identified", "spoken_event", "stated_plan",
                 "self_reported", "self_reported_unverified", "unverified_claim",
-                "quoted_unverified_claim", "quoted_relationship_term", "completed", "unclear"}:
+                "quoted_unverified_claim", "quoted_relationship_term", "completed", "unclear", "inferred"}:
             row.pop("status", None)
         if not (row.get("entity") or row.get("subject")):
             continue

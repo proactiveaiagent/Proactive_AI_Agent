@@ -2445,6 +2445,7 @@ function renderPersonObservations(rows,evidenceContext,media){
     if(row.clothing)details.push('衣着：'+row.clothing);
     if(row.position)details.push('位置：'+row.position);
     if(Array.isArray(row.relationships)&&row.relationships.length)details.push('关系：'+row.relationships.join('；'));
+    if(Array.isArray(row.roles)&&row.roles.length)details.push('身份角色：'+row.roles.join('；'));
     if(row.profile_context)details.push('相关背景：'+row.profile_context);
     const visualItem=visualItems.find(item=>!usedVisualItems.has(item)&&
       String(item.entity||'').trim().toLocaleLowerCase()===String(row.entity||'').trim().toLocaleLowerCase());
@@ -3017,6 +3018,7 @@ function renderPersonMemoryCards(records,data){
     const face=[...new Set(observationRows.map(row=>String(row.face_features||'').trim()).filter(Boolean))].slice(0,1);
     const profileRows=events.flatMap(event=>(event.person_observations||[]).filter(row=>row&&String(row.entity||'').toLocaleLowerCase()===String(record.name||'').toLocaleLowerCase()));
     const relationships=[...new Set(profileRows.flatMap(row=>Array.isArray(row.relationships)?row.relationships:[]).map(value=>String(value||'').trim()).filter(Boolean))].slice(0,6);
+    const roles=[...new Set(profileRows.flatMap(row=>Array.isArray(row.roles)?row.roles:[]).map(value=>String(value||'').trim()).filter(Boolean))].slice(0,6);
     const profileContexts=[...new Set(profileRows.map(row=>String(row.profile_context||'').trim()).filter(Boolean))].slice(0,4);
     const scenes=[...new Set(events.map(event=>String(event.scene||'').trim()).filter(Boolean))].slice(0,1);
     const imageRows=events.flatMap(event=>(event.images||[]).map(image=>({image,event})));
@@ -3038,6 +3040,7 @@ function renderPersonMemoryCards(records,data){
     appearance.forEach(text=>evidenceParts.push('外观观察：'+text));
     face.forEach(text=>evidenceParts.push('可见面部特征：'+text));
     relationships.forEach(text=>evidenceParts.push('人物关系：'+text));
+    roles.forEach(text=>evidenceParts.push('身份角色：'+text));
     profileContexts.forEach(text=>evidenceParts.push('人物背景：'+text));
     const otherSources=events.slice(1).map(event=>{
       const source=event.source_provenance||{};
@@ -3050,7 +3053,7 @@ function renderPersonMemoryCards(records,data){
     const attrs='data-evidence="'+esc(encodeURIComponent(JSON.stringify(ev)))+'"';
     const searchText=[record.name,title,...events.map(event=>[
       event.scene,event.interaction_details,
-      ...(event.person_observations||[]).flatMap(row=>[row.appearance,row.face_features,row.profile_context,...(row.relationships||[])] )
+      ...(event.person_observations||[]).flatMap(row=>[row.appearance,row.face_features,row.profile_context,...(row.relationships||[]),...(row.roles||[])] )
     ].join(' '))].join(' ').toLowerCase();
     const searchAttr='data-person-search="'+esc(searchText)+'"';
     const imageHtml=images.slice(0,3).map((image,index)=>'<img loading="lazy" src="'+esc(image.url)+'" alt="'+esc(title+' 对应画面 '+(index+1))+'">').join('');
@@ -3060,6 +3063,7 @@ function renderPersonMemoryCards(records,data){
       face.map(text=>'<span class="person-memory-fact"><b>可见特征</b> '+esc(text)+'</span>').join('')+
       scenes.map(text=>'<span class="person-memory-fact"><b>相关场景</b> '+esc(text)+'</span>').join('')+
       relationships.map(text=>'<span class="person-memory-fact"><b>关系</b> '+esc(text)+'</span>').join('')+
+      roles.map(text=>'<span class="person-memory-fact"><b>身份角色</b> '+esc(text)+'</span>').join('')+
       profileContexts.map(text=>'<span class="person-memory-fact"><b>人物背景</b> '+esc(text)+'</span>').join('')+
       '</span><span class="person-memory-images">'+(imageHtml||'<span class="person-memory-empty">暂无关联裁剪图</span>')+'</span>';
     return '<div class="person-memory-card-shell"><button type="button" class="person-memory-card memory-evidence-card-trigger" aria-haspopup="dialog" '+searchAttr+' '+attrs+'>'+content+'</button>'+

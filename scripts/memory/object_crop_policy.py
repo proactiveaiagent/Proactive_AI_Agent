@@ -89,7 +89,14 @@ def select_object_crop_candidates(objects, temporal_facts=()):
                                    or fact.get("affected_people"))
             if is_action and has_person_link:
                 linked_actions.append(fact)
-        if explicitly_owned or ownership_fact or (personalized and linked_actions):
+        documented_evidence = any(
+            str(fact.get("subject_type") or "").casefold() == "object"
+            and _same_entity(fact.get("subject"), label)
+            and _norm(fact.get("predicate")) == "documented"
+            and bool(str(fact.get("evidence") or "").strip())
+            for fact in facts
+        )
+        if explicitly_owned or ownership_fact or (personalized and linked_actions) or documented_evidence:
             eligible.append(label)
         else:
             skipped.append({"object": label, "reason": "no_personal_or_event_link_evidence"})

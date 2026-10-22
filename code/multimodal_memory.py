@@ -21,7 +21,7 @@ from typing import Any
 
 IMAGE_LIMIT = 12_000
 TEMPORAL_IMAGE_LIMIT = 6_000
-CAPTURE_VERSION = "temporal-v10-qwen-six-input-frames-2026-10-20"
+CAPTURE_VERSION = "temporal-v11-event-aware-six-input-frames-2026-10-23"
 
 
 def media_refs(media: dict, kind: str) -> list[dict]:

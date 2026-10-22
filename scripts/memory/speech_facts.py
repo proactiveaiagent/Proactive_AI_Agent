@@ -307,6 +307,11 @@ def _extract_explicit_speech_facts(transcript, source_segment_id):
                 instruction_rows.append({"term": term, "quote": quote,
                                          "start": audio_start, "end": audio_end,
                                          "evidence_ref": ref})
+    transcript_text = " ".join(row["quote"] for row in audio_rows)
+    airport_announcement = bool(
+        re.search(r"\b(?:welcome to|arriving at|now arriving at)\b.{0,100}\bairport\b", transcript_text, re.I)
+        and re.search(r"\b(?:please proceed|immigration|customs|passengers|flight)\b", transcript_text, re.I)
+    )
     last_addressed_name = ""
     last_addressed_end = None
     for line in str(transcript or "").splitlines():
@@ -427,7 +432,7 @@ def _extract_explicit_speech_facts(transcript, source_segment_id):
                 f"{speaker_alias} asked {greeting_target_label} how they were.",
                 subject=speaker_alias, status="spoken_event", actor=speaker_alias,
                 affected_people=[greeting_target])
-        if _EXPLICIT_SPOKEN_THANKS_RE.search(quote):
+        if _EXPLICIT_SPOKEN_THANKS_RE.search(quote) and not airport_announcement:
             thanks_name = ""
             for term in terms_in_text(quote):
                 position = quote.find(term)
@@ -464,15 +469,47 @@ def _extract_explicit_speech_facts(transcript, source_segment_id):
             add_spoken_claim(
                 "stated_birthday_event", quote,
                 subject=birthday_person, affected_people=[birthday_person])
-        if _EXPLICIT_AIRPORT_INSTRUCTION_RE.search(quote):
-            add_spoken_claim("spoken_travel_instruction", quote,
-                             subject="public-address announcement",
-                             actor="public-address announcement",
-                             affected_people=["passengers"])
+        if airport_announcement and (
+                _EXPLICIT_AIRPORT_INSTRUCTION_RE.search(quote)
+                or re.search(r"\bairport\b", quote, re.I)):
+            facts.append({
+                "subject_type": "event", "subject": "airport public-address announcement",
+                "predicate": "spoken_travel_instruction", "value": quote[:500],
+                "actor": "public-address announcement", "affected_people": ["passengers"],
+                "modality": "speech", "status": "observed", "confidence": "high",
+                "evidence": quote[:500], "evidence_ref": dict(evidence_ref),
+            })
+        elif _EXPLICIT_AIRPORT_INSTRUCTION_RE.search(quote):
+            facts.append({
+                "subject_type": "event", "subject": "public-address announcement",
+                "predicate": "spoken_travel_instruction", "value": quote[:500],
+                "actor": "public-address announcement", "affected_people": ["passengers"],
+                "modality": "speech", "status": "observed", "confidence": "medium",
+                "evidence": quote[:500], "evidence_ref": dict(evidence_ref),
+            })
         if _EXPLICIT_TRANSACTION_RE.search(quote):
-            add_spoken_claim(
-                "spoken_transaction_detail", quote,
-                affected_people=["unidentified addressee"])
+            bill_total = re.search(
+                r"\b(?:your |the )?(?:bill|total|check)\s+(?:is|was|comes to|came to)\s+"
+                r"(?:\$\s*)?(?:\d+(?:\.\d{1,2})?|[a-z]+(?:[ -][a-z]+){0,3})\s*"
+                r"(?:u\.?s\.?\s*)?(?:dollars?|bucks?)\b|"
+                r"(?:账单|合计|总计|一共)[^。！？.!?]{0,12}(?:是|为)?\s*"
+                r"(?:\$\s*)?[零一二两三四五六七八九十百千\d]+(?:\.\d+)?\s*(?:美元|美金|元|块钱)",
+                quote, re.I)
+            if bill_total:
+                facts.append({
+                    "subject_type": "object", "subject": "restaurant bill", "predicate": "spoken_total",
+                    "value": quote[:500], "actor": "unidentified speaker",
+                    "modality": "speech", "status": "stated", "confidence": "high",
+                    "evidence": quote[:500], "evidence_ref": dict(evidence_ref),
+                })
+            else:
+                facts.append({
+                    "subject_type": "event", "subject": "purchase transaction",
+                    "predicate": "spoken_transaction_detail", "value": quote[:500],
+                    "actor": "unidentified speaker", "modality": "speech",
+                    "status": "stated", "confidence": "medium",
+                    "evidence": quote[:500], "evidence_ref": dict(evidence_ref),
+                })
 
         name_match = (_EXPLICIT_ENGLISH_SELF_NAME_RE.search(quote)
                       or _EXPLICIT_CHINESE_SELF_NAME_RE.search(quote))

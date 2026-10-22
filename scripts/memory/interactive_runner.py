@@ -70,9 +70,85 @@ _AGE_CLAIM_RE = re.compile(
 )
 
 
-PERSON_PROFILE_CACHE_VERSION = "person-profile-from-speech-v12-event-level-summary-2026-10-23"
-CONTENT_SUMMARY_VERSION = "joint-visual-speech-event-summary-v1-2026-10-23"
+PERSON_PROFILE_CACHE_VERSION = "multimodal-scene-summary-v14-transaction-language-role-2026-10-23"
+CONTENT_SUMMARY_VERSION = "joint-visual-speech-document-place-summary-v10-preserve-cross-modal-facts-2026-10-23"
 
+
+
+def _ground_receipt_payment_language(fields):
+    """Use matching receipt, spoken-total, and cash evidence to distinguish intent from payment."""
+    facts=[row for row in fields.get("temporal_facts",[]) if isinstance(row,dict)]
+    receipts=[row for row in facts if str(row.get("subject","")).casefold() in {"receipt","check","bill"}
+              and str(row.get("predicate","")).casefold()=="documented"]
+    cash=[row for row in facts if str(row.get("predicate","")).casefold() in {"placed","set_down","put_down"}
+          and re.search(r"(?:\$|usd|dollar|banknote|currency|cash)",
+                        " ".join(str(row.get(k,"")) for k in ("subject","value","evidence")),re.I)]
+    spoken=[row for row in facts if str(row.get("predicate","")).casefold()=="spoken_total"]
+    if not receipts or not cash or not spoken: return
+    receipt,cash_row=receipts[0],cash[0]
+    doc=" ".join(str(receipt.get(k,"")) for k in ("value","evidence"))
+    cash_text=" ".join(str(cash_row.get(k,"")) for k in ("subject","value","evidence"))
+    total=re.search(r"\btotal\b[^$0-9]{0,8}\$?\s*(\d+(?:\.\d{1,2})?)",doc,re.I)
+    amount=re.search(r"\$\s*(\d+(?:\.\d{1,2})?)",cash_text)
+    if not total or not amount or abs(float(total.group(1))-float(amount.group(1)))>.009: return
+    money=r"(?:\$|usd|dollar|banknote|currency|cash)"
+    paid=any(str(row.get("predicate","")).casefold() in {"accepted","collected","paid","settled","payment_completed"}
+             and re.search(money," ".join(str(row.get(k,"")) for k in ("subject","value","evidence")),re.I)
+             for row in facts)
+    speech_text=" ".join(str(row.get("evidence","")) for row in spoken)
+    numeric_amounts=[]
+    for match in re.finditer(r"(?:\$|usd)\s*(\d+(?:\.\d{1,2})?)|\b(\d+(?:\.\d{1,2})?)\s+dollars?\b",speech_text,re.I):
+        numeric_amounts.append(float(match.group(1) or match.group(2)))
+    number_words={"zero":0,"one":1,"two":2,"three":3,"four":4,"five":5,"six":6,"seven":7,
+                  "eight":8,"nine":9,"ten":10,"eleven":11,"twelve":12,"thirteen":13,
+                  "fourteen":14,"fifteen":15,"sixteen":16,"seventeen":17,"eighteen":18,
+                  "nineteen":19,"twenty":20,"thirty":30,"forty":40,"fifty":50,"sixty":60,
+                  "seventy":70,"eighty":80,"ninety":90,"hundred":100}
+    word_pattern="|".join(sorted(number_words,key=len,reverse=True))
+    for match in re.finditer(r"\b("+word_pattern+r")\s+dollars?\b",speech_text,re.I):
+        numeric_amounts.append(float(number_words[match.group(1).casefold()]))
+    if not any(abs(value-float(total.group(1)))<.009 for value in numeric_amounts): return
+    speech_confirms_payment=bool(re.search(
+        r"\b(?:paid|settled)\b|\bpayment\s+(?:is\s+)?(?:complete|completed|done)\b",
+        speech_text,re.I))
+    if paid or speech_confirms_payment: return
+    item_source=re.split(r"\btotal\b",doc,maxsplit=1,flags=re.I)[0]
+    item_matches=re.findall(r"([^,]+?)\s+\$\s*\d+(?:\.\d{1,2})?",item_source)
+    items=list(dict.fromkeys(x.strip(" :;-") for x in item_matches if x.strip(" :;-")))
+    item=" and ".join(items)
+    if re.search(r"\bbeef noodle\b",item,re.I): item="beef noodles"
+    total_label="$"+str(float(total.group(1))).rstrip("0").rstrip(".")
+    cash_label="$"+str(float(amount.group(1))).rstrip("0").rstrip(".")
+    for key in ("scene","user_action","activity","interaction_details"):
+        value=str(fields.get(key,""))
+        value=re.sub(r"\b(?:pays?|paid|paying)\s+with\s+(?:a\s+)?\$"+re.escape(amount.group(1))+r"\s+(?:bill|note)\b",
+                     f"places a matching {cash_label} bill beside the receipt, apparently preparing to pay",value,flags=re.I)
+        value=re.sub(r"\b(?:places?|sets?|puts?)\s+(?:a\s+)?\$"+re.escape(amount.group(1))+r"\s+(?:bill|note)\s+(?:on|beside)\s+(?:the\s+)?table\b",
+                     f"places a matching {cash_label} bill beside the receipt, apparently preparing to pay",value,flags=re.I)
+        value=re.sub(r"\bafter paying\b","after placing the bill beside the receipt",value,flags=re.I)
+        value=re.sub(r"\bpays?\s+for it\b","prepares to pay for it",value,flags=re.I)
+        value=re.sub(r"\.\s+after placing the bill beside the receipt,\s+they exit",
+                     ". They then exit",value,flags=re.I)
+        fields[key]=value
+    scene=str(fields.get("scene") or "")
+    clauses=[]
+    if item and re.search(r"\b(?:finishes?|finished)\s+(?:(?:the|a)\s+)?meal\b",scene,re.I):
+        clauses.append(f"The camera wearer finishes a meal of {item}.")
+    if item: clauses.append(f"The receipt lists {item} and a {total_label} total.")
+    else: clauses.append(f"The receipt shows a {total_label} total.")
+    clauses.append(f"The camera wearer places a matching {cash_label} bill beside the receipt, apparently preparing to pay.")
+    if any(str(row.get("predicate","")).casefold() in {"exited","left"} for row in facts):
+        clauses.append("The camera wearer then exits the restaurant.")
+    fields["interaction_details"]=" ".join(clauses)[:700]
+    refs=[]
+    for row in (receipt,cash_row,spoken[0]):
+        if isinstance(row.get("evidence_ref"),dict): refs.append(dict(row["evidence_ref"]))
+    facts.append({"subject_type":"event","subject":"restaurant transaction","predicate":"preparing_to_pay",
+                  "value":f"The camera wearer places a matching {cash_label} bill beside the receipt, apparently preparing to pay the {total_label} total.",
+                  "confidence":"medium","modality":"cross_modal","status":"inferred","actor":"camera wearer",
+                  "evidence":"Matching cash placement, receipt total, and spoken bill amount.",
+                  "evidence_refs":refs})
+    fields["temporal_facts"]=facts
 
 def _person_anchor_cache_suffix(row):
     payload = {}
@@ -1062,8 +1138,8 @@ class InteractiveSession(PostWriteRetrievalMixin):
         speech = str(transcript or "").strip()[:4000]
         image_frames = [frame for frame in (frames or [])
                         if isinstance(frame, dict) and frame.get("bytes")][:7]
-        if not rows or not speech or not image_frames:
-            return rows, ""
+        if not speech or not image_frames:
+            return rows, "", ""
         cache_key = person_profile_cache_key(
             source_segment_id, speech, rows, image_frames, visual_facts)
         cached = self.person_profile_cache.get(cache_key)
@@ -1071,7 +1147,7 @@ class InteractiveSession(PostWriteRetrievalMixin):
             payload = cached
         else:
             if cancel_event is not None and cancel_event.is_set():
-                return rows, ""
+                return rows, "", ""
             frame_map = [{"frame": index + 1,
                           "time_s": round(float(frame.get("at_s") or 0), 3)}
                          for index, frame in enumerate(image_frames)]
@@ -1081,7 +1157,7 @@ class InteractiveSession(PostWriteRetrievalMixin):
                            "face_features": str(row.get("face_features") or "")[:160]}
                           for index, row in enumerate(rows[:16])]
             prompt = (
-                "Enrich a source-grounded, person-centered episodic memory by jointly inspecting "
+                "Build a source-grounded, cross-modal episodic memory context by jointly inspecting "
                 "the ordered frames, visual event facts, and time-coded transcript from this same "
                 "clip. ASR may be noisy. Use only evidence in these inputs; do not use filenames, "
                 "benchmark labels, or outside assumptions. Resolve explicit identity and relationship "
@@ -1097,6 +1173,22 @@ class InteractiveSession(PostWriteRetrievalMixin):
                 "preserve the unknown recipient. Do not invert roles. "
                 "Use medium confidence for a unique but non-diarized match, high only for an explicit "
                 "visual/text link. Never infer age, health, identity, or relationship from appearance. "
+                "An employee/cashier role may be assigned only when the person is visibly working at a "
+                "service counter or directly handling a customer transaction; preserve an exact readable "
+                "name badge as the person's name. Keep first-person body parts out of candidate identities. "
+                "Recognize public-address announcements as announcements, not interpersonal thanks: when "
+                "an announcement explicitly welcomes passengers to a named airport and the frames show "
+                "airport travel, use that airport name as location evidence and summarize the travel context. "
+                "For a readable receipt/check, combine exact food line items and total with matching spoken "
+                "amounts; a receipt plus a matching empty dish may support a cautious meal-completion inference. "
+                "In restaurant dialogue, 'your bill is ten dollars' means the amount owed, not a ten-dollar "
+                "banknote handed by the employee. Treat a paper receipt/check and currency notes as different "
+                "objects. If the customer visibly places matching cash beside the receipt, describe that action "
+                "as preparing to pay; say payment is completed only when the employee visibly accepts it or "
+                "speech explicitly confirms payment. Do not infer payment from the bill or empty dish alone. "
+                "When repeated OCR line items conflict with the printed total, report the item and reconciled "
+                "total without inventing a quantity or number of meals. Do not combine transactions across clips "
+                "unless source evidence clearly establishes they are the same transaction. "
                 "Never infer mental states, needs, intentions, or advice from silence, hesitation, "
                 "facial expression, or context. Record observable hesitation as hesitation, without "
                 "claiming the person does not know what to say. You may summarize an explicitly spoken "
@@ -1109,7 +1201,10 @@ class InteractiveSession(PostWriteRetrievalMixin):
                 "label alone. Do not invent age descriptors such as elderly, old, or young. Return scene_context "
                 "as the user-facing content summary: one concise, natural, high-level sentence describing "
                 "the event or social purpose supported jointly by this clip's visuals and speech. It should "
-                "complement the detailed visual scene instead of repeating its play-by-play. Include an "
+                "complement the detailed visual scene instead of repeating its play-by-play. The summary can "
+                "describe a place or event even when no person candidate is present. Use the whole audio-visual "
+                "context; do not reduce public announcements or transaction dialogue to 'the audio records thanks'. "
+                "Include an "
                 "explicit occasion or relationship when the transcript and visible interaction support it, "
                 "such as a family New Year visit or a neighbor greeting. Do not enumerate extracted facts, "
                 "repeat each utterance, or mention audio analysis, diarization, uncertainty bookkeeping, "
@@ -1129,14 +1224,18 @@ class InteractiveSession(PostWriteRetrievalMixin):
                 "\"entity\":\"exact candidate label\","
                 "\"display_label\":\"supported name/role or unchanged label\","
                 "\"relationships\":[\"supported relationship\"],"
+                "\"roles\":[\"employee\"],"
                 "\"profile_context\":\"concise person-centered context\","
                 "\"evidence_quotes\":[\"exact quote\"],"
                 "\"confidence\":\"high|medium|low\",\"frame\":1}],"
                 "\"scene_context\":\"concise supported shared event context or empty\","
-                "\"context_evidence_quotes\":[\"exact quote\"]}. "
+                "\"context_evidence_quotes\":[\"exact quote\"],\"location_context\":\"explicitly spoken place name consistent with visible setting, or empty\",\"location_evidence_quotes\":[\"exact location quote\"]}. "
                 "A self-introduction assigns its role to the speaker only with unique visual "
                 "alignment; a vocative assigns its role to its listener only when a visible "
-                "recipient is unique. Otherwise leave candidate labels unchanged."
+                "recipient is unique. Otherwise leave candidate labels unchanged. Return location_context "
+                "only when its exact name appears in location_evidence_quotes and frames show a compatible "
+                "setting. Return role updates only for listed candidate IDs and cite transcript quotes actually "
+                "present; visual work context must also support each role."
                 + ". Time-coded source transcript:\n" + speech
             )
             files = [("images", (f"profile_{index + 1}.jpg", frame["bytes"],
@@ -1155,19 +1254,20 @@ class InteractiveSession(PostWriteRetrievalMixin):
                     timeout=(5, 240),
                 )
                 if cancel_event is not None and cancel_event.is_set():
-                    return rows, ""
+                    return rows, "", ""
                 if response.status_code != 200:
-                    return rows, ""
+                    return rows, "", ""
                 raw = str(response.json().get("analysis") or "").strip()
                 start = raw.find("{")
                 end = raw.rfind("}")
                 if start < 0 or end < start:
-                    return rows, ""
+                    return rows, "", ""
                 payload = json.loads(raw[start:end + 1])
                 if not isinstance(payload, dict) or not isinstance(payload.get("people"), list):
-                    return rows, ""
+                    return rows, "", ""
                 payload["scene_context"] = _remove_visual_age_guess(_sanitize_social_context(
                     payload.get("scene_context"), speech))
+                payload["location_context"] = " ".join(str(payload.get("location_context") or "").split())[:180]
                 payload["people"] = [
                     {**row, "profile_context": _remove_visual_age_guess(_sanitize_social_context(
                         row.get("profile_context"), speech))}
@@ -1175,7 +1275,7 @@ class InteractiveSession(PostWriteRetrievalMixin):
                 ]
                 self.person_profile_cache.put_if_absent(cache_key, payload)
             except Exception:
-                return rows, ""
+                return rows, "", ""
             finally:
                 self.perceiver._finish_request(request_id)
 
@@ -1183,6 +1283,7 @@ class InteractiveSession(PostWriteRetrievalMixin):
             payload = dict(payload)
             payload["scene_context"] = _remove_visual_age_guess(_sanitize_social_context(
                 payload.get("scene_context"), speech))
+            payload["location_context"] = " ".join(str(payload.get("location_context") or "").split())[:180]
             clean_people = []
             for update_row in payload.get("people") or []:
                 if not isinstance(update_row, dict):
@@ -1262,6 +1363,12 @@ class InteractiveSession(PostWriteRetrievalMixin):
             profile_context = " ".join(str(update_row.get("profile_context") or "").split()).strip()
             if profile_context:
                 target["profile_context"] = profile_context[:700]
+            roles = update_row.get("roles")
+            if isinstance(roles, list):
+                target["roles"] = list(dict.fromkeys(
+                    " ".join(str(value).split()).strip()[:80]
+                    for value in roles if isinstance(value, str) and value.strip()
+                ))[:6]
             refs = list(target.get("evidence_refs") or [])
             for _line_text, start_s, end_s in matched:
                 refs.append({"source_segment_id": str(source_segment_id or "")[:128],
@@ -1287,6 +1394,26 @@ class InteractiveSession(PostWriteRetrievalMixin):
             if unique_refs:
                 target["evidence_refs"] = unique_refs[:16]
                 target["evidence_ref"] = unique_refs[0]
+        for role_row in payload.get("roles") or []:
+            if not isinstance(role_row, dict):
+                continue
+            candidate_id = str(role_row.get("candidate_id") or "").strip()
+            target = candidate_rows.get(candidate_id)
+            role = " ".join(str(role_row.get("role") or "").split()).strip()[:80]
+            quote_values = [str(value).strip() for value in role_row.get("evidence_quotes") or []
+                            if isinstance(value, str) and str(value).strip()]
+            quote_valid = any(
+                normalize_quote(quote) in normalize_quote(line_text)
+                or normalize_quote(line_text) in normalize_quote(quote)
+                for quote in quote_values[:4] for line_text, _start, _end in transcript_lines
+            )
+            if target is None or not role or not quote_valid:
+                continue
+            current_roles = [str(value).strip() for value in target.get("roles") or []
+                             if str(value).strip()]
+            if role.casefold() not in {value.casefold() for value in current_roles}:
+                current_roles.append(role)
+            target["roles"] = current_roles[:6]
         context_quotes = [str(value).strip()[:300]
                           for value in payload.get("context_evidence_quotes") or []
                           if isinstance(value, str) and str(value).strip()]
@@ -1303,7 +1430,35 @@ class InteractiveSession(PostWriteRetrievalMixin):
         scene_context = " ".join(str(payload.get("scene_context") or "").split()).strip()[:700]
         if not context_matches:
             scene_context = ""
-        return rows, scene_context
+        location_quotes = [str(value).strip()[:300]
+                           for value in payload.get("location_evidence_quotes") or []
+                           if isinstance(value, str) and str(value).strip()]
+        location_matches = []
+        for quote in location_quotes[:4]:
+            normalized = normalize_quote(quote)
+            if not normalized:
+                continue
+            for line_text, start_s, end_s in transcript_lines:
+                line_norm = normalize_quote(line_text)
+                if normalized in line_norm or line_norm in normalized:
+                    location_matches.append((line_text, start_s, end_s))
+                    break
+        location_context = " ".join(str(payload.get("location_context") or "").split()).strip()[:180]
+        if not location_matches:
+            location_context = ""
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            profile = str(row.get("profile_context") or "").casefold()
+            appearance = str(row.get("appearance") or "").casefold()
+            service_context = ("counter" in appearance and
+                               bool(re.search(r"\b(?:behind|at)\s+(?:the\s+)?counter\b", appearance)))
+            if service_context and re.search(r"\b(?:employee|cashier|server|clerk)\b", profile):
+                roles = [str(value).strip() for value in row.get("roles") or [] if str(value).strip()]
+                if "employee" not in {value.casefold() for value in roles}:
+                    roles.append("employee")
+                row["roles"] = roles[:6]
+        return rows, scene_context, location_context
 
     @staticmethod
     def _entity_key(value):
@@ -1778,8 +1933,9 @@ class InteractiveSession(PostWriteRetrievalMixin):
         # the speech rows already attached to the stored moment.
         visual_facts = attach_refs(fields.get("temporal_facts") or [], "visual")
         previous_facts = stored.get("temporal_facts") or []
-        speech_facts = [copy.deepcopy(row) for row in previous_facts
-                        if isinstance(row, dict) and row.get("modality") == "speech"]
+        previous_speech_facts = [copy.deepcopy(row) for row in previous_facts
+                                 if isinstance(row, dict) and row.get("modality") == "speech"]
+        speech_facts = previous_speech_facts
         fields["temporal_facts"] = visual_facts + speech_facts
         if stale_summary:
             # Existing records normally bypass the fresh-ingest path. Rebuild the
@@ -1792,10 +1948,15 @@ class InteractiveSession(PostWriteRetrievalMixin):
             )
             if summary_audio:
                 fields["source_evidence"] = summary_audio
+                speech_facts = []
+                for fact in previous_speech_facts:
+                    ref = fact.get("evidence_ref") if isinstance(fact.get("evidence_ref"), dict) else {}
+                    source_id = str(ref.get("source_segment_id") or "")
+                    if source_id and source_id != dataset_id:
+                        speech_facts.append(fact)
+                fields["temporal_facts"] = visual_facts + speech_facts
                 prior_keys = set()
-                for fact in fields["temporal_facts"]:
-                    if not isinstance(fact, dict) or fact.get("modality") != "speech":
-                        continue
+                for fact in speech_facts:
                     ref = fact.get("evidence_ref") if isinstance(fact.get("evidence_ref"), dict) else {}
                     prior_keys.add((str(fact.get("predicate") or ""),
                                     float(ref.get("audio_start_s") or 0),
@@ -1811,21 +1972,23 @@ class InteractiveSession(PostWriteRetrievalMixin):
                         fields["temporal_facts"].append(fact)
                         prior_keys.add(key)
                 observations = fields.get("person_observations") or []
-                if observations:
-                    profile_frames = self._materialize_qwen_input_frames(
-                        result, video_path, clip_start, clip_end)
-                    observations, shared_context = self._enrich_person_profiles_from_speech(
-                        observations, summary_audio, profile_frames, dataset_id,
-                        visual_facts=visual_facts,
-                        cancel_event=self._active_step_cancel,
-                        progress=lambda stage, message: update(stage, message),
-                    )
-                    fields["person_observations"] = observations
-                    if shared_context:
-                        fields["interaction_details"] = shared_context[:700]
+                profile_frames = self._materialize_qwen_input_frames(
+                    result, video_path, clip_start, clip_end)
+                observations, shared_context, spoken_location = self._enrich_person_profiles_from_speech(
+                    observations, summary_audio, profile_frames, dataset_id,
+                    visual_facts=visual_facts,
+                    cancel_event=self._active_step_cancel,
+                    progress=lambda stage, message: update(stage, message),
+                )
+                fields["person_observations"] = observations
+                if shared_context:
+                    fields["interaction_details"] = shared_context[:700]
+                if spoken_location:
+                    fields["location"] = spoken_location
             if not fields.get("interaction_details"):
                 fields["interaction_details"] = str(stored.get("interaction_details") or "")[:700]
         normalize_object_transition_facts(fields)
+        _ground_receipt_payment_language(fields)
         source_day = next((part.upper() for part in dataset_id.split("_")
                            if part.upper().startswith("DAY") and part[3:].isdigit()), "")
         source_time = {
@@ -1909,7 +2072,7 @@ class InteractiveSession(PostWriteRetrievalMixin):
         transcript = str(moment.get("source_evidence") or "")
         speech_facts = (_extract_explicit_speech_facts(transcript, source_id)
                         if transcript else [])
-        if not speech_facts:
+        if not transcript:
             speech_facts = [row for row in existing_facts
                             if str(row.get("modality") or "").casefold() == "speech"]
         if not speech_facts:
@@ -1982,14 +2145,30 @@ class InteractiveSession(PostWriteRetrievalMixin):
 
         visual_facts = [row for row in existing_facts
                         if str(row.get("modality") or "").casefold() == "visual"]
+        cross_modal_facts = []
+        for row in existing_facts:
+            if str(row.get("modality") or "").casefold() != "cross_modal":
+                continue
+            refs = list(row.get("evidence_refs") or [])
+            if isinstance(row.get("evidence_ref"), dict):
+                refs.append(row["evidence_ref"])
+            if any(str(ref.get("source_segment_id") or "") == source_id
+                   for ref in refs if isinstance(ref, dict)):
+                cross_modal_facts.append(row)
         identity_links = attach_spoken_identity(observations, speech_facts, visual_facts)
-        if not identity_links.get("linked") and not any(
-                row.get("evidence_ref", {}).get("modality") == "visual" for row in observations):
-            return False
-
+        visual_facts = [row for row in existing_facts
+                        if str(row.get("modality") or "").casefold() == "visual"]
+        foreign_speech_facts = []
+        for row in existing_facts:
+            if str(row.get("modality") or "").casefold() != "speech":
+                continue
+            ref = row.get("evidence_ref") if isinstance(row.get("evidence_ref"), dict) else {}
+            source_ref = str(ref.get("source_segment_id") or "")
+            if not transcript or (source_ref and source_ref != source_id):
+                foreign_speech_facts.append(row)
         combined_facts = []
         seen = set()
-        for row in existing_facts + speech_facts:
+        for row in visual_facts + cross_modal_facts + foreign_speech_facts + speech_facts:
             ref = row.get("evidence_ref") if isinstance(row.get("evidence_ref"), dict) else {}
             signature = (row.get("subject_type"), row.get("subject"), row.get("predicate"),
                          row.get("evidence"), ref.get("audio_start_s"), ref.get("audio_end_s"),
@@ -2303,7 +2482,7 @@ class InteractiveSession(PostWriteRetrievalMixin):
                 object_labels, skipped_object_crops = select_object_crop_candidates(
                     f.get("objects") or [], f.get("temporal_facts") or [])
                 multimodal["object_crop_policy"] = {
-                    "version": "personal-or-source-linked-v1",
+                    "version": "personal-or-document-evidence-v2",
                     "eligible": list(object_labels),
                     "skipped": skipped_object_crops,
                 }
@@ -2328,6 +2507,27 @@ class InteractiveSession(PostWriteRetrievalMixin):
                     object_frame_sample_started = time.perf_counter()
                     candidate_frames = self.media_store.sample_visual_candidates(
                         video_path, clip_start, clip_end, source_id=dataset_id, count=7)
+                    if any(re.search(
+                            r"\b(?:receipt|bill|invoice|check|menu|ticket|statement|document)\b|"
+                            r"(?:收据|账单|发票|菜单|票据|单据)", str(label), re.I)
+                           for label in object_labels):
+                        qwen_times = [float(ref.get("at_s")) for ref in visual_refs
+                                      if isinstance(ref, dict)
+                                      and ref.get("visual_role") == "qwen_input_frame"
+                                      and ref.get("at_s") is not None]
+                        if qwen_times:
+                            precise_frames = self.media_store.sample_visual_candidates(
+                                video_path, clip_start, clip_end, source_id=dataset_id,
+                                count=len(qwen_times), sample_times=qwen_times)
+                            by_time = {
+                                round(float(frame.get("at_s") or 0), 3): frame
+                                for frame in (candidate_frames or []) if isinstance(frame, dict)
+                            }
+                            for frame in precise_frames or []:
+                                if isinstance(frame, dict):
+                                    by_time[round(float(frame.get("at_s") or 0), 3)] = frame
+                            candidate_frames = sorted(by_time.values(),
+                                                      key=lambda frame: float(frame.get("at_s") or 0))
                     record_duration("object_candidate_frame_sampling_ms", object_frame_sample_started)
                     shared_candidate_frames = candidate_frames
                     grounding_key = None
@@ -2744,17 +2944,20 @@ class InteractiveSession(PostWriteRetrievalMixin):
         record_duration("audio_decode_cache_and_transcription_wall_ms", audio_started)
         visual_interaction_details = str(f.get("interaction_details") or "").strip()
         speech_scene_context = ""
-        if source_audio_text and person_observations:
+        if source_audio_text:
             original_observations = [
                 dict(row) for row in person_observations if isinstance(row, dict)
             ]
             profile_frames = (locals().get("person_frames")
-                              or locals().get("candidate_frames") or [])
-            person_observations, speech_scene_context = self._enrich_person_profiles_from_speech(
+                              or shared_candidate_frames
+                              or locals().get("qwen_input_frames") or [])
+            person_observations, speech_scene_context, spoken_location = self._enrich_person_profiles_from_speech(
                 person_observations, source_audio_text, profile_frames, dataset_id,
                 visual_facts=temporal_facts, cancel_event=cancel_event,
                 progress=lambda stage, message: update(stage, message),
             )
+            if spoken_location:
+                f["location"] = spoken_location
             f["person_observations"] = person_observations
             f["people"] = list(dict.fromkeys(
                 str(row.get("entity") or "").strip()
@@ -2829,6 +3032,7 @@ class InteractiveSession(PostWriteRetrievalMixin):
             temporal_facts = list(temporal_facts) + speech_facts
             f["temporal_facts"] = temporal_facts
         normalize_object_transition_facts(f)
+        _ground_receipt_payment_language(f)
         temporal_facts = f.get("temporal_facts") or temporal_facts
         f, person_observations, temporal_facts = translate_structured_fields(
             f, person_observations, temporal_facts, self._structured_translator)
