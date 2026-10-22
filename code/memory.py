@@ -2489,6 +2489,11 @@ class PersonMemory(MemoryRetrievalMixin):
           "layer6": {"summary": "...", "profile": {...}}
         }
         """
+        replace_fields = {
+            str(layer_key): set(keys)
+            for layer_key, keys in (llm_summary.get("_replace_fields") or {}).items()
+            if isinstance(keys, (list, tuple, set))
+        }
         for lkey in ["layer4", "layer5", "layer6"]:
             if lkey in llm_summary:
                 updates = llm_summary[lkey]
@@ -2513,6 +2518,15 @@ class PersonMemory(MemoryRetrievalMixin):
                         continue
                     if k == "source_link_coverage":
                         if v in {"complete", "partial", "unknown"}:
+                            layer[k] = v
+                        continue
+                    if k in replace_fields.get(lkey, set()):
+                        if isinstance(v, list):
+                            layer[k] = list({
+                                json.dumps(item, ensure_ascii=False, sort_keys=True): item
+                                for item in v
+                            }.values())
+                        elif v is not None:
                             layer[k] = v
                         continue
                     if isinstance(v, dict) and isinstance(layer.get(k), dict):

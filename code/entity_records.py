@@ -34,6 +34,12 @@ def _anonymous(name):
     return bool(re.search(r'unknown|unidentified|unnamed|camera wearer|speaker\s*\d|未知|匿名|未识别', name, re.I))
 
 
+def _clip_local_person(name):
+    return bool(re.fullmatch(
+        r"(?:woman|man|person|people|人物|人物编号)\s*#?\s*\d+",
+        str(name or "").strip(), re.I))
+
+
 def _speech_placeholder(name):
     """Whisper cannot attribute a voice, so speaker placeholders are not scene people.
 
@@ -66,30 +72,53 @@ class EntityRecordIndex:
                     if (isinstance(ref, dict) and ref.get("visual_role") == "face_crop"
                             and ref.get("identity_verified") is True and ref.get("asset")):
                         asset_labels.setdefault(str(ref["asset"]), set()).add(label)
-        ambiguous_face_assets = {asset for asset, labels in asset_labels.items() if len(labels) > 1}
+        ambiguous_face_assets = set()
+        for asset, labels in asset_labels.items():
+            if len(labels) <= 1:
+                continue
+            named = {label for label in labels if not _clip_local_person(label)}
+            local = {label for label in labels if _clip_local_person(label)}
+            # A single canonical person plus temporary clip label is a duplicate
+            # assignment of the same verified crop, not a two-person ambiguity.
+            if not (len(named) == 1 and local):
+                ambiguous_face_assets.add(asset)
 
         # Nightly identity links are source-scoped: only the cited target and
         # evidence moments join the stable person gallery.
         stable_person_members = set()
+        source_identity_aliases = {}
         archive = layer7.get('moments') or {}
         for target in active:
             target_id = str(target.get('id') or '')
             for link in target.get('nightly_identity_resolutions') or []:
                 if not isinstance(link, dict):
                     continue
-                canonical = str(link.get('canonical_entity') or '').strip().casefold()
+                canonical = _name(link.get('canonical_entity')).casefold()
+                observed = _name(link.get('observed_entity'))
                 if not canonical:
                     continue
                 stable_person_members.add((target_id, canonical))
                 for source_id in link.get('evidence_moment_ids') or []:
-                    source = archive.get(str(source_id))
-                    if isinstance(source, dict) and canonical in {
-                        str(value).strip().casefold() for value in source.get('people') or []
-                    } | {
-                        str(row.get('entity') or '').strip().casefold()
-                        for row in source.get('person_observations') or [] if isinstance(row, dict)
-                    }:
-                        stable_person_members.add((str(source_id), canonical))
+                    source_id = str(source_id)
+                    source = archive.get(source_id)
+                    source_people = set()
+                    if isinstance(source, dict):
+                        source_people = {
+                            _name(value).casefold() for value in source.get('people') or []
+                        } | {
+                            _name(row.get('entity')).casefold()
+                            for row in source.get('person_observations') or []
+                            if isinstance(row, dict)
+                        }
+                    if canonical in source_people:
+                        stable_person_members.add((source_id, canonical))
+                        # Propagate an audited local label only to cited moments
+                        # that independently contain the canonical identity. This
+                        # eliminates duplicate clip-local cards without applying a
+                        # global name heuristic across unrelated videos.
+                        if observed and _clip_local_person(observed):
+                            source_identity_aliases.setdefault(source_id, {}).setdefault(
+                                observed.casefold(), set()).add(canonical)
         self.source_moments = len(active)
         self.structured_moments = 0
         for original_moment in active:
@@ -107,9 +136,63 @@ class EntityRecordIndex:
             object_rows = object_visual_observations(moment)
             observations = [x for x in moment.get('person_observations') or [] if isinstance(x, dict)]
             facts = [x for x in moment.get('temporal_facts') or [] if isinstance(x, dict)]
+            media = moment.get("multimodal") or {}
             # Existing records may have been written before audio evidence was
             # attached. Prefer an explicitly supported spoken alias or a readable
             # on-screen name when presenting the person, while keeping all evidence.
+            # Apply the source-scoped nightly identity audit to every structured
+            # mention, including temporal-fact actors that are not observation rows.
+            identity_aliases = {
+                alias: next(iter(targets))
+                for alias, targets in source_identity_aliases.get(
+                    str(moment.get('id') or ''), {}).items()
+                if len(targets) == 1
+            }
+            for link in moment.get("nightly_identity_resolutions") or []:
+                if not isinstance(link, dict):
+                    continue
+                old_name = _name(link.get("observed_entity"))
+                canonical = _name(link.get("canonical_entity"))
+                if old_name and canonical and old_name.casefold() != canonical.casefold():
+                    identity_aliases[old_name.casefold()] = canonical
+            for row in observations:
+                audit = row.get("identity_resolution") or {}
+                if not isinstance(audit, dict) or audit.get("source") != "nightly_evidence_reconciliation":
+                    continue
+                old_name = _name(audit.get("observed_entity") or row.get("source_entity"))
+                canonical = _name(audit.get("canonical_entity") or row.get("entity"))
+                if old_name and canonical and old_name.casefold() != canonical.casefold():
+                    identity_aliases[old_name.casefold()] = canonical
+
+            # A single verified crop may be repeated under a stable spoken/name
+            # label and a clip-local detector label. Treat that exact crop as a
+            # source-scoped alias only when there is exactly one non-local label;
+            # if two named identities share it, retain the ambiguity.
+            same_frame_labels = {}
+            for item in ((media.get("person_visuals") or {}).get("items") or []):
+                if not isinstance(item, dict):
+                    continue
+                label = _name(item.get("person"))
+                if not label:
+                    continue
+                for ref in item.get("frame_refs") or []:
+                    if (isinstance(ref, dict) and ref.get("visual_role") == "face_crop"
+                            and ref.get("identity_verified") is True
+                            and str(ref.get("identity_assignment") or "").startswith("qwen_visual_anchor+")
+                            and ref.get("asset")):
+                        same_frame_labels.setdefault(str(ref["asset"]), set()).add(label)
+            visual_aliases = {}
+            for labels_for_crop in same_frame_labels.values():
+                named = {label for label in labels_for_crop if not _clip_local_person(label)}
+                local = {label for label in labels_for_crop if _clip_local_person(label)}
+                if len(named) == 1:
+                    canonical = next(iter(named))
+                    for alias in local:
+                        visual_aliases.setdefault(alias.casefold(), set()).add(canonical)
+            for alias, targets in visual_aliases.items():
+                if len(targets) == 1:
+                    identity_aliases.setdefault(alias, next(iter(targets)))
+
             person_aliases = {}
             for row in observations:
                 original = _name(row.get('entity'))
@@ -125,7 +208,8 @@ class EntityRecordIndex:
 
             def person_label(value):
                 label = _name(value)
-                return person_aliases.get(label.casefold(), label)
+                return identity_aliases.get(
+                    label.casefold(), person_aliases.get(label.casefold(), label))
 
             if observations or facts or object_rows:
                 self.structured_moments += 1
@@ -247,7 +331,9 @@ class EntityRecordIndex:
                         seen_person_crops.add(crop_key)
                         person_crops.append(deepcopy(ref))
                 person_crops.sort(key=lambda ref: (
-                    0 if ref.get('visual_role') == 'face_crop' else 1,
+                    0 if isinstance(ref.get('nightly_importance'), dict) else 1,
+                    -float((ref.get('nightly_importance') or {}).get('score') or 0),
+                    0 if ref.get('quality_tier') == 'high' else 1,
                     float(ref.get('at_s') or 0)))
                 object_crops = [deepcopy(ref) for item in visual_objects
                                 if _name(item.get('object')).casefold() == label.casefold()

@@ -2733,23 +2733,23 @@ function renderFullMemory(full){
     const count=Number(counts[key]??(full[key]||[]).length);
     return '<span class="window-count layer-tone-l'+key.slice(-1)+'"><b>'+label+'</b> '+count+' / '+cap+'<span class="window-asset">附件 '+formatAssetBytes(layerAssetBytes[key])+'</span></span>';
   }).join('')+'</div>';
-  for(const [key] of windows){
-    for(const item of (full[key]||[])){
+  for(const [key,label,cap] of windows){
+    const seen=new Set();
+    const layerItems=(full[key]||[]).filter(item=>{
       const id=item.id||[item.timestamp,item.scene,item.user_action].join('|');
-      let entry=byId.get(id);
-      if(!entry){ entry={item:item,layers:[]}; byId.set(id,entry); }
-      if(!entry.layers.includes(key)) entry.layers.push(key);
-    }
+      if(seen.has(id))return false;
+      seen.add(id);return true;
+    }).sort((a,b)=>String(b.timestamp||'').localeCompare(String(a.timestamp||'')));
+    const shown=layerItems.slice(0,30);
+    const tone='layer-tone-l'+key.slice(-1);
+    html+='<details class="layer-section '+tone+'" data-memory-layer="'+key+'" '+(memoryLayerExpanded(key)?'open':'')+' ontoggle="saveMemoryLayerDisclosure(this)"><summary class="sublayer"><span class="layer-token '+tone+'">'+labels[key]+'</span> '+label.replace(/^L[1-3] /,'')+' <span class="layer-asset-usage">附件 '+formatAssetBytes(layerAssetBytes[key])+'</span><span class="scount">'+layerItems.length+' / '+cap+' 条</span></summary><div class="fullmem-items">';
+    html+=shown.map(item=>{
+      const badge='<span class="layer-membership '+tone+'">'+labels[key]+'</span>';
+      return fmtMomentMini(item,true).replace(/<\/div>$/, '<span class="layer-memberships">'+badge+'</span></div>');
+    }).join('')||'<div class="layer-empty-evidence">暂无</div>';
+    if(layerItems.length>shown.length) html+='<div class="fullmem-more-note">显示最近 '+shown.length+' 条，共 '+layerItems.length+' 条。</div>';
+    html+='</div></details>';
   }
-  const unique=Array.from(byId.values()).sort((a,b)=>String(b.item.timestamp||'').localeCompare(String(a.item.timestamp||'')));
-  const shown=unique.slice(0,30);
-  html+='<details class="layer-section layer-tone-l1" data-memory-layer="short" '+(memoryLayerExpanded('short')?'open':'')+' ontoggle="saveMemoryLayerDisclosure(this)"><summary class="sublayer"><span class="layer-token layer-tone-l1">L1</span><span class="layer-token layer-tone-l2">L2</span><span class="layer-token layer-tone-l3">L3</span> 短期记忆 <span class="scount">'+unique.length+' 条</span></summary><div class="fullmem-items">';
-  html+=shown.map(entry=>{
-    const badges=entry.layers.map(key=>'<span class="layer-membership layer-tone-'+labels[key].toLowerCase()+'">'+labels[key]+'</span>').join('');
-    return fmtMomentMini(entry.item,true).replace(/<\/div>$/, '<span class="layer-memberships">'+badges+'</span></div>');
-  }).join('')||'<div class="layer-empty-evidence">暂无</div>';
-  if(unique.length>shown.length) html+='<div class="fullmem-more-note">显示最近 '+shown.length+' 条，共 '+unique.length+' 条。</div>';
-  html+='</div></details>';
 
   const l4=layer4, l5=layer5, l6=layer6;
   html+='<details class="layer-section layer-tone-l4" data-memory-layer="l4" '+(memoryLayerExpanded('l4')?'open':'')+' ontoggle="saveMemoryLayerDisclosure(this)"><summary class="sublayer"><span class="layer-token layer-tone-l4">L4</span> 近期摘要 <span class="layer-asset-usage">附件 '+formatAssetBytes(layerAssetBytes.layer4)+'</span></summary>'+renderSummaryLayer(l4,'l4')+'</details>';

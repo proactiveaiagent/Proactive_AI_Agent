@@ -84,11 +84,13 @@ class NightlyProcessor:
         result = {}
         archive = self.memory.memory.get("layer7", {}).get("moments", {})
         for mid, item in archive.items() if isinstance(archive, dict) else []:
-            if isinstance(item, dict) and (all_accumulated or self._moment_day(item) == day):
+            if (isinstance(item, dict) and not item.get("merged_into") and not item.get("stale")
+                    and (all_accumulated or self._moment_day(item) == day)):
                 result[str(mid)] = item
         for layer in ("layer1", "layer2", "layer3"):
             for item in self.memory.memory.get(layer, []):
-                if isinstance(item, dict) and (all_accumulated or self._moment_day(item) == day):
+                if (isinstance(item, dict) and not item.get("merged_into") and not item.get("stale")
+                        and (all_accumulated or self._moment_day(item) == day)):
                     mid = str(item.get("id") or "")
                     if mid:
                         result.setdefault(mid, item)
@@ -388,7 +390,10 @@ Slice {i}/{total}:
 Consolidate this related source-video family, not each clip independently.
 Use the evidence below to connect recurring people across its clips, preserve
 distinct events with citations, compress repeated descriptions, and select only
-the most useful source memories and representative images.
+the most useful source memories and representative images. A supported person
+must form one logical profile/gallery across the family; collect only that
+person's verified crops from cited source moments. Keep each crop attached to
+its original moment and never combine different faces into a composite image.
 Resolve a visible person to a spoken family name only when introduction/kinship
 speech is tied to that visible person or matching person evidence supports it.
 Never merge clip-local labels by gender, clothing, or label alone. Preserve
@@ -467,6 +472,9 @@ IDENTITY RESOLUTION:
   visible person. A spoken introduction / kinship alias linked to a visual person,
   a validated identity match, or a consistent sequence with matching appearance
   and scene can support a link. Cite the source moment IDs.
+- Consolidate a resolved person into one durable identity/gallery across cited
+  clips. Keep image references attached to their true source moments; choose
+  only verified single-person crops for the profile and never mix two people.
 - Do not join people just because both are called woman 1/person 1, have the same
   gender/clothing, or appear in the same broad category. Keep uncertain links
   unresolved. Never mix two visible people from a group image.
@@ -591,6 +599,7 @@ resolutions from source-family evidence will be preserved with their citations.
                 "highlight_images": output.get("highlight_images")
                     if isinstance(output.get("highlight_images"), list) else [],
                 "_replace_key_events": (output.get("replace_key_events") is True and bool(events)),
+                "_replace_compact_snapshots": True,
                 "_retained_source_moment_ids": list(dict.fromkeys(
                     [str(mid) for mid in (output.get("retained_source_moment_ids") or [])
                      if str(mid) in valid_ids]
@@ -615,24 +624,111 @@ resolutions from source-family evidence will be preserved with their citations.
                     if len(result) >= limit:
                         break
                 return result
-            current_summary = words(" ".join(x.get("summary", "") for x in compact_summaries), 100)
-            key_events = unique([event for x in compact_summaries
-                                 for event in x.get("key_events", [])], 24)
+
+            # The global model response can fail formatting after all source
+            # families have already been curated. Fall back to those family
+            # decisions, not to independent per-clip summaries: preserve cited
+            # identity links/highlights and replace the compact event snapshot.
+            archive = self.memory.memory.get("layer7", {}).get("moments", {})
+            valid_ids = {str(mid) for mid in archive}
+            valid_ids.update(str(item.get("id")) for item in moments or [] if item.get("id"))
+            def score(item):
+                try:
+                    return float(item.get("score") or 0)
+                except (TypeError, ValueError):
+                    return 0.0
+
+            priority_ids = set()
+            for link in group_identity:
+                if not isinstance(link, dict):
+                    continue
+                priority_ids.add(str(link.get("moment_id") or ""))
+                priority_ids.update(str(mid) for mid in link.get("evidence_moment_ids") or [])
+            for item in group_moment_highlights:
+                if isinstance(item, dict) and score(item) >= 0.82:
+                    priority_ids.add(str(item.get("moment_id") or ""))
+
+            event_rows, event_by_text = [], {}
+            sequence = 0
+            for family_row in family_rows:
+                for event in family_row.get("key_events") or []:
+                    if not isinstance(event, dict):
+                        continue
+                    refs = list(dict.fromkeys(
+                        str(mid) for mid in event.get("source_moment_ids") or []
+                        if str(mid) in valid_ids))
+                    summary = " ".join(str(event.get("summary") or "").split())[:360]
+                    if not refs or not summary:
+                        continue
+                    signature = re.sub(r"[\W_]+", " ", summary.casefold()).strip()
+                    if not signature:
+                        continue
+                    if signature in event_by_text:
+                        existing = event_by_text[signature]
+                        existing["source_moment_ids"] = list(dict.fromkeys(
+                            existing["source_moment_ids"] + refs))
+                        continue
+                    row = {"summary": summary, "source_moment_ids": refs,
+                           "order": sequence}
+                    sequence += 1
+                    event_by_text[signature] = row
+                    event_rows.append(row)
+
+            ranked_events = sorted(event_rows, key=lambda row: (
+                0 if any(mid in priority_ids for mid in row["source_moment_ids"]) else 1,
+                row["order"]))
+            selected_events = sorted(ranked_events[:24], key=lambda row: row["order"])
+            key_events = [
+                "[moments:" + ",".join(row["source_moment_ids"]) + "] " + row["summary"]
+                for row in selected_events
+            ]
+            retained_ids = list(dict.fromkeys(
+                mid for row in selected_events for mid in row["source_moment_ids"]))
+            if not key_events:
+                for text in prior["layer5_key_events"]:
+                    refs = list(dict.fromkeys(
+                        mid for mid in text.get("source_moment_ids") or [] if mid in valid_ids))
+                    summary = " ".join(str(text.get("summary") or "").split())[:360]
+                    if refs and summary:
+                        key_events.append("[moments:" + ",".join(refs) + "] " + summary)
+                        retained_ids.extend(refs)
+                    if len(key_events) >= 24:
+                        break
+
+            family_summaries = unique(
+                [row.get("summary") for row in family_rows if row.get("summary")], 16)
+            current_summary = words(" ".join(family_summaries), 100)
+            durable_summary = words(" ".join(family_summaries), 120)
             patterns = unique([item for x in compact_summaries
                                for item in x.get("patterns", [])], 6)
-            profile_evidence = words(" ".join(x.get("profile_evidence", "")
-                                                for x in compact_summaries), 180)
-            prior_summary = words(prior["layer5_summary"], 60)
+            profile_evidence = words(" ".join(
+                [row.get("profile_evidence", "") for row in family_rows]
+                + [x.get("profile_evidence", "") for x in compact_summaries]), 180)
+            fallback_highlights = [
+                item for item in group_moment_highlights
+                if isinstance(item, dict) and score(item) >= 0.82
+            ][:8]
+            fallback_images = [
+                item for item in group_image_highlights
+                if isinstance(item, dict) and score(item) >= 0.82
+            ][:12]
+            retained_ids.extend(
+                str(item.get("moment_id")) for item in fallback_highlights
+                if item.get("moment_id") and str(item.get("moment_id")) in valid_ids)
+            retained_ids = list(dict.fromkeys(retained_ids))
             data = {
                 "layer4": {"summary": current_summary or words(prior["layer4_summary"], 100),
                            "current_tasks": [], "life_trajectory": prior["life_trajectory"]},
-                "layer5": {"summary": words((prior_summary + " " + " ".join(key_events)).strip(), 120)
+                "layer5": {"summary": durable_summary or words(prior["layer5_summary"], 120)
                            or current_summary, "key_events": key_events,
                            "long_term_patterns": "; ".join(patterns)},
                 "layer6_summary": prior["layer6_summary"], "profile_evidence": profile_evidence,
-                "combine": {}, "identity_resolutions": [], "highlight_moments": [],
-                "highlight_images": [], "_replace_key_events": False,
-                "_retained_source_moment_ids": [],
+                "combine": {}, "identity_resolutions": group_identity,
+                "highlight_moments": fallback_highlights,
+                "highlight_images": fallback_images,
+                "_replace_key_events": bool(key_events),
+                "_replace_compact_snapshots": False,
+                "_retained_source_moment_ids": retained_ids,
                 "_rollup_fallback": str(exc)[:240],
             }
             if not data["layer4"]["summary"] or not data["layer5"]["summary"]:
@@ -643,7 +739,16 @@ resolutions from source-family evidence will be preserved with their citations.
     def _compress_payload(data, source_moment_ids, coverage, moments=None):
         l4, l5 = data.get("layer4") or {}, data.get("layer5") or {}
         source_moment_ids = list(dict.fromkeys(str(x) for x in source_moment_ids if x))
+        replace_fields = {}
+        if data.get("_replace_compact_snapshots"):
+            replace_fields = {
+                "layer4": ["current_tasks", "stated_plans"],
+                "layer5": ["long_term_patterns"],
+            }
+        if data.get("_replace_key_events"):
+            replace_fields.setdefault("layer5", []).append("key_events")
         return {
+            "_replace_fields": replace_fields,
             "layer4": {
                 "summary": str(l4.get("summary") or ""),
                 "current_tasks": l4.get("current_tasks")
@@ -862,7 +967,6 @@ resolutions from source-family evidence will be preserved with their citations.
                 rollup, source_moment_ids, coverage, moments=moments))
             if rollup.get("_replace_key_events"):
                 layer5 = self.memory.memory.get("layer5", {})
-                layer5["key_events"] = (rollup.get("layer5") or {}).get("key_events", [])[:24]
                 retained_ids = rollup.get("_retained_source_moment_ids") or []
                 if retained_ids:
                     layer5["source_moment_ids"] = list(dict.fromkeys(retained_ids))
@@ -876,7 +980,7 @@ resolutions from source-family evidence will be preserved with their citations.
             report("apply", "写入整理结果", 4, 6, "标注重要记忆和代表画面")
             importance_marked = curator.apply_importance(
                 curation["highlight_moments"], curation["highlight_images"],
-                curation["image_ref_map"])
+                curation["image_ref_map"], scope_moment_ids=source_moment_ids)
 
             completed = self.memory.memory["metadata"].setdefault(
                 "nightly_processed_days", {})

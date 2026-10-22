@@ -469,6 +469,20 @@ class NightlyCurator:
                 people=[x for x in people if not (isinstance(x,str) and x.strip().casefold()==old.casefold())]
             if new not in people: people.append(new)
             moment["people"] = people
+            for fact in moment.get("temporal_facts") or []:
+                if not isinstance(fact, dict):
+                    continue
+                if (str(fact.get("subject_type") or "").casefold() == "person"
+                        and str(fact.get("subject") or "").strip().casefold() == old.casefold()):
+                    fact["subject"] = new
+                if str(fact.get("actor") or "").strip().casefold() == old.casefold():
+                    fact["actor"] = new
+                for field in ("affected_people", "people"):
+                    values = fact.get(field)
+                    if isinstance(values, list):
+                        fact[field] = list(dict.fromkeys(
+                            new if isinstance(value, str) and value.strip().casefold() == old.casefold()
+                            else value for value in values))
             media=moment.get("multimodal") or {}
             for group_key in ("person_visuals","entity_visuals"):
                 group=media.get(group_key) or {}
@@ -523,10 +537,29 @@ class NightlyCurator:
             pairs.extend((NightlyCurator._mid(source),target) for source in rows[1:])
         return pairs
 
-    def apply_importance(self, highlights, image_marks, image_map):
+    def apply_importance(self, highlights, image_marks, image_map, scope_moment_ids=None):
         now=datetime.now().astimezone().isoformat(timespec="seconds")
         archive=self.memory.memory.get("layer7",{}).get("moments",{})
         changed=0
+        # Nightly highlights are a rolling editorial selection, not permanent
+        # stickers. Recompute only the moments included in this consolidation;
+        # manual/user highlights use a different source and remain untouched.
+        scope = {str(mid) for mid in (scope_moment_ids or []) if str(mid) in archive}
+        for mid in scope:
+            moment = archive.get(mid)
+            if not isinstance(moment, dict):
+                continue
+            removed = False
+            if (moment.get("nightly_importance") or {}).get("source") == "nightly_consolidation":
+                moment.pop("nightly_importance", None)
+                removed = True
+            for _ref_id, ref, _role, _entity in self._image_refs(moment):
+                if (ref.get("nightly_importance") or {}).get("source") == "nightly_consolidation":
+                    ref.pop("nightly_importance", None)
+                    removed = True
+            if removed:
+                self.memory._sync_window_moment(mid)
+                changed += 1
         for item in highlights:
             moment=archive.get(item["moment_id"])
             if not isinstance(moment,dict): continue
