@@ -189,6 +189,10 @@ _EXPLICIT_AIRPORT_INSTRUCTION_RE = re.compile(
     r"\b(?:please\s+(?:proceed|follow|continue|go|head)|passengers?\s+(?:arriving|should|please))\b", re.I)
 _EXPLICIT_TRANSACTION_RE = re.compile(
     r"\b(?:bill|dollars?|tips?|pay|paid|payment|receipt)\b|\$\s?\d+", re.I)
+_EXPLICIT_PAYMENT_REQUEST_RE = re.compile(
+    r"\b(?:please\s+)?(?:pay|make\s+(?:a\s+)?payment|payment\s+is\s+due|"
+    r"you\s+(?:need|have)\s+to\s+pay)\b|"
+    r"(?:请|麻烦).{0,8}(?:付款|支付|付钱)|(?:需要|要).{0,5}(?:付款|支付|付钱)", re.I)
 
 _EXPLICIT_ENGLISH_BACKGROUND_RE = re.compile(
     r"\b(?:I(?:'m| am) from|I live in|I lived in|I grew up in|I moved to|I moved from|"
@@ -499,6 +503,43 @@ def _extract_explicit_speech_facts(transcript, source_segment_id):
                 facts.append({
                     "subject_type": "object", "subject": "restaurant bill", "predicate": "spoken_total",
                     "value": quote[:500], "actor": "unidentified speaker",
+                    "modality": "speech", "status": "stated", "confidence": "high",
+                    "evidence": quote[:500], "evidence_ref": dict(evidence_ref),
+                })
+            elif _EXPLICIT_PAYMENT_REQUEST_RE.search(quote):
+                delivery_order = bool(re.search(
+                    r"\b(?:delivery\s+order|delivery|order\s+delivery|your\s+order)\b|"
+                    r"(?:外卖|送餐|配送订单|送来的订单)", quote, re.I))
+                amount = ""
+                amount_match = re.search(
+                    r"\$\s*(\d+(?:\.\d{1,2})?)|"
+                    r"\b(\d+(?:\.\d{1,2})?)\s*(?:u\.?s\.?\s*)?"
+                    r"(?:dollars?|bucks?)\b|"
+                    r"\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|"
+                    r"thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty)"
+                    r"\s+dollars?\b", quote, re.I)
+                if amount_match:
+                    numeric = amount_match.group(1) or amount_match.group(2)
+                    if numeric:
+                        amount = "$" + format(float(numeric), "g")
+                    else:
+                        amount_word = amount_match.group(3).casefold()
+                        amount_value = {"one":1,"two":2,"three":3,"four":4,"five":5,
+                                        "six":6,"seven":7,"eight":8,"nine":9,"ten":10,
+                                        "eleven":11,"twelve":12,"thirteen":13,"fourteen":14,
+                                        "fifteen":15,"sixteen":16,"seventeen":17,
+                                        "eighteen":18,"nineteen":19,"twenty":20}[amount_word]
+                        amount = "$" + str(amount_value)
+                subject = "delivery order" if delivery_order else "purchase transaction"
+                requested = (f"The speaker asked the user to pay {amount} for the delivery order."
+                             if delivery_order and amount else
+                             f"The speaker asked the user to pay {amount}." if amount else
+                             "The speaker asked the user to pay for the delivery order."
+                             if delivery_order else "The speaker explicitly requested payment.")
+                facts.append({
+                    "subject_type": "event", "subject": subject,
+                    "predicate": "payment_requested", "value": requested,
+                    "actor": "unidentified speaker", "affected_people": ["unidentified addressee"],
                     "modality": "speech", "status": "stated", "confidence": "high",
                     "evidence": quote[:500], "evidence_ref": dict(evidence_ref),
                 })

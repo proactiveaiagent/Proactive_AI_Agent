@@ -2088,7 +2088,19 @@ function renderVisualEvidenceCards(items,evidenceContext,kind,grounding){
       :item.status==='no_visual_evidence'?'暂无画面证据':item.status==='uncertain'?'未找到可靠局部框 · 来源画面仍保留':item.status==='not_verified'?'未能可靠定位 · 待复核':'未生成局部画面';
     const previewFrames=crops.length?crops:fallbackRefs;
     const title=(labels[kind]||'实体')+' · '+String(item.entity||'未命名');
-    const description=String(item.description||'');
+    const baseDescription=String(item.description||'');
+    const objectName=String(item.entity||item.object||'').trim().toLocaleLowerCase();
+    const rememberedLocation=kind==='object'
+      ?((evidenceContext&&Array.isArray(evidenceContext.object_states)?evidenceContext.object_states:[])
+        .find(state=>state&&String(state.object||'').trim().toLocaleLowerCase()===objectName&&String(state.location||'').trim()))
+      :null;
+    const locationNote=rememberedLocation
+      ?'位置记忆：'+String(rememberedLocation.location).trim()
+        +(rememberedLocation.status==='inferred_from_container_close'
+          ?'（根据放入后抽屉关闭推断）'
+          :rememberedLocation.confidence==='medium'?'（中置信度）':'')
+      :'';
+    const description=[baseDescription,locationNote].filter(Boolean).join(' · ');
     const cardAttrs=renderEvidenceCardOpenAttrs(refs,evidenceContext,title,description||title);
     return '<div class="object-visual-card'+(cardAttrs?' memory-evidence-card-trigger':'')+'"'+(cardAttrs?' '+cardAttrs:'')+'><span class="object-visual-name">'+esc(title)+'</span>'+(status?'<span class="object-visual-status">'+esc(status)+'</span>':'')+(description?'<div class="object-visual-description">'+esc(description)+'</div>':'')+(crops.length?'<span class="memory-photo-album-count">'+crops.length+' 帧局部画面</span>':fallbackRefs.length?'<span class="memory-photo-album-count">来源画面</span>':'')+renderMemoryPhotoAlbum(previewFrames)+'</div>';
   }).join('');

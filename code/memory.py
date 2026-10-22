@@ -1092,6 +1092,59 @@ def _clean_source_fact_rows(rows, kind: str, limit: int) -> list:
     return output
 
 
+def normalize_user_reference_text(value: object) -> str:
+    """Use user-facing wording for the first-person narrator in stored prose."""
+    text = str(value or "")
+    text = re.sub(r"\bthe\s+camera\s+wearer[’']s\b", "the user's", text, flags=re.I)
+    text = re.sub(r"\bcamera\s+wearer[’']s\b", "user's", text, flags=re.I)
+
+    def replace_the(match):
+        return "The user" if match.group(0)[:1].isupper() else "the user"
+
+    def replace_bare(match):
+        return "User" if match.group(0)[:1].isupper() else "user"
+
+    text = re.sub(r"\bthe\s+camera\s+wearer\b", replace_the, text, flags=re.I)
+    return re.sub(r"\bcamera\s+wearer\b", replace_bare, text, flags=re.I)
+
+
+def normalize_user_facing_memory_copy(record):
+    """Canonicalize narrative copy while preserving verbatim speech and internal actor labels."""
+    if not isinstance(record, dict):
+        return record
+    for key in ("scene", "user_action", "interaction_details", "activity", "location",
+                "environments", "notes"):
+        value = record.get(key)
+        if isinstance(value, str):
+            record[key] = normalize_user_reference_text(value)
+        elif isinstance(value, list):
+            record[key] = [normalize_user_reference_text(item) if isinstance(item, str) else item
+                           for item in value]
+    for key in ("person_observations", "object_observations"):
+        for row in record.get(key) or []:
+            if not isinstance(row, dict):
+                continue
+            for field in ("appearance", "face_features", "profile_context"):
+                if isinstance(row.get(field), str):
+                    row[field] = normalize_user_reference_text(row[field])
+    for key in ("temporal_facts", "object_states"):
+        for row in record.get(key) or []:
+            if not isinstance(row, dict):
+                continue
+            if str(row.get("modality") or "").casefold() == "speech":
+                continue
+            for field in ("value", "evidence"):
+                if isinstance(row.get(field), str):
+                    row[field] = normalize_user_reference_text(row[field])
+    media = record.get("multimodal")
+    entities = media.get("entities") if isinstance(media, dict) else None
+    if isinstance(entities, dict):
+        for field in ("activity", "location"):
+            if isinstance(entities.get(field), str):
+                entities[field] = normalize_user_reference_text(entities[field])
+    return record
+
+
 def normalize_object_transition_facts(moment: Dict) -> Dict:
     """Bind explicit object-state actions to the named object, preserving the actor.
 
@@ -2153,6 +2206,7 @@ class PersonMemory(MemoryRetrievalMixin):
             moment["notes"] = extra_notes
         if isinstance(multimodal, dict) and multimodal.get("schema") == 1:
             moment["multimodal"] = multimodal
+        normalize_user_facing_memory_copy(moment)
         normalize_object_transition_facts(moment)
         if isinstance(moment.get("multimodal"), dict):
             entity_visuals = _build_entity_visuals(moment)
@@ -3278,6 +3332,7 @@ class PersonMemory(MemoryRetrievalMixin):
                 ("人物外观", moment.get("person_observations"), 1600),
                 ("事件与状态事实", moment.get("temporal_facts"), 3200),
                 ("物品观察", moment.get("object_observations") or object_visual_observations(moment), 1800),
+                ("物品位置状态", moment.get("object_states"), 1800),
                 ("来源时间", moment.get("source_time"), 500),
             ):
                 if value:
@@ -3449,6 +3504,7 @@ class PersonMemory(MemoryRetrievalMixin):
     def update(self, moment_id: str, updates: Dict) -> bool:
         """改正指定 moment 的 Part1-3 数据，并同步 Layer7 标签索引。"""
         clean = self._validated_updates(updates)
+        normalize_user_facing_memory_copy(clean)
         moment = self.memory["layer7"]["moments"].get(moment_id)
         if not moment or not clean:
             return False
@@ -3527,6 +3583,7 @@ class PersonMemory(MemoryRetrievalMixin):
                 return False
 
         clean = self._validated_updates(updates)
+        normalize_user_facing_memory_copy(clean)
         feedback = moment.get("feedback") or {}
         corrections = feedback.get("corrections") if isinstance(feedback, dict) else {}
         protected = {str(key).split(".", 1)[0].split("[", 1)[0]

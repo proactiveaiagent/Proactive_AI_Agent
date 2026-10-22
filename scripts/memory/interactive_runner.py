@@ -32,7 +32,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "code"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from memory import (PersonMemory, _build_entity_visuals, _portable_video_id,
-                    entity_graph_summary, normalize_object_transition_facts)  # noqa: E402
+                    entity_graph_summary, normalize_object_transition_facts,
+                    normalize_user_facing_memory_copy)  # noqa: E402
 from translator import make_translator, translate_structured_fields  # noqa: E402
 from entity_records import memory_facts
 from daytime_processor import DaytimeProcessor  # noqa: E402
@@ -70,8 +71,8 @@ _AGE_CLAIM_RE = re.compile(
 )
 
 
-PERSON_PROFILE_CACHE_VERSION = "multimodal-scene-summary-v14-transaction-language-role-2026-10-23"
-CONTENT_SUMMARY_VERSION = "joint-visual-speech-document-place-summary-v10-preserve-cross-modal-facts-2026-10-23"
+PERSON_PROFILE_CACHE_VERSION = "multimodal-scene-summary-v15-delivery-role-user-search-2026-10-23"
+CONTENT_SUMMARY_VERSION = "joint-user-copy-delivery-wallet-search-v11-2026-10-23"
 
 
 
@@ -255,6 +256,304 @@ def person_profile_cache_key(source_segment_id, transcript, observations, frames
     }
     return hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True)
                           .encode("utf-8")).hexdigest()
+
+
+def _remap_person_labels_in_fields(fields, mapping):
+    """Update a renamed person label everywhere in structured narrative fields."""
+    if not isinstance(fields, dict) or not mapping:
+        return fields
+    def remap(value):
+        if isinstance(value, str):
+            for old, new in sorted(mapping.items(), key=lambda pair: len(pair[0]), reverse=True):
+                if old:
+                    value = re.sub(r"(?<![\w])" + re.escape(old) + r"(?![\w])",
+                                   lambda _match, replacement=new: replacement,
+                                   value, flags=re.I)
+            return value
+        if isinstance(value, list):
+            return [remap(item) for item in value]
+        if isinstance(value, dict):
+            if str(value.get("modality") or "").casefold() == "speech":
+                return {key: (remap(item) if key in {"actor", "subject", "affected_people"} else item)
+                        for key, item in value.items()}
+            return {key: remap(item) for key, item in value.items()}
+        return value
+    for key in ("scene", "user_action", "interaction_details", "activity", "location",
+                "environments", "people", "person_observations", "temporal_facts"):
+        if key in fields:
+            fields[key] = remap(fields[key])
+    return fields
+
+
+def _ground_delivery_person_role(observations, transcript, source_segment_id):
+    """Name a uniquely visible bag-carrying doorway speaker by their grounded delivery role."""
+    rows = [row for row in observations or [] if isinstance(row, dict)]
+    speech = " ".join(str(line) for line in str(transcript or "").splitlines())
+    delivery_request = (
+        re.search(r"\b(?:delivery\s+order|delivery order|your delivery)\b|"
+                  r"(?:外卖|送餐|配送订单)", speech, re.I)
+        and re.search(r"\b(?:please\s+)?pay\b|(?:付款|支付|付钱)", speech, re.I)
+    )
+    if not delivery_request:
+        return rows, {}
+    candidates = []
+    for row in rows:
+        visible = " ".join(str(row.get(key) or "")
+                           for key in ("appearance", "profile_context")).casefold()
+        has_package = bool(re.search(r"\b(?:bag|package|parcel|order)\b", visible))
+        at_entry = bool(re.search(r"\b(?:doorway|door|entrance|entry|hallway)\b", visible))
+        if has_package and at_entry:
+            candidates.append(row)
+    if len(candidates) != 1:
+        return rows, {}
+    target = candidates[0]
+    old = " ".join(str(target.get("entity") or "").split()).strip()
+    generic = bool(re.fullmatch(
+        r"(?:(?:visible|unidentified)\s+)?(?:person(?:\s+(?:in\s+.+|at\s+.+|\d+))?|"
+        r"woman\s+\d+|man\s+\d+|individual(?:\s+\d+)?|"
+        r"courier|delivery person|delivery worker|uniform wearer|uniformed worker|"
+        r"person wearing .+|person in uniform)", old, re.I))
+    mapping = {}
+    if generic and old != "外卖员":
+        mapping[old] = "外卖员"
+        target["entity"] = "外卖员"
+    roles = [str(value).strip() for value in target.get("roles") or []
+             if str(value).strip()]
+    if "delivery person" not in {value.casefold() for value in roles}:
+        roles.append("delivery person")
+    target["roles"] = roles[:6]
+    context = str(target.get("profile_context") or "").strip()
+    if "delivery person" not in context.casefold():
+        target["profile_context"] = (
+            (context + " " if context else "")
+            + "Identified as the delivery person from the spoken delivery order and the bag at the doorway."
+        )[:700]
+    refs = list(target.get("evidence_refs") or [])
+    for line in str(transcript or "").splitlines():
+        match = _AUDIO_EVIDENCE_LINE_RE.match(line.strip())
+        if not match:
+            continue
+        quote = str(match.group("text") or "")
+        if not (re.search(r"\bdelivery\b|\bpay\b", quote, re.I)
+                or re.search(r"外卖|送餐|付款|支付|付钱", quote)):
+            continue
+        refs.append({"source_segment_id": str(source_segment_id or "")[:128],
+                     "modality": "speech",
+                     "audio_start_s": round(float(match.group("start")), 3),
+                     "audio_end_s": round(float(match.group("end")), 3)})
+    unique, seen = [], set()
+    for ref in refs:
+        if not isinstance(ref, dict):
+            continue
+        key = tuple(ref.get(name) for name in (
+            "source_segment_id", "modality", "frame_index", "frame_time_s",
+            "audio_start_s", "audio_end_s"))
+        if key not in seen:
+            seen.add(key); unique.append(ref)
+    if unique:
+        target["evidence_refs"] = unique[:16]
+        target["evidence_ref"] = unique[0]
+    return rows, mapping
+
+
+def _ground_delivery_payment_speech_facts(facts, observations):
+    """Bind an explicit delivery payment request to the unique grounded courier and user."""
+    delivery_people = []
+    for row in observations or []:
+        if not isinstance(row, dict):
+            continue
+        roles = {str(role).strip().casefold() for role in row.get("roles") or []}
+        label = str(row.get("entity") or "").strip()
+        if label and (label.casefold() == "外卖员" or "delivery person" in roles):
+            delivery_people.append(label)
+    if len(set(delivery_people)) != 1:
+        return
+    delivery_label = delivery_people[0]
+    for fact in facts or []:
+        if not isinstance(fact, dict):
+            continue
+        if (str(fact.get("predicate") or "").casefold() == "payment_requested"
+                and re.search(r"delivery|外卖|送餐", str(fact.get("subject") or "")
+                              + " " + str(fact.get("value") or ""), re.I)):
+            fact["actor"] = delivery_label
+            fact["affected_people"] = ["user"]
+
+
+def _apply_delivery_wallet_memory_link(fields, archive, source_video_id, source_segment_id):
+    """Link an explicit delivery payment request to a grounded storage search and prior wallet state."""
+    if not isinstance(fields, dict) or not isinstance(archive, dict):
+        return False
+    source_relative = Path(str(source_video_id or "").replace("\\\\", "/")).as_posix().casefold()
+    source_parent = Path(source_relative).parent.as_posix().casefold()
+    if not source_parent or source_parent in {"", "."}:
+        return False
+    source_order = None
+    manifest_order = {}
+    try:
+        manifest = json.loads(FEISHU_TEST_MANIFEST.read_text(encoding="utf-8"))
+        for index, item in enumerate(manifest.get("files") or []):
+            relative = Path(str(item.get("relative_path") or "")).as_posix().casefold()
+            if relative:
+                manifest_order[relative] = index
+        source_order = manifest_order.get(source_relative)
+    except (OSError, TypeError, ValueError):
+        manifest_order = {}
+    # A repeated repair must replace the derived link rather than stack duplicates.
+    facts = [row for row in fields.get("temporal_facts") or []
+             if isinstance(row, dict)
+             and str(row.get("predicate") or "").casefold() != "payment_hindered_by_wallet_search"]
+    payment_rows = [row for row in facts
+                    if str(row.get("predicate") or "").casefold() == "payment_requested"
+                    and re.search(r"\bdelivery\b|外卖|送餐",
+                                  " ".join(str(row.get(key) or "") for key in ("subject", "value", "evidence")),
+                                  re.I)]
+    if not payment_rows:
+        return False
+    request = payment_rows[0]
+    request_ref = request.get("evidence_ref") if isinstance(request.get("evidence_ref"), dict) else {}
+    try:
+        request_end = float(request_ref.get("audio_end_s") or 0)
+    except (TypeError, ValueError):
+        request_end = 0.0
+
+    prior = []
+    for mid, moment in archive.get("moments", {}).items():
+        if not isinstance(moment, dict) or moment.get("stale") or moment.get("merged_into"):
+            continue
+        provenance = moment.get("source_provenance") or {}
+        sid = str(provenance.get("source_segment_id") or "")
+        video = str(provenance.get("source_video_id") or "").replace("\\\\", "/")
+        if not sid or sid == source_segment_id or Path(video).parent.as_posix().casefold() != source_parent:
+            continue
+        candidate_order = manifest_order.get(Path(video).as_posix().casefold())
+        if (source_order is not None and candidate_order is not None
+                and candidate_order >= source_order):
+            continue
+        for state in moment.get("object_states") or []:
+            if not isinstance(state, dict):
+                continue
+            item = str(state.get("object") or "")
+            location = str(state.get("location") or "").strip()
+            if (re.search(r"\b(?:wallet|purse|billfold)\b", item, re.I)
+                    and location and re.search(r"\b(?:drawer|cabinet|closet|box|pocket)\b", location, re.I)):
+                prior.append((str(moment.get("timestamp") or ""), str(mid), moment, state))
+    if not prior:
+        return False
+    _, prior_mid, prior_moment, wallet_state = max(prior, key=lambda row: (row[0], row[1]))
+
+    narrative = " ".join(str(fields.get(key) or "") for key in
+                         ("scene", "user_action", "activity", "interaction_details"))
+    explicit_search = bool(re.search(
+        r"\b(?:search(?:es|ed|ing)?|look(?:s|ed|ing)?\s+for|rummag(?:e|es|ed|ing)|"
+        r"checks?\s+(?:through|inside)|looks?\s+(?:inside|through)|cannot find|can't find|"
+        r"unable to find)\b|翻找|翻箱倒柜|找不到|寻找|找钱包", narrative, re.I))
+    request_close = [float(request_ref.get("audio_end_s") or 0)]
+    container_rows = []
+    for row in facts:
+        if str(row.get("subject_type") or "").casefold() != "object":
+            continue
+        predicate = re.sub(r"[ -]+", "_", str(row.get("predicate") or "").casefold())
+        candidate_text = " ".join(str(row.get(key) or "") for key in
+                                  ("subject", "value", "evidence", "to_state"))
+        if (predicate not in {"open", "opened", "close", "closed", "inspected", "searched"}
+                or not re.search(r"\b(?:drawer|cabinet|cupboard|closet|box|bag)\b", candidate_text, re.I)):
+            continue
+        ref = row.get("evidence_ref") if isinstance(row.get("evidence_ref"), dict) else {}
+        try:
+            frame_time = float(row.get("frame_time_s", ref.get("frame_time_s", -1)))
+        except (TypeError, ValueError):
+            frame_time = -1.0
+        if frame_time < request_close[0]:
+            continue
+        container_rows.append((frame_time, row))
+    inspected_after_request = bool(container_rows)
+    if not explicit_search and not inspected_after_request:
+        return False
+    wallet_found = False
+    for row in facts:
+        wallet_text = " ".join(str(row.get(key) or "") for key in
+                               ("subject", "predicate", "value", "evidence"))
+        if not re.search(r"\b(?:wallet|purse|billfold)\b", wallet_text, re.I):
+            continue
+        negative_find = re.search(
+            r"\b(?:not|never|no|cannot|can't|unable|didn't|did not|hasn't|has not)\b"
+            r".{0,40}\b(?:find|found|pick(?:ed)? up|retriev(?:e|ed)|hold|carried|hand(?:ed)? over)\b|"
+            r"\b(?:find|found)\s+no\b", wallet_text, re.I)
+        positive_retrieval = re.search(
+            r"\b(?:found|picked[_ ]up|retrieved|held|carried|handed_over)\b",
+            str(row.get("predicate") or "")+" "+str(row.get("value") or ""), re.I)
+        if positive_retrieval and not negative_find:
+            wallet_found = True
+            break
+    payment_completed = False
+    for row in facts:
+        predicate = str(row.get("predicate") or "").casefold()
+        transaction_text = " ".join(str(row.get(key) or "") for key in
+                                    ("subject", "value", "evidence", "to_state"))
+        mentions_money = bool(re.search(
+            r"payment|paid|cash|money|bill|dollar|付款|支付|结账|账单|现金|美元|\$",
+            transaction_text, re.I))
+        negative_payment = re.search(
+            r"\b(?:not|never|no|didn't|did not|hasn't|has not|isn't|is not|without|"
+            r"unable|cannot|can't)\b.{0,40}\b(?:pay|paid|payment|accept(?:ed)?|"
+            r"collect(?:ed)?|hand(?:ed)? over)\b|\b(?:unpaid|not paid)\b",
+            transaction_text, re.I)
+        if mentions_money and not negative_payment and predicate in {
+                "payment_completed", "paid", "accepted", "collected", "handed_over"}:
+            payment_completed = True
+            break
+    if wallet_found or payment_completed:
+        return False
+
+    historical_refs = []
+    for ref in wallet_state.get("evidence_refs") or []:
+        if isinstance(ref, dict):
+            historical_refs.append(dict(ref))
+    if not historical_refs and isinstance(wallet_state.get("evidence_ref"), dict):
+        historical_refs.append(dict(wallet_state["evidence_ref"]))
+    current_refs = []
+    if isinstance(request.get("evidence_ref"), dict):
+        current_refs.append(dict(request["evidence_ref"]))
+    if explicit_search:
+        current_refs.append({"source_segment_id": str(source_segment_id or "")[:128],
+                             "modality": "cross_modal"})
+    for _, row in container_rows:
+        ref = row.get("evidence_ref")
+        if isinstance(ref, dict):
+            current_refs.append(dict(ref))
+        elif isinstance(row.get("evidence_refs"), list):
+            current_refs.extend(dict(item) for item in row["evidence_refs"] if isinstance(item, dict))
+    unique, seen = [], set()
+    for ref in historical_refs+current_refs:
+        key = (ref.get("source_segment_id"), ref.get("modality"), ref.get("frame_index"),
+               ref.get("frame_time_s"), ref.get("audio_start_s"), ref.get("audio_end_s"))
+        if key not in seen:
+            seen.add(key); unique.append(ref)
+    amount = re.search(r"\$\s*\d+(?:\.\d{1,2})?", str(request.get("value") or ""))
+    amount_text = amount.group(0).replace(" ", "") if amount else ""
+    location = " ".join(location for location in [str(wallet_state.get("location") or "").strip()] if location)
+    current_ref = current_refs[-1] if current_refs else {}
+    fact = {
+        "subject_type": "event", "subject": "delivery payment and wallet search",
+        "predicate": "payment_hindered_by_wallet_search",
+        "value": (f"The user searched storage for their wallet, last recorded {location}; "
+                  f"the delivery person requested {amount_text or 'payment'}, but no payment or handoff is shown, "
+                  "so the user appears unable to pay and collect the delivery."),
+        "actor": "user", "affected_people": ["delivery person"],
+        "modality": "cross_modal", "status": "inferred", "confidence": "medium",
+        "evidence": ("A delivery payment request is followed by the user opening or checking a storage container; "
+                     "the most recent linked wallet state remains in that container location, and no wallet pickup "
+                     "or completed payment is recorded."),
+        "evidence_refs": unique[:16],
+    }
+    facts.append(fact)
+    fields["temporal_facts"] = facts
+    fields["interaction_details"] = (
+        f"A delivery person brought the order and asked the user to pay {amount_text or 'for it'}. "
+        f"The user then searched storage for their wallet, last recorded {location}; no completed payment or "
+        "handoff is shown, so the user appears unable to pay and collect the delivery."
+    )[:700]
+    return True
 
 
 def _remove_visual_age_guess(value):
@@ -1175,7 +1474,11 @@ class InteractiveSession(PostWriteRetrievalMixin):
                 "visual/text link. Never infer age, health, identity, or relationship from appearance. "
                 "An employee/cashier role may be assigned only when the person is visibly working at a "
                 "service counter or directly handling a customer transaction; preserve an exact readable "
-                "name badge as the person's name. Keep first-person body parts out of candidate identities. "
+                "name badge as the person's name. Identify a delivery person only when this clip explicitly "
+                "mentions a delivery/order or requests payment and exactly one visible candidate is at the "
+                "doorway holding a bag/package; clothing alone is never enough. In that case use the short "
+                "role label 'delivery person' and attach the matching speech and visual evidence. Keep "
+                "first-person body parts out of candidate identities. "
                 "Recognize public-address announcements as announcements, not interpersonal thanks: when "
                 "an announcement explicitly welcomes passengers to a named airport and the frames show "
                 "airport travel, use that airport name as location evidence and summarize the travel context. "
@@ -1458,6 +1761,8 @@ class InteractiveSession(PostWriteRetrievalMixin):
                 if "employee" not in {value.casefold() for value in roles}:
                     roles.append("employee")
                 row["roles"] = roles[:6]
+        rows, _delivery_aliases = _ground_delivery_person_role(
+            rows, speech, source_segment_id)
         return rows, scene_context, location_context
 
     @staticmethod
@@ -1972,6 +2277,7 @@ class InteractiveSession(PostWriteRetrievalMixin):
                         fields["temporal_facts"].append(fact)
                         prior_keys.add(key)
                 observations = fields.get("person_observations") or []
+                observations_before_profile = [dict(row) for row in observations if isinstance(row, dict)]
                 profile_frames = self._materialize_qwen_input_frames(
                     result, video_path, clip_start, clip_end)
                 observations, shared_context, spoken_location = self._enrich_person_profiles_from_speech(
@@ -1980,6 +2286,19 @@ class InteractiveSession(PostWriteRetrievalMixin):
                     cancel_event=self._active_step_cancel,
                     progress=lambda stage, message: update(stage, message),
                 )
+                alias_map = {
+                    str(old_row.get("entity") or "").strip().casefold():
+                    str(new_row.get("entity") or "").strip()
+                    for old_row, new_row in zip(observations_before_profile, observations)
+                    if str(old_row.get("entity") or "").strip()
+                    and str(new_row.get("entity") or "").strip()
+                    and str(old_row.get("entity")).strip().casefold()
+                    != str(new_row.get("entity")).strip().casefold()
+                }
+                _ground_delivery_payment_speech_facts(
+                    fields.get("temporal_facts") or [], observations)
+                if alias_map:
+                    _remap_person_labels_in_fields(fields, alias_map)
                 fields["person_observations"] = observations
                 if shared_context:
                     fields["interaction_details"] = shared_context[:700]
@@ -1989,6 +2308,11 @@ class InteractiveSession(PostWriteRetrievalMixin):
                 fields["interaction_details"] = str(stored.get("interaction_details") or "")[:700]
         normalize_object_transition_facts(fields)
         _ground_receipt_payment_language(fields)
+        _ground_delivery_payment_speech_facts(
+            fields.get("temporal_facts") or [], fields.get("person_observations") or [])
+        normalize_user_facing_memory_copy(fields)
+        _apply_delivery_wallet_memory_link(
+            fields, self.mem.memory.get("layer7") or {}, expected_video, dataset_id)
         source_day = next((part.upper() for part in dataset_id.split("_")
                            if part.upper().startswith("DAY") and part[3:].isdigit()), "")
         source_time = {
@@ -2974,6 +3298,7 @@ class InteractiveSession(PostWriteRetrievalMixin):
                 != str(new.get("entity")).strip().casefold()
             }
             if alias_map:
+                _remap_person_labels_in_fields(f, alias_map)
                 def remap_media_person_labels(value):
                     if isinstance(value, str):
                         return alias_map.get(value.strip().casefold(), value)
@@ -2989,6 +3314,7 @@ class InteractiveSession(PostWriteRetrievalMixin):
         # when this clip itself singles that person out.
         speech_facts = (_extract_explicit_speech_facts(source_audio_text, dataset_id)
                         if source_audio_text else [])
+        _ground_delivery_payment_speech_facts(speech_facts, person_observations)
         if source_audio_text:
             f["source_evidence"] = source_audio_text
         entity_labels_before_identity = [
@@ -3038,6 +3364,11 @@ class InteractiveSession(PostWriteRetrievalMixin):
             f, person_observations, temporal_facts, self._structured_translator)
         f["person_observations"] = person_observations
         f["temporal_facts"] = temporal_facts
+        normalize_user_facing_memory_copy(f)
+        _apply_delivery_wallet_memory_link(
+            f, self.mem.memory.get("layer7") or {},
+            source_provenance.get("source_video_id"), dataset_id)
+        temporal_facts = f.get("temporal_facts") or temporal_facts
         if cancel_event is not None and cancel_event.is_set():
             info = {"error": "当前片段处理已终止", "source": "cancelled", "cancelled": True}
             finish_timing(info)
