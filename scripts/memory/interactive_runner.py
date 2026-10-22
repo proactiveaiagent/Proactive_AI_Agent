@@ -56,6 +56,7 @@ from object_crop_policy import select_object_crop_candidates  # noqa: E402
 from face_detection import (detect_faces, assign_faces_to_people,
                             expanded_face_sample_times)  # noqa: E402
 from scene_retrieval import PostWriteRetrievalMixin  # noqa: E402
+from clinical_grounding import ground_clinical_visit  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 TESTSET = ROOT / "data" / "egolife" / "testset"
@@ -71,8 +72,8 @@ _AGE_CLAIM_RE = re.compile(
 )
 
 
-PERSON_PROFILE_CACHE_VERSION = "multimodal-scene-summary-v15-delivery-role-user-search-2026-10-23"
-CONTENT_SUMMARY_VERSION = "joint-user-copy-delivery-wallet-search-v11-2026-10-23"
+PERSON_PROFILE_CACHE_VERSION = "multimodal-scene-summary-v16-clinical-role-user-search-2026-10-23"
+CONTENT_SUMMARY_VERSION = "joint-user-copy-clinical-grounding-v12-2026-10-23"
 
 
 
@@ -283,6 +284,22 @@ def _remap_person_labels_in_fields(fields, mapping):
         if key in fields:
             fields[key] = remap(fields[key])
     return fields
+
+
+def _remap_person_labels_in_media(value, mapping):
+    """Keep compact multimodal card labels aligned with renamed observations."""
+    if not mapping:
+        return value
+    normalized = {str(old).strip().casefold(): str(new)
+                  for old, new in mapping.items() if str(old).strip()}
+    if isinstance(value, str):
+        return normalized.get(value.strip().casefold(), value)
+    if isinstance(value, list):
+        return [_remap_person_labels_in_media(item, normalized) for item in value]
+    if isinstance(value, dict):
+        return {key: _remap_person_labels_in_media(item, normalized)
+                for key, item in value.items()}
+    return value
 
 
 def _ground_delivery_person_role(observations, transcript, source_segment_id):
@@ -1472,6 +1489,11 @@ class InteractiveSession(PostWriteRetrievalMixin):
                 "preserve the unknown recipient. Do not invert roles. "
                 "Use medium confidence for a unique but non-diarized match, high only for an explicit "
                 "visual/text link. Never infer age, health, identity, or relationship from appearance. "
+                "A doctor role requires a compatible clinical setting and directly observed consultation duties, "
+                "such as presenting a patient record while giving condition-specific advice; a coat or "
+                "medical-looking room alone is insufficient. When the sole visible clinician presents "
+                "a record toward the camera and directly addresses the listener about a condition, label "
+                "that visible person doctor while keeping the listener/patient distinct from the doctor. "
                 "An employee/cashier role may be assigned only when the person is visibly working at a "
                 "service counter or directly handling a customer transaction; preserve an exact readable "
                 "name badge as the person's name. Identify a delivery person only when this clip explicitly "
@@ -2234,6 +2256,32 @@ class InteractiveSession(PostWriteRetrievalMixin):
             return linked
         fields["person_observations"] = attach_refs(
             fields.get("person_observations") or [], "visual")
+        # A newer perception cache can omit a previously grounded person even
+        # though the exact same source clip still has an identity-verified face crop.
+        # Preserve only observations anchored by that source's verified person crop.
+        if not fields["person_observations"]:
+            verified_labels = set()
+            person_visuals = stored_multimodal.get("person_visuals") or {}
+            for item in person_visuals.get("items") or []:
+                if not isinstance(item, dict):
+                    continue
+                label = str(item.get("person") or "").strip().casefold()
+                refs = [ref for ref in item.get("frame_refs") or [] if isinstance(ref, dict)]
+                if label and any(
+                        ref.get("identity_verified") is True
+                        and ref.get("visual_role") == "face_crop"
+                        and str(ref.get("source_id") or dataset_id) == dataset_id
+                        for ref in refs):
+                    verified_labels.add(label)
+            prior_rows = [
+                dict(row) for row in stored.get("person_observations") or []
+                if isinstance(row, dict)
+                and str(row.get("entity") or "").strip().casefold() in verified_labels
+            ]
+            if prior_rows:
+                fields["person_observations"] = attach_refs(prior_rows, "visual")
+        fields["document_evidence"] = attach_refs(
+            fields.get("document_evidence") or [], "visual")
         # A refresh replaces the visual rows from the new cache read and carries over
         # the speech rows already attached to the stored moment.
         visual_facts = attach_refs(fields.get("temporal_facts") or [], "visual")
@@ -2306,6 +2354,18 @@ class InteractiveSession(PostWriteRetrievalMixin):
                     fields["location"] = spoken_location
             if not fields.get("interaction_details"):
                 fields["interaction_details"] = str(stored.get("interaction_details") or "")[:700]
+            clinical_aliases = ground_clinical_visit(
+                fields, fields.get("person_observations") or [],
+                fields.get("source_evidence") or "", dataset_id)
+            if clinical_aliases:
+                _remap_person_labels_in_fields(fields, clinical_aliases)
+                stored_multimodal = _remap_person_labels_in_media(
+                    stored_multimodal, clinical_aliases)
+                fields["person_observations"] = fields.get("person_observations") or []
+            if fields.get("document_evidence"):
+                stored_multimodal["document_evidence"] = copy.deepcopy(fields["document_evidence"])
+            if clinical_aliases or fields.get("document_evidence"):
+                stored["multimodal"] = stored_multimodal
         normalize_object_transition_facts(fields)
         _ground_receipt_payment_language(fields)
         _ground_delivery_payment_speech_facts(
@@ -2365,6 +2425,12 @@ class InteractiveSession(PostWriteRetrievalMixin):
                 m, moment_id, fields, source_provenance,
                 qwen_input_frames=qwen_input_frames,
                 progress=lambda stage, message: update(stage, message))
+        if fields.get("document_evidence"):
+            current = self.mem.memory.get("layer7", {}).get("moments", {}).get(moment_id)
+            current_media = current.get("multimodal") if isinstance(current, dict) else None
+            if isinstance(current_media, dict):
+                current_media["document_evidence"] = copy.deepcopy(fields["document_evidence"])
+                self.mem._save()
         result["multimodal_refreshed"] = multimodal_refreshed
         if not refreshed and not multimodal_refreshed:
             return None
@@ -2490,9 +2556,35 @@ class InteractiveSession(PostWriteRetrievalMixin):
             source_ref = str(ref.get("source_segment_id") or "")
             if not transcript or (source_ref and source_ref != source_id):
                 foreign_speech_facts.append(row)
+        clinical_predicates = {
+            "doctor_stated_health_condition", "doctor_advice",
+            "age_listed_in_medical_record", "cautious_cardiac_risk_inference",
+        }
+        clinical_facts = []
+        clinical_evidence = set()
+        for row in existing_facts:
+            if not isinstance(row, dict):
+                continue
+            if str(row.get("predicate") or "") not in clinical_predicates:
+                continue
+            refs = list(row.get("evidence_refs") or [])
+            if isinstance(row.get("evidence_ref"), dict):
+                refs.append(row["evidence_ref"])
+            if not any(str(ref.get("source_segment_id") or "") == source_id
+                       for ref in refs if isinstance(ref, dict)):
+                continue
+            clinical_facts.append(row)
+            quote = str(row.get("evidence") or "").strip()
+            if quote:
+                clinical_evidence.add(quote)
+        preserved_speech_facts = [
+            row for row in speech_facts
+            if str(row.get("evidence") or "").strip() not in clinical_evidence
+        ]
         combined_facts = []
         seen = set()
-        for row in visual_facts + cross_modal_facts + foreign_speech_facts + speech_facts:
+        for row in (visual_facts + cross_modal_facts + foreign_speech_facts
+                    + clinical_facts + preserved_speech_facts):
             ref = row.get("evidence_ref") if isinstance(row.get("evidence_ref"), dict) else {}
             signature = (row.get("subject_type"), row.get("subject"), row.get("predicate"),
                          row.get("evidence"), ref.get("audio_start_s"), ref.get("audio_end_s"),
@@ -2781,6 +2873,8 @@ class InteractiveSession(PostWriteRetrievalMixin):
             f.get("person_observations") or [], "visual")
         temporal_facts = attach_evidence_refs(
             f.get("temporal_facts") or [], "visual")
+        f["document_evidence"] = attach_evidence_refs(
+            f.get("document_evidence") or [], "visual")
         f["person_observations"] = person_observations
         f["temporal_facts"] = temporal_facts
         shared_candidate_frames = None
@@ -3357,6 +3451,17 @@ class InteractiveSession(PostWriteRetrievalMixin):
         if speech_facts:
             temporal_facts = list(temporal_facts) + speech_facts
             f["temporal_facts"] = temporal_facts
+        clinical_aliases = ground_clinical_visit(
+            f, person_observations, source_audio_text, dataset_id)
+        person_observations = f.get("person_observations") or person_observations
+        temporal_facts = f.get("temporal_facts") or temporal_facts
+        if clinical_aliases:
+            _remap_person_labels_in_fields(f, clinical_aliases)
+            multimodal = _remap_person_labels_in_media(multimodal, clinical_aliases)
+        if multimodal and f.get("document_evidence"):
+            multimodal["document_evidence"] = copy.deepcopy(f["document_evidence"])
+        f["person_observations"] = person_observations
+        f["temporal_facts"] = temporal_facts
         normalize_object_transition_facts(f)
         _ground_receipt_payment_language(f)
         temporal_facts = f.get("temporal_facts") or temporal_facts
