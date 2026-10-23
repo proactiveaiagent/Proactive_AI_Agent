@@ -350,6 +350,37 @@ def _extract_explicit_speech_facts(transcript, source_segment_id):
             "audio_end_s": audio_end,
         }
 
+        invitation = re.search(
+            r"\b(?:have|take)\s+a\s+(?:try|taste|bite|mouthful)\b|"
+            r"\btry\s+(?:some|a little|the)\b|"
+            r"\b(?:you should|you can)\s+try\b|"
+            r"(?:尝尝|试试|尝一口|来一口)",
+            quote, re.I,
+        )
+        food_context = re.search(
+            r"\b(?:food|meal|chicken|fried chicken|burger|fries|pizza|sandwich|"
+            r"noodles?|dumplings?|dessert|cake|drink|soda)\b|"
+            r"(?:食物|吃饭|鸡肉|炸鸡|汉堡|薯条|面条|饺子|甜点|蛋糕|饮料)",
+            transcript_text, re.I,
+        )
+        if invitation and food_context:
+            food_match = re.search(
+                r"\b(?:fried chicken|chicken|burger|fries|pizza|sandwich|"
+                r"noodles?|dumplings?|dessert|cake|drink|soda)\b|"
+                r"(?:炸鸡|鸡肉|汉堡|薯条|面条|饺子|甜点|蛋糕|饮料)",
+                quote, re.I,
+            )
+            food = food_match.group(0) if food_match else "food"
+            facts.append({
+                "subject_type": "event", "subject": "shared meal",
+                "predicate": "invited_to_try_food",
+                "value": f"The speaker invites the user to try the {food}.",
+                "actor": speaker_alias, "affected_people": ["user"],
+                "modality": "speech", "status": "spoken_event", "confidence": "high",
+                "evidence": quote[:500], "evidence_ref": dict(evidence_ref),
+                "time_order": len(facts) + 1,
+            })
+
         self_role_match = (_EXPLICIT_SELF_ROLE_RE.search(quote)
                            or _EXPLICIT_CHINESE_SELF_ROLE_RE.search(quote))
         neighbor_self_identified = bool(_EXPLICIT_SELF_NEIGHBOR_RE.search(quote))
@@ -805,6 +836,8 @@ def _summarize_explicit_speech_facts(facts, identity_links=None):
                 events.append((start, f"The audio records a speaker thanking {target}."))
             else:
                 events.append((start, "The audio records a speaker giving thanks."))
+        elif predicate == "invited_to_try_food":
+            events.append((start, "A speaker invites the user to try the food."))
         elif predicate == "spoken_disfluency":
             events.append((start, "A following utterance contains repeated hesitation fillers; its speaker is not diarized."))
         elif predicate == "gave_spoken_instruction":

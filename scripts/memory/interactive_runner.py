@@ -76,8 +76,8 @@ _AGE_CLAIM_RE = re.compile(
 )
 
 
-PERSON_PROFILE_CACHE_VERSION = "multimodal-scene-summary-v16-clinical-role-user-search-2026-10-23"
-CONTENT_SUMMARY_VERSION = "joint-user-copy-clinical-grounding-v12-2026-10-23"
+PERSON_PROFILE_CACHE_VERSION = "multimodal-scene-summary-v17-social-offer-grounding-2026-10-23"
+CONTENT_SUMMARY_VERSION = "joint-user-copy-clinical-social-offer-v13-2026-10-23"
 
 
 
@@ -375,6 +375,62 @@ def _ground_delivery_person_role(observations, transcript, source_segment_id):
         target["evidence_refs"] = unique[:16]
         target["evidence_ref"] = unique[0]
     return rows, mapping
+
+
+def _ground_food_invitation_speech_facts(facts, observations):
+    """Link explicit food invitations to one uniquely grounded meal companion."""
+    candidates = []
+    for row in observations or []:
+        if not isinstance(row, dict):
+            continue
+        label = str(row.get("entity") or "").strip()
+        context = " ".join(str(value) for value in (
+            row.get("relationships") or [], row.get("roles") or [],
+            [row.get("profile_context") or ""]))
+        is_companion = (label.casefold() in {"friend", "meal companion"}
+                        or bool(re.search(r"\bfriend\b|\bmeal companion\b", context, re.I)))
+        refs = list(row.get("evidence_refs") or [])
+        if isinstance(row.get("evidence_ref"), dict):
+            refs.append(row["evidence_ref"])
+        visual_refs = [dict(ref) for ref in refs if isinstance(ref, dict)
+                       and str(ref.get("modality") or "").casefold() == "visual"]
+        if label and is_companion and visual_refs:
+            candidates.append((label, visual_refs))
+    unique = {label.casefold(): (label, refs) for label, refs in candidates}
+    if len(unique) != 1:
+        return
+    label, visual_refs = next(iter(unique.values()))
+    for fact in facts or []:
+        if not isinstance(fact, dict) or str(fact.get("predicate") or "").casefold() != "invited_to_try_food":
+            continue
+        prior_actor = str(fact.get("actor") or "").casefold()
+        if prior_actor not in {"", "unidentified speaker", "unknown speaker", "speaker"}:
+            continue
+        fact["actor"] = label
+        fact["subject"] = "shared meal"
+        fact["modality"] = "cross_modal"
+        fact["status"] = "inferred"
+        fact["confidence"] = "medium"
+        fact["evidence"] = (str(fact.get("evidence") or "")
+                            + " The uniquely grounded visible meal companion is linked to the speaker "
+                              "by the shared-food interaction.")[:500]
+        refs = list(fact.get("evidence_refs") or [])
+        if isinstance(fact.get("evidence_ref"), dict):
+            refs.append(fact["evidence_ref"])
+        refs.extend(visual_refs)
+        unique_refs, seen = [], set()
+        for ref in refs:
+            if not isinstance(ref, dict):
+                continue
+            key = tuple(ref.get(name) for name in (
+                "source_segment_id", "modality", "frame_index", "frame_time_s",
+                "audio_start_s", "audio_end_s"))
+            if key not in seen:
+                seen.add(key)
+                unique_refs.append(dict(ref))
+        if unique_refs:
+            fact["evidence_ref"] = unique_refs[0]
+            fact["evidence_refs"] = unique_refs[:16]
 
 
 def _ground_delivery_payment_speech_facts(facts, observations):
@@ -1518,6 +1574,16 @@ class InteractiveSession(PostWriteRetrievalMixin):
                 "When repeated OCR line items conflict with the printed total, report the item and reconciled "
                 "total without inventing a quantity or number of meals. Do not combine transactions across clips "
                 "unless source evidence clearly establishes they are the same transaction. "
+                "Recognize explicit social speech acts such as invitations, offers, requests, "
+                "greetings, and thanks as events with a speaker, intended listener, requested item or action, "
+                "and exact transcript evidence. A direct imperative such as Have a try in a food context "
+                "is an invitation to the off-camera user; man is a vocative, not proof of gender or friendship. "
+                "If one visible participant is clearly sharing or presenting the food and is the only plausible "
+                "speaking participant in that interaction, link the invitation to that person at medium confidence. "
+                "When a clip shows a shared meal plus a direct personal food invitation, record the participant as "
+                "a friend or meal companion of the user with medium confidence as a contextual inference, not as an "
+                "explicit self-stated relationship. Preserve the invitation event even if speaker identity remains "
+                "unresolved; never infer friendship from a vocative alone. "
                 "Never infer mental states, needs, intentions, or advice from silence, hesitation, "
                 "facial expression, or context. Record observable hesitation as hesitation, without "
                 "claiming the person does not know what to say. You may summarize an explicitly spoken "
@@ -1678,8 +1744,25 @@ class InteractiveSession(PostWriteRetrievalMixin):
             if confidence not in {"high", "medium"}:
                 continue
             display = " ".join(str(update_row.get("display_label") or "").split()).strip(" .，。;；:")
+            contextual_labels = []
+            for label_field in ("roles", "relationships"):
+                values = update_row.get(label_field)
+                if isinstance(values, list):
+                    contextual_labels.extend(str(value) for value in values if isinstance(value, str))
+            contextual_label_supported = bool(display) and any(
+                normalize_quote(display) in normalize_quote(value)
+                for value in contextual_labels if normalize_quote(value)
+            )
+            try:
+                display_frame = int(update_row.get("frame") or 0)
+            except (TypeError, ValueError):
+                display_frame = 0
+            visual_linked_label = 1 <= display_frame <= len(image_frames)
+            transcript_named_label = any(
+                normalize_quote(display) in normalize_quote(item[0]) for item in matched
+            ) if display else False
             if (display and len(display) <= 80 and confidence in {"high", "medium"}
-                    and any(normalize_quote(display) in normalize_quote(item[0]) for item in matched)):
+                    and (transcript_named_label or (contextual_label_supported and visual_linked_label))):
                 target["entity"] = display
             relationships = update_row.get("relationships")
             if isinstance(relationships, list):
@@ -2348,6 +2431,8 @@ class InteractiveSession(PostWriteRetrievalMixin):
                     != str(new_row.get("entity")).strip().casefold()
                 }
                 _ground_delivery_payment_speech_facts(
+                    fields.get("temporal_facts") or [], observations)
+                _ground_food_invitation_speech_facts(
                     fields.get("temporal_facts") or [], observations)
                 if alias_map:
                     _remap_person_labels_in_fields(fields, alias_map)
@@ -3467,6 +3552,7 @@ class InteractiveSession(PostWriteRetrievalMixin):
         speech_facts = (_extract_explicit_speech_facts(source_audio_text, dataset_id)
                         if source_audio_text else [])
         _ground_delivery_payment_speech_facts(speech_facts, person_observations)
+        _ground_food_invitation_speech_facts(speech_facts, person_observations)
         if source_audio_text:
             f["source_evidence"] = source_audio_text
         entity_labels_before_identity = [
