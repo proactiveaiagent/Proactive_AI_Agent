@@ -16,6 +16,8 @@ import io
 import shutil
 import tempfile
 import asyncio
+import threading
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -24,11 +26,13 @@ from typing import List
 import torch
 from fastapi import FastAPI, File, UploadFile, Form, Request
 from fastapi.responses import JSONResponse
-from transformers import AutoModelForVision2Seq, AutoProcessor
+from transformers import (
+    AutoModelForImageTextToText, AutoProcessor, StoppingCriteria, StoppingCriteriaList,
+)
 from PIL import Image
 import uvicorn
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+os.environ.setdefault("CUDA_VISIBLE_DEVICES", "0")
 
 # ---------------------------------------------------------------------------
 # Global state
@@ -40,6 +44,83 @@ whisper_model = None
 
 # Prevents concurrent generate() calls from OOM-ing the GPU
 _generate_lock = asyncio.Lock()
+_inference_cancel_lock = threading.Lock()
+_inference_cancel_events = {}
+_inference_cancel_pending = {}
+
+
+class _StopGenerationOnEvent(StoppingCriteria):
+    def __init__(self, event):
+        self.event = event
+
+    def __call__(self, input_ids, scores, **kwargs):
+        return self.event.is_set()
+
+
+def _register_inference_cancel_event(request_id):
+    request_id = str(request_id or "").strip()
+    if not request_id:
+        return None
+    now = time.time()
+    with _inference_cancel_lock:
+        for key, timestamp in list(_inference_cancel_pending.items()):
+            if now - timestamp > 180:
+                _inference_cancel_pending.pop(key, None)
+        event = threading.Event()
+        if request_id in _inference_cancel_pending:
+            event.set()
+            _inference_cancel_pending.pop(request_id, None)
+        _inference_cancel_events[request_id] = event
+        return event
+
+
+def _finish_inference_cancel_event(request_id, event):
+    if not request_id:
+        return
+    with _inference_cancel_lock:
+        if _inference_cancel_events.get(request_id) is event:
+            _inference_cancel_events.pop(request_id, None)
+
+
+def _cancelled_response():
+    return JSONResponse(
+        content={"cancelled": True, "error": "Inference cancelled"},
+        status_code=409,
+    )
+
+
+def _generate_video_with_cancel(inputs, cancel_event):
+    options = {}
+    if cancel_event is not None:
+        options["stopping_criteria"] = StoppingCriteriaList([
+            _StopGenerationOnEvent(cancel_event)
+        ])
+    return qwen_model.generate(
+        **inputs,
+        max_new_tokens=2048,
+        top_p=0.8,
+        top_k=20,
+        temperature=0.3,
+        repetition_penalty=1.0,
+        **options,
+    )
+
+
+def _generate_text_with_cancel(inputs, cancel_event):
+    options = {}
+    if cancel_event is not None:
+        options["stopping_criteria"] = StoppingCriteriaList([
+            _StopGenerationOnEvent(cancel_event)
+        ])
+    return qwen_model.generate(
+        **inputs,
+        max_new_tokens=4096,
+        top_p=0.8,
+        top_k=20,
+        temperature=0.2,
+        repetition_penalty=1.05,
+        **options,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -52,11 +133,14 @@ async def lifespan(app: FastAPI):
 
     # ── Qwen3-VL ────────────────────────────────────────────────────────────
     print("🚀 Loading Qwen3-VL model...")
-    model_path = "/hpc2hdd/home/jyinap/Proactive_Agent/models/Qwen3-VL-4B-Instruct"
+    model_path = os.environ.get(
+        "QWEN_MODEL_PATH",
+        "/data/cxr25/zhx/HF_HOME/qwen/Qwen3-VL-8B-Instruct",
+    )
 
-    qwen_model = AutoModelForVision2Seq.from_pretrained(
+    qwen_model = AutoModelForImageTextToText.from_pretrained(
         model_path,
-        torch_dtype=torch.bfloat16,   # ← fixed: was `dtype`
+        torch_dtype=torch.bfloat16,
         device_map="auto",
         trust_remote_code=True
     )
@@ -70,12 +154,19 @@ async def lifespan(app: FastAPI):
     print("🚀 Loading Whisper model...")
     from faster_whisper import WhisperModel
 
-    whisper_size = os.environ.get("WHISPER_MODEL_SIZE", "medium")
     w_device = "cuda" if torch.cuda.is_available() else "cpu"
     compute_type = "float16" if w_device == "cuda" else "float32"
 
-    whisper_model = WhisperModel(whisper_size, device=w_device, compute_type=compute_type)
-    print(f"✅ Whisper ({whisper_size}) ready on {w_device} ({compute_type})")
+    # 优先用本地模型目录（含 model.bin），不触发 HF 下载（避免临时目录清理失败）；
+    # 否则回退到 WHISPER_MODEL_SIZE（模型名，走 HF 下载）。
+    whisper_model_path = os.environ.get("WHISPER_MODEL_PATH", "")
+    if whisper_model_path and os.path.isdir(whisper_model_path):
+        whisper_model = WhisperModel(whisper_model_path, device=w_device, compute_type=compute_type)
+        print(f"✅ Whisper ready from local path {whisper_model_path}")
+    else:
+        whisper_size = os.environ.get("WHISPER_MODEL_SIZE", "tiny")
+        whisper_model = WhisperModel(whisper_size, device=w_device, compute_type=compute_type)
+        print(f"✅ Whisper ({whisper_size}) ready on {w_device} ({compute_type})")
 
     yield  # server runs here
 
@@ -163,15 +254,25 @@ async def analyze(image: UploadFile = File(...), prompt: str = Form(...)):
 # ---------------------------------------------------------------------------
 
 @app.post("/analyze_video")
-async def analyze_video(images: List[UploadFile] = File(...), prompt: str = Form(...)):
-    """Analyze a sequence of frames (sampled from a video) with Qwen3-VL."""
-    if not images:
-        return JSONResponse(content={"error": "No images provided"}, status_code=400)
-
+async def analyze_video(
+    images: List[UploadFile] = File(...),
+    prompt: str = Form(...),
+    request_id: str = Form(default=""),
+):
+    """Analyze video frames and allow the memory UI to cancel generation."""
+    request_id = str(request_id or "").strip()
+    cancel_event = _register_inference_cancel_event(request_id)
     tmp_paths: List[str] = []
     try:
-        # Persist each uploaded frame to its own temp file
+        if not images:
+            return JSONResponse(content={"error": "No images provided"}, status_code=400)
+        if cancel_event is not None and cancel_event.is_set():
+            return _cancelled_response()
+
+        # Persist each uploaded frame to its own temp file.
         for img in images:
+            if cancel_event is not None and cancel_event.is_set():
+                return _cancelled_response()
             suffix = Path(img.filename).suffix if img.filename else ".jpg"
             tmp_fd, tmp_path = tempfile.mkstemp(suffix=suffix)
             try:
@@ -180,7 +281,6 @@ async def analyze_video(images: List[UploadFile] = File(...), prompt: str = Form
                 with os.fdopen(tmp_fd, "wb") as f:
                     pil_image.save(f, format="JPEG")
             except Exception:
-                # ensure the fd is closed even if PIL fails
                 try:
                     os.close(tmp_fd)
                 except Exception:
@@ -188,8 +288,6 @@ async def analyze_video(images: List[UploadFile] = File(...), prompt: str = Form
                 raise
             tmp_paths.append(tmp_path)
 
-        # Build a multi-image message — Qwen3-VL handles a frame sequence
-        # natively when given several "image" entries in order.
         content = [{"type": "image", "image": p} for p in tmp_paths]
         content.append({"type": "text", "text": prompt})
         messages = [{"role": "user", "content": content}]
@@ -202,16 +300,23 @@ async def analyze_video(images: List[UploadFile] = File(...), prompt: str = Form
             return_tensors="pt"
         ).to(qwen_model.device)
 
+        if cancel_event is not None and cancel_event.is_set():
+            return _cancelled_response()
+
         async with _generate_lock:
-            generated_ids = qwen_model.generate(
-                **inputs,
-                max_new_tokens=2048,
-                top_p=0.8,
-                top_k=20,
-                temperature=0.3,
-                repetition_penalty=1.0
-            )
-            torch.cuda.empty_cache()
+            if cancel_event is not None and cancel_event.is_set():
+                return _cancelled_response()
+            try:
+                # Keep the event loop responsive so /cancel_inference can set the
+                # stopping event while the model is generating tokens.
+                generated_ids = await asyncio.to_thread(
+                    _generate_video_with_cancel, inputs, cancel_event
+                )
+            finally:
+                torch.cuda.empty_cache()
+
+        if cancel_event is not None and cancel_event.is_set():
+            return _cancelled_response()
 
         trimmed = [
             out[len(inp):]
@@ -223,14 +328,38 @@ async def analyze_video(images: List[UploadFile] = File(...), prompt: str = Form
         return JSONResponse(content={"analysis": output[0], "num_frames": len(tmp_paths)})
 
     except Exception as e:
+        if cancel_event is not None and cancel_event.is_set():
+            return _cancelled_response()
         return JSONResponse(content={"error": str(e)}, status_code=500)
     finally:
+        _finish_inference_cancel_event(request_id, cancel_event)
         for p in tmp_paths:
             if os.path.exists(p):
                 try:
                     os.unlink(p)
                 except Exception:
                     pass
+
+
+@app.post("/cancel_inference")
+async def cancel_inference(request: Request):
+    """Signal a running /analyze_video generation to stop between tokens."""
+    try:
+        payload = await request.json()
+        request_id = str(payload.get("request_id") or "").strip()
+    except Exception:
+        request_id = ""
+    if not request_id:
+        return JSONResponse(content={"cancelled": False, "error": "request_id is required"},
+                            status_code=400)
+    now = time.time()
+    with _inference_cancel_lock:
+        event = _inference_cancel_events.get(request_id)
+        if event is not None:
+            event.set()
+        else:
+            _inference_cancel_pending[request_id] = now
+    return JSONResponse(content={"cancelled": True, "accepted": True})
 
 
 # ---------------------------------------------------------------------------
@@ -324,12 +453,18 @@ async def analyze_raw_video(
 
 @app.post("/consolidate")
 async def consolidate_memory(request: Request):
-    """Memory consolidation — text-only Qwen call."""
+    """Memory consolidation — text-only Qwen call, cancellable by request ID."""
+    request_id = ""
+    cancel_event = None
     try:
         data = await request.json()
         prompt = data.get("prompt", "")
+        request_id = str(data.get("request_id") or "").strip()
+        cancel_event = _register_inference_cancel_event(request_id)
         if not prompt:
             return JSONResponse(content={"error": "No prompt provided"}, status_code=400)
+        if cancel_event is not None and cancel_event.is_set():
+            return _cancelled_response()
 
         messages = [{
             "role": "user",
@@ -344,17 +479,20 @@ async def consolidate_memory(request: Request):
             return_tensors="pt"
         ).to(qwen_model.device)
 
+        if cancel_event is not None and cancel_event.is_set():
+            return _cancelled_response()
         async with _generate_lock:
-            generated_ids = qwen_model.generate(
-                **inputs,
-                max_new_tokens=4096,
-                top_p=0.8,
-                top_k=20,
-                temperature=0.2,
-                repetition_penalty=1.05
-            )
-            torch.cuda.empty_cache()
+            if cancel_event is not None and cancel_event.is_set():
+                return _cancelled_response()
+            try:
+                generated_ids = await asyncio.to_thread(
+                    _generate_text_with_cancel, inputs, cancel_event
+                )
+            finally:
+                torch.cuda.empty_cache()
 
+        if cancel_event is not None and cancel_event.is_set():
+            return _cancelled_response()
         trimmed = [
             out[len(inp):]
             for inp, out in zip(inputs.input_ids, generated_ids)
@@ -365,7 +503,11 @@ async def consolidate_memory(request: Request):
         return JSONResponse(content={"analysis": output[0]})
 
     except Exception as e:
+        if cancel_event is not None and cancel_event.is_set():
+            return _cancelled_response()
         return JSONResponse(content={"error": str(e)}, status_code=500)
+    finally:
+        _finish_inference_cancel_event(request_id, cancel_event)
 
 
 # ---------------------------------------------------------------------------
@@ -450,4 +592,6 @@ async def health():
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    # 端口可用环境变量 PORT 覆盖（8000 常被其他服务占用，改用 8001）
+    port = int(os.environ.get("PORT", "8000"))
+    uvicorn.run(app, host="0.0.0.0", port=port)

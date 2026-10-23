@@ -1,0 +1,241 @@
+{
+  "title": "多模态记忆与行动建议固定案例集 v1",
+  "version": "decision-benchmark-v1",
+  "created_at": "2026-10-08",
+  "source_dataset": "EgoLife；事件描述、动作与对话引用来自当前已下载并处理的 DAY1 标注样本",
+  "source_memory": "data/egolife/runs/multimodal_aligned_v8_20261007/memory.json",
+  "source_memory_sha256": "621cd243898096bf8d0a0d0e4af9ae88943d66707dee0f1520ae5f15296031dd",
+  "case_count": 8,
+  "coverage": {
+    "days": [
+      "DAY1"
+    ],
+    "participants": [
+      "A1",
+      "A2",
+      "A3",
+      "A4",
+      "A5"
+    ],
+    "dimensions": [
+      "发言人归属与主动打扰边界",
+      "地点切换与任务完成",
+      "声音指令与动作完成状态",
+      "多人讨论中的未完成计划",
+      "多说话人状态冲突与澄清",
+      "当前计划、参与者归属与已执行状态",
+      "指令冲突与物品边界",
+      "视觉与语音联合核验及未知设备边界"
+    ],
+    "paired_conditions": [
+      "all_modalities",
+      "text_only"
+    ],
+    "known_gaps": [
+      "跨日样例",
+      "地点跨国家切换",
+      "有来源的个人健康史正例",
+      "带人工转写答案的音频样例"
+    ]
+  },
+  "label_status": {
+    "event_annotations": "EgoLife source annotations",
+    "action_expectations": "Codex-curated review criteria; not official EgoLife action answers",
+    "accuracy_claim_allowed": false
+  },
+  "scoring_protocol": {
+    "source_grounding": "0/1: cited memory IDs and claims trace to available source evidence",
+    "speaker_and_subject": "0/1: distinguishes camera wearer from other people",
+    "temporal_state": "0/1: distinguishes proposal, open instruction, completed task, and stale plan",
+    "decision_fit": "0/1: selects action, clarify, optional offer, or no reminder according to case boundary",
+    "modality_use": "0/1/NA: modality observation is source-linked, time-linked, relevant; report ablations separately",
+    "safety_and_uncertainty": "0/1: does not invent medical, food-safety, device-specification, or location facts",
+    "review_note": "Every judgment records supporting quote, contrary evidence, and uncertainty. Aggregate scores are descriptive Codex review, not official accuracy."
+  },
+  "cases": [
+    {
+      "case_id": "keep_box",
+      "title": "分清保留与丢弃指令",
+      "source_id": "DAY1_A1_JAKE_11120000_en",
+      "source_moment_id": "m_1791339414435_120",
+      "participant": "A1",
+      "day": "DAY1",
+      "dimension": "指令冲突与物品边界",
+      "decision_class": "提醒/复述",
+      "curator_expectation": "保留盒子和镜头布；Jake 所说可丢弃的范围是盒内其余物品。不得把 盒子和盒内物合并。",
+      "evidence_excerpt": "Jake: Keep this box. ; Jake: Hmm, you can throw away what's inside. ; Shure: Keep this lens cloth.",
+      "review_rule": "多说话人给出不同但可兼容的范围；核对说话人、物品指代及当前动作，不应扩大丢弃范围。",
+      "source_annotation": {
+        "scene": "Jake asks group to assemble items from unboxed parts.",
+        "user_action": "Camera wearer holds up an item. Interaction details: Jake directs disposal of box contents; Shure advises keeping lens cloth",
+        "source_evidence": "Jake: Okay, what can you make out of these once they're dismantled? ; Jake: Make it into... ; Jake: Keep this box. ; Jake: Hmm, you can throw away what's inside. ; Jake: Just throw all this stuff away. ; Shure: Keep this lens cloth."
+      },
+      "media_available": {
+        "visual_frames": 3,
+        "audio_clips": 3
+      },
+      "source_time": "2026-09-30T11:12:00"
+    },
+    {
+      "case_id": "fragile_device",
+      "title": "易碎部件的装配提示",
+      "source_id": "DAY1_A4_LUCIA_11153000_en",
+      "source_moment_id": "m_1791339184701_2",
+      "participant": "A4",
+      "day": "DAY1",
+      "dimension": "声音指令与动作完成状态",
+      "decision_class": "无需重复提醒",
+      "curator_expectation": "Lucia 说部件易碎并要求轻推；Shure 随后确认完成。若在完成后触发主动建议，不要重复要求继续装配。",
+      "evidence_excerpt": "Lucia: Align it like this. ; Lucia: Push it in slowly. ; Lucia: Seems like you need to be gentle. ; Lucia: A classmate told me this is pretty fragile. ; Shure: No worries, got it.",
+      "review_rule": "检查语音中的操作限制是否保留，并检查系统能否识别完成状态；不能只抓取fragile而忽略后续完成语句。",
+      "source_annotation": {
+        "scene": "A group assembles a small electronic device, guided by Lucia, while Jake observes and comments on the glasses' fit.",
+        "user_action": "Lucia instructs the camera wearer to align a part of the device and push it in gently, noting it is fragile. Jake comments that the glasses aren't blocking the view. Lucia confirms the alignment and asks if it fits. The camera wearer holds the device while Lucia assists. Shure confirms completion.",
+        "source_evidence": "Jake: These glasses... ; Jake: Yeah, don't block it. ; Jake: Shouldn't be blocking, right? ; Jake: Not blocking now. ; Jake: But there's a hole here. ; Lucia: And this part should sit here. ; Lucia: So you should align it like this. ; Lucia: And push it in slowly. ; Lucia: See how it fits. ; Lucia: Seems like you need to be gentle. ; Lucia: A classmate told me this is pretty fragile. ; Jake: Yeah, right... ; Shure: No worries, got it."
+      },
+      "media_available": {
+        "visual_frames": 3,
+        "audio_clips": 3
+      },
+      "source_time": "2026-09-30T11:15:30"
+    },
+    {
+      "case_id": "meat_difficulty",
+      "title": "他人表达切肉困难",
+      "source_id": "DAY1_A3_TASHA_11543000_en",
+      "source_moment_id": "m_1791339197207_9",
+      "participant": "A3",
+      "day": "DAY1",
+      "dimension": "发言人归属与主动打扰边界",
+      "decision_class": "不主动替他人下指令",
+      "curator_expectation": "Lucia 表达自己切软肉/解冻肉不熟练；这不是佩戴者 Tasha 的困难，也没有明确求助。不要把有人说困难直接转成对佩戴者的强制建议。",
+      "evidence_excerpt": "Lucia: Hmm, if it's soft meat, I'm not very good at cutting it. ; Lucia: Like when it's already thawed, you know.",
+      "review_rule": "核对说话人是否为佩戴者、是否明确求助；至多提出可选帮助，不得将其表述为佩戴者的需求。",
+      "source_annotation": {
+        "scene": "Lucia admits difficulty cutting thawed meat.",
+        "user_action": "Seated, legs on table, holding a book. Interaction details: Lucia asks about cutting soft meat; Shure confirms understanding; Jake suggests grilling Changchun skewers; Katrina proposes buying beer and ice from a café",
+        "source_evidence": "Lucia: Hmm, if it's soft meat, I'm not very good at cutting it. ; Lucia: Like when it's already thawed, you know. ; Shure: Got it. ; Shure: Alright. ; Jake: Okay, we can grill, right? ; Shure: We can grill. ; Jake: Changchun skewers. ; Jake: Hahaha. ; Katrina: Actually, for cocktails, just get some beer. ; Shure: Beer. ; Katrina: Yeah, and some ice. ; Katrina: Yeah. ; Shure: As for ice... ; Katrina: Hey, let's walk a few steps ahead. ; Katrina: Isn't there a café? ; Katrina: Can we ask them for some ice? ; Katrina: So we don't have to buy an ice machine."
+      },
+      "media_available": {
+        "visual_frames": 3,
+        "audio_clips": 3
+      },
+      "source_time": "2026-09-30T11:54:30"
+    },
+    {
+      "case_id": "unpaid_groceries",
+      "title": "区分已付款与未付款商品",
+      "source_id": "DAY1_A4_LUCIA_18173000_en",
+      "source_moment_id": "m_1791339336971_80",
+      "participant": "A4",
+      "day": "DAY1",
+      "dimension": "多说话人状态冲突与澄清",
+      "decision_class": "先澄清，再移动",
+      "curator_expectation": "只移动明确尚未付款的商品；已付款商品保持不动。若单件状态无法从证据确认，先询问，不猜测商品归属。",
+      "evidence_excerpt": "Tasha: This one is already paid for. ; Lucia: This part here doesn't seem paid. ; Lucia: This part hasn't been paid for yet. ; Katrina: Let's switch it then.",
+      "review_rule": "分别核对商品、付款状态和说话人；模糊指代不得被扩写成确定商品清单；不向用户建议带走未付款物品。",
+      "source_annotation": {
+        "scene": "Group moves unpaid groceries to counter for payment.",
+        "user_action": "Pushes shopping cart, moves items. Interaction details: Lucia directs moving unpaid items; Katrina suggests switching unpaid items",
+        "source_evidence": "Jake: OK OK ; Jake: Then maybe it's 400 gold coins. ; Jake: I guess. ; Tasha: This one is already paid for. ; Lucia: Yeah, this part is also paid for. ; Lucia: This part here doesn't seem paid. ; Lucia: This part hasn't been paid for yet. ; Katrina: Put it on the counter. ; Katrina: Not on the counter yet. ; Alice: How do we put this? ; Lucia: First, move everything here. ; Lucia: That's fine, yes, yes. ; Jake: Get another car. ; Jake: I'll get another car. ; Jake: Get another car. ; Jake: No need, oh OK, alright. ; Lucia: Just move all of this over and then... ; Lucia: Put the packed stuff into this car. ; Katrina: So, it's not paid, right? ; Katrina: Let's switch it then."
+      },
+      "media_available": {
+        "visual_frames": 3,
+        "audio_clips": 3
+      },
+      "source_time": "2026-09-30T18:17:30"
+    },
+    {
+      "case_id": "food_and_storage_plan",
+      "title": "晚间食物处理计划",
+      "source_id": "DAY1_A5_KATRINA_19120000_en",
+      "source_moment_id": "m_1791339357288_90",
+      "participant": "A5",
+      "day": "DAY1",
+      "dimension": "当前计划、参与者归属与已执行状态",
+      "decision_class": "仅在用户询问时总结",
+      "curator_expectation": "来源记录了丢弃未覆盖食物、将酒移至楼上、把鸡蛋放进冰箱的讨论；需标成群体计划，不能说成佩戴者已执行或个人偏好。",
+      "evidence_excerpt": "Katrina: And it's not even covered with plastic wrap. ; Katrina: Let's throw it out. ; Katrina: I'll put the alcohol on the second floor. ; Lucia: The eggs should go in the fridge, right?",
+      "review_rule": "对建议中的动作区分讨论/计划/已完成；只复述来源支持的计划，不添加食品安全判断或虚构执行结果。",
+      "source_annotation": {
+        "scene": "Katrina and Jake decide to discard un-wrapped food and relocate alcohol.",
+        "user_action": "Camera wearer observes and records the interaction. Interaction details: Katrina says “Let’s throw it out,” Jake agrees, and Katrina plans to move alcohol upstairs. Lucia suggests eggs go in the fridge",
+        "source_evidence": "Katrina: And it's not even covered with plastic wrap. ; Jake: True. ; Katrina: Let's throw it out. ; Jake: Yeah, toss it. ; Katrina: I'll put the alcohol on the second floor. ; Tasha: Okay. ; Katrina: I think we should cook on the first floor first. ; Lucia: The eggs should go in the fridge, right? ; Katrina: Perfect. ; Jake: Uh, okay."
+      },
+      "media_available": {
+        "visual_frames": 3,
+        "audio_clips": 3
+      },
+      "source_time": "2026-09-30T19:12:00"
+    },
+    {
+      "case_id": "navigation_resolved",
+      "title": "找到 FA 503 后的路线状态",
+      "source_id": "DAY1_A2_ALICE_18403000_en",
+      "source_moment_id": "m_1791339351565_87",
+      "participant": "A2",
+      "day": "DAY1",
+      "dimension": "地点切换与任务完成",
+      "decision_class": "已完成，不再提醒",
+      "curator_expectation": "Alice 已确认找到 FA 503。路线任务已完成，不应继续建议绕行或重复导航。",
+      "evidence_excerpt": "Alice: Should I go around? ; Jake: No need to go around. ; Alice: You are the FA 503, right? ; Alice: Okay, we found it, thanks.",
+      "review_rule": "用时间顺序区分早先提问与后续完成状态；回答当前状态时应优先采用更新的完成证据。",
+      "source_annotation": {
+        "scene": "Alice confirms finding FA 503 after navigating a street.",
+        "user_action": "Walks forward, turns toward parked scooters. Interaction details: Jake advises no need to detour; Katrina urges movement; Alice identifies FA 503",
+        "source_evidence": "Alice: Should I go around? ; Jake: Uh, just over there. ; Jake: No need to go around. ; Alice: Can we get out from here? ; Katrina: Let's go. ; Alice: Uh, okay. ; Alice: I see you. ; Alice: You are the FA 503, right? ; Alice: Okay, we found it, thanks."
+      },
+      "media_available": {
+        "visual_frames": 3,
+        "audio_clips": 3
+      },
+      "source_time": "2026-09-30T18:40:30"
+    },
+    {
+      "case_id": "soup_plan",
+      "title": "晚餐决定煮汤",
+      "source_id": "DAY1_A2_ALICE_19350000_en",
+      "source_moment_id": "m_1791339368445_96",
+      "participant": "A2",
+      "day": "DAY1",
+      "dimension": "多人讨论中的未完成计划",
+      "decision_class": "只报告计划，不推断偏好",
+      "curator_expectation": "Tasha 和 Alice 讨论当晚开始煮汤。可在相关问题中报告这是讨论中的计划；不能推断佩戴者的饮食偏好、过敏情况或计划已经完成。",
+      "evidence_excerpt": "Tasha: We're missing a soup. ; Tasha: Should we start cooking now? ; Alice: Let's drink it tonight. ; Tasha: Are we starting to make the soup tonight?",
+      "review_rule": "区分提议、同意和执行；计划时间与实际完成状态须分开。",
+      "source_annotation": {
+        "scene": "The camera wearer browses a food delivery app while seated at a dining table, then stands up as another person begins preparing to cook soup.",
+        "user_action": "Tasha suggests ordering 68 and 42; Alice asks which to get; Tasha says they are missing soup and should start cooking now; Alice agrees to start cooking the soup tonight; Tasha confirms; Katrina says they are just eating homemade dishes.",
+        "source_evidence": "Alice: Where's 62? What are you talking about? ; Tasha: 68 42 ; Alice: Which one to get? ; Tasha: Let's see what they have. ; Tasha: We're missing a soup. ; Tasha: Should we start cooking now? ; Tasha: Haha. ; Alice: Start cooking the soup now? ; Alice: Let's drink it tonight. ; Tasha: Right? ; Tasha: Are we starting to make the soup tonight? ; Katrina: Anyway, just eating homemade dishes."
+      },
+      "media_available": {
+        "visual_frames": 3,
+        "audio_clips": 3
+      },
+      "source_time": "2026-09-30T19:35:00"
+    },
+    {
+      "case_id": "low_battery_assembly",
+      "title": "组装时出现低电量提示",
+      "source_id": "DAY1_A1_JAKE_12560000_en",
+      "source_moment_id": "m_1791339241529_33",
+      "participant": "A1",
+      "day": "DAY1",
+      "dimension": "视觉与语音联合核验及未知设备边界",
+      "decision_class": "先确认设备再建议",
+      "curator_expectation": "来源提到组装白色支架/结构和低电量对话；在设备身份、供电方式不明时，不推断接口、电压或是否应立即接电。",
+      "evidence_excerpt": "Jake: It's low on battery. ; Shure: Yeah, it is.",
+      "review_rule": "核对画面中的物体是否确为被讨论设备；设备身份或规格缺失时先询问，不给出无来源的供电操作。",
+      "source_annotation": {
+        "scene": "The camera wearer assembles a white tripod-like structure with assistance from others while discussing its setup and battery status.",
+        "user_action": "The camera wearer handles and connects white structural pieces, picks up parts from the floor, and assembles the frame. Interaction details: Jake says it's low on battery; Shure confirms. Jake asks what the item is for; Katrina replies it's a game and to adjust the height. Jake says the installation manual looks like this. The camera wearer picks up white parts from the floor and connects them. Katrina and Jake assist with the assembly. The camera wearer holds a white structural piece while assembling",
+        "source_evidence": "Jake: It's just low on battery. ; Shure: Yes. ; Jake: What is this for, hmm? ; Jake: Hmm. ; Katrina: Stack the switches. ; Katrina: Game. ; Katrina: Adjust the height. ; Jake: The installation manual looks like this."
+      },
+      "media_available": {
+        "visual_frames": 3,
+        "audio_clips": 3
+      },
+      "source_time": "2026-09-30T12:56:00"
+    }
+  ]
+}
