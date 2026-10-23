@@ -896,6 +896,9 @@ def _clean_source_fact_rows(rows, kind: str, limit: int) -> list:
                 "spoken_aliases", "relationships", "roles", "profile_context",
                 "profile_confidence"}
                if kind == "person" else
+               {"object", "appearance", "evidence", "confidence", "frame_index",
+                "frame_time_s", "evidence_ref", "evidence_refs", "roles"}
+               if kind == "object" else
                {"subject_type", "subject", "predicate", "value", "actor",
                 "affected_people", "from_location", "to_location", "from_state",
                 "to_state", "time_scope", "time_order", "frame_index",
@@ -912,7 +915,7 @@ def _clean_source_fact_rows(rows, kind: str, limit: int) -> list:
         if isinstance(segment, str) and segment.strip():
             ref["source_segment_id"] = segment.strip()[:128]
         modality = source_ref.get("modality")
-        if modality in {"visual", "speech", "cross_modal"}:
+        if modality in {"visual", "speech", "cross_modal", "user_review"}:
             ref["modality"] = modality
         frame_index = source_ref.get("frame_index")
         if isinstance(frame_index, int) and not isinstance(frame_index, bool) and frame_index > 0:
@@ -1059,14 +1062,17 @@ def _clean_source_fact_rows(rows, kind: str, limit: int) -> list:
                 row.pop("apparent_age_basis", None)
         if row.get("confidence") not in {"high", "medium", "low"}:
             row.pop("confidence", None)
-        if row.get("modality") not in {"visual", "speech", "cross_modal"}:
+        if row.get("modality") not in {"visual", "speech", "cross_modal", "user_review"}:
             row.pop("modality", None)
         if row.get("status") not in {
                 "observed", "stated", "self_identified", "spoken_event", "stated_plan",
                 "self_reported", "self_reported_unverified", "unverified_claim",
                 "quoted_unverified_claim", "quoted_relationship_term", "completed", "unclear", "inferred"}:
             row.pop("status", None)
-        if not (row.get("entity") or row.get("subject")):
+        if kind == "object":
+            if not row.get("object"):
+                continue
+        elif not (row.get("entity") or row.get("subject")):
             continue
         if kind == "person":
             key = (
@@ -3415,7 +3421,7 @@ class PersonMemory(MemoryRetrievalMixin):
     UPDATE_FIELDS = ("scene", "user_action", "needs", "solutions",
                      "people", "location", "activity", "notes", "source_evidence",
                      "interaction_details", "person_observations", "temporal_facts",
-                     "source_time", "environments", "objects", "multimodal")
+                     "object_observations", "source_time", "environments", "objects", "multimodal")
 
     def _validated_updates(self, updates: Dict) -> Dict:
         """按记忆 schema 筛选可更新字段和值类型。"""
@@ -3433,6 +3439,9 @@ class PersonMemory(MemoryRetrievalMixin):
                 continue
             if field == "temporal_facts" and isinstance(value, list):
                 clean[field] = _clean_source_fact_rows(value, "fact", 32)
+                continue
+            if field == "object_observations" and isinstance(value, list):
+                clean[field] = _clean_source_fact_rows(value, "object", 32)
                 continue
             if field == "multimodal" and isinstance(value, dict) and value.get("schema") == 1:
                 clean[field] = copy.deepcopy(value)
@@ -3526,10 +3535,14 @@ class PersonMemory(MemoryRetrievalMixin):
             changed_fields.append("object_states")
         if not changed_fields:
             return False
-        if isinstance(moment.get("multimodal"), dict):
+        if (isinstance(moment.get("multimodal"), dict)
+                and set(changed_fields).intersection({
+                    "people", "person_observations", "objects", "object_observations", "multimodal"
+                })):
             entity_visuals = _build_entity_visuals(moment)
-            if entity_visuals.get("items"):
-                moment["multimodal"]["entity_visuals"] = entity_visuals
+            # Empty is meaningful too: when a stale person/body-part card is
+            # filtered out, persist the empty result instead of leaving old cards.
+            moment["multimodal"]["entity_visuals"] = entity_visuals
 
         # 清除可能过期的英文缓存；改写中文时再生成对应 normalized 值。
         searchable_fields = {"scene", "user_action", "interaction_details",

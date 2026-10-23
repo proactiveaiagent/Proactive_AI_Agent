@@ -59,6 +59,8 @@ from scene_retrieval import PostWriteRetrievalMixin  # noqa: E402
 from clinical_grounding import ground_clinical_visit  # noqa: E402
 from emergency_grounding import (ground_emergency_continuity,
                                   EMERGENCY_GROUNDING_VERSION)  # noqa: E402
+from first_person_grounding import (ground_first_person_body_context,
+                                    FIRST_PERSON_GROUNDING_VERSION)  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 TESTSET = ROOT / "data" / "egolife" / "testset"
@@ -2712,6 +2714,23 @@ class InteractiveSession(PostWriteRetrievalMixin):
                 existing_mid, dataset_id)
             stored_moment = self.mem.memory.get("layer7", {}).get("moments", {}).get(existing_mid)
             if isinstance(stored_moment, dict):
+                pov_fields = copy.deepcopy(stored_moment)
+                if ground_first_person_body_context(pov_fields, source_id=dataset_id):
+                    pov_updates = {key: pov_fields.get(key) for key in (
+                        "scene", "user_action", "interaction_details", "activity", "people",
+                        "person_observations", "temporal_facts", "objects",
+                        "object_observations", "multimodal", "notes")}
+                    pov_updated = self.mem.update(existing_mid, pov_updates)
+                    current = self.mem.memory.get("layer7", {}).get("moments", {}).get(existing_mid)
+                    if isinstance(current, dict):
+                        provenance = current.setdefault("source_provenance", {})
+                        provenance["first_person_grounding_version"] = FIRST_PERSON_GROUNDING_VERSION
+                        self.mem._save()
+                    fields.update({key: copy.deepcopy(value) for key, value in pov_fields.items()
+                                   if key in pov_updates})
+                    identity_refreshed = identity_refreshed or pov_updated
+                    stored_moment = self.mem.memory.get("layer7", {}).get("moments", {}).get(existing_mid)
+            if isinstance(stored_moment, dict):
                 grounded_fields = {
                     key: copy.deepcopy(stored_moment.get(key))
                     for key in ("scene", "user_action", "interaction_details", "activity",
@@ -2814,6 +2833,7 @@ class InteractiveSession(PostWriteRetrievalMixin):
             finish_timing(info)
             return None, info
         f = _retain_episode_objects(dict(r["fields"]))
+        ground_first_person_body_context(f, source_id=dataset_id)
         update("write_memory", "感知结果已生成，正在写入记忆", self._progress_text(m, {"qwen": f}))
         multimodal = None
         media_error = None
@@ -2905,10 +2925,13 @@ class InteractiveSession(PostWriteRetrievalMixin):
             f.get("person_observations") or [], "visual")
         temporal_facts = attach_evidence_refs(
             f.get("temporal_facts") or [], "visual")
+        object_observations = attach_evidence_refs(
+            f.get("object_observations") or [], "visual")
         f["document_evidence"] = attach_evidence_refs(
             f.get("document_evidence") or [], "visual")
         f["person_observations"] = person_observations
         f["temporal_facts"] = temporal_facts
+        f["object_observations"] = object_observations
         shared_candidate_frames = None
         if video_path and os.environ.get("MEMORY_CAPTURE_MULTIMODAL", "1") != "0":
             try:
@@ -3391,6 +3414,9 @@ class InteractiveSession(PostWriteRetrievalMixin):
             progress=lambda stage, message: update(stage, message),
             timing_sink=operation_ms,
         )
+        ground_first_person_body_context(
+            f, source_id=dataset_id, multimodal=multimodal,
+            audio_text=source_audio_text)
         record_duration("audio_decode_cache_and_transcription_wall_ms", audio_started)
         visual_interaction_details = str(f.get("interaction_details") or "").strip()
         speech_scene_context = ""
@@ -3536,6 +3562,8 @@ class InteractiveSession(PostWriteRetrievalMixin):
             multimodal=multimodal,
             source_provenance=source_provenance,
         )
+        if f.get("object_observations"):
+            self.mem.update(mid, {"object_observations": f["object_observations"]})
         record_duration("memory_write_and_index_ms", memory_write_started)
         if multimodal and multimodal.get("visual_sampling"):
             self.media_store.release_unreferenced(
