@@ -57,6 +57,8 @@ from face_detection import (detect_faces, assign_faces_to_people,
                             expanded_face_sample_times)  # noqa: E402
 from scene_retrieval import PostWriteRetrievalMixin  # noqa: E402
 from clinical_grounding import ground_clinical_visit  # noqa: E402
+from emergency_grounding import (ground_emergency_continuity,
+                                  EMERGENCY_GROUNDING_VERSION)  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 TESTSET = ROOT / "data" / "egolife" / "testset"
@@ -2398,6 +2400,10 @@ class InteractiveSession(PostWriteRetrievalMixin):
             "extraction_batch_id": old.get("extraction_batch_id") or self.extraction_batch_id,
             "content_summary_version": CONTENT_SUMMARY_VERSION,
         }
+        if ground_emergency_continuity(
+                fields, self.mem.memory.get("layer7") or {}, dataset_id,
+                expected_video, FEISHU_TEST_MANIFEST):
+            source_provenance["emergency_grounding_version"] = EMERGENCY_GROUNDING_VERSION
         updates = {
             "scene": fields.get("scene") or "",
             "user_action": fields.get("user_action") or "",
@@ -2704,6 +2710,32 @@ class InteractiveSession(PostWriteRetrievalMixin):
                     refreshed_existing = False
             identity_refreshed = self._reconcile_existing_speech_identity(
                 existing_mid, dataset_id)
+            stored_moment = self.mem.memory.get("layer7", {}).get("moments", {}).get(existing_mid)
+            if isinstance(stored_moment, dict):
+                grounded_fields = {
+                    key: copy.deepcopy(stored_moment.get(key))
+                    for key in ("scene", "user_action", "interaction_details", "activity",
+                                "location", "people", "person_observations", "temporal_facts",
+                                "source_evidence")
+                }
+                grounded_fields["source_provenance"] = copy.deepcopy(
+                    stored_moment.get("source_provenance") or {})
+                if ground_emergency_continuity(
+                        grounded_fields, self.mem.memory.get("layer7") or {}, dataset_id,
+                        str((stored_moment.get("source_provenance") or {}).get("source_video_id") or ""),
+                        FEISHU_TEST_MANIFEST):
+                    update_fields = {key: grounded_fields.get(key) for key in (
+                        "scene", "user_action", "interaction_details", "activity", "location",
+                        "people", "person_observations", "temporal_facts")}
+                    updated = self.mem.update(existing_mid, update_fields)
+                    target = self.mem.memory.get("layer7", {}).get("moments", {}).get(existing_mid)
+                    if isinstance(target, dict):
+                        target.setdefault("source_provenance", {})[
+                            "emergency_grounding_version"] = EMERGENCY_GROUNDING_VERSION
+                        self.mem._save()
+                    fields.update({key: copy.deepcopy(value) for key, value in grounded_fields.items()
+                                   if key != "source_provenance"})
+                    identity_refreshed = identity_refreshed or updated
             info = {
                 "dataset_id": dataset_id,
                 "moment_id": existing_mid,
@@ -3473,6 +3505,10 @@ class InteractiveSession(PostWriteRetrievalMixin):
         _apply_delivery_wallet_memory_link(
             f, self.mem.memory.get("layer7") or {},
             source_provenance.get("source_video_id"), dataset_id)
+        if ground_emergency_continuity(
+                f, self.mem.memory.get("layer7") or {}, dataset_id,
+                source_provenance.get("source_video_id"), FEISHU_TEST_MANIFEST):
+            source_provenance["emergency_grounding_version"] = EMERGENCY_GROUNDING_VERSION
         temporal_facts = f.get("temporal_facts") or temporal_facts
         if cancel_event is not None and cancel_event.is_set():
             info = {"error": "当前片段处理已终止", "source": "cancelled", "cancelled": True}
