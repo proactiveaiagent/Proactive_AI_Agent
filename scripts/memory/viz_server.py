@@ -138,13 +138,6 @@ def _with_memory_asset_urls(value):
                     item["description"] = grounding.get("appearance")
                 if grounding.get("evidence_fallback_reason"):
                     item["evidence_fallback_reason"] = grounding["evidence_fallback_reason"]
-            elif entity_type in {"person", "object"} and not item.get("frame_refs"):
-                reason = ("人物未与定位结果匹配，已保留完整来源画面供核对"
-                          if entity_type == "person" else
-                          "物品未与定位结果匹配，已保留完整来源画面供核对")
-                item["frame_refs"] = fallback_refs(source_frames, reason)
-                if item["frame_refs"]:
-                    item["evidence_fallback_reason"] = reason
     if isinstance(entities, dict) and isinstance(entities.get("items"), list):
         # Older records may contain scene/context cards. Keep only person/object
         # evidence in the multimodal entity gallery; their text remains in memory.
