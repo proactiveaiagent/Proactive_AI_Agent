@@ -317,13 +317,25 @@ h3 {
   flex-direction: column;
 }
 
-.client-avatar {
+.client-avatar,
+.team-avatar {
   width: 72px;
   height: 72px;
   object-fit: cover;
+  object-position: center top;
   border-radius: 50%;
   border: 2px solid rgba(91, 140, 255, 0.45);
   margin-bottom: 14px;
+}
+
+.team-avatar {
+  width: 96px;
+  height: 96px;
+}
+
+.team-card {
+  display: flex;
+  flex-direction: column;
 }
 
 .grid-3,
