@@ -119,14 +119,19 @@ const COPY = {
     "team.eyebrow": "团队",
     "team.title": "产品背后的人",
     "team.lede":
-      "精干创始团队，背景覆盖多模态人工智能、人机交互与端侧系统，正在打造可本地运行的上下文感知助手。",
-    "team.ceoRole": "创始人兼首席执行官",
+      "创始团队覆盖产品、技术、财务与运营，成员毕业于西北大学、佐治亚理工学院与伦敦大学学院，正在打造可本地运行的上下文感知助手。",
+    "team.ceoRole": "CEO",
     "team.ceoP":
       "PROACTIVE INTELLIGENCE LIMITED 创始人兼首席执行官。毕业于美国西北大学（Northwestern University），负责产品方向、合作伙伴关系，以及公司在香港人工智能生态中的推进。",
-    "team.coreRole": "核心团队",
-    "team.coreT": "多模态 AI 与系统",
-    "team.coreP":
-      "工程师与研究者覆盖视觉语言模型、语音、七层记忆与 GUI Agent，把第一人称视频、屏幕活动与可穿戴数据转化为及时帮助。",
+    "team.ctoRole": "CTO",
+    "team.ctoP":
+      "PROACTIVE INTELLIGENCE LIMITED 首席技术官。毕业于佐治亚理工学院（Georgia Institute of Technology）。负责多模态 Agent 技术架构，覆盖视觉语言模型、端侧推理与 GUI 自动化，把感知能力做成可稳定交付的产品系统。",
+    "team.cfoRole": "CFO",
+    "team.cfoP":
+      "PROACTIVE INTELLIGENCE LIMITED 首席财务官。毕业于伦敦大学学院（UCL）。负责财务规划、资本结构与融资推进，以可对接投资人的财务纪律支持公司在香港及更广市场的扩张。",
+    "team.cooRole": "COO",
+    "team.cooP":
+      "PROACTIVE INTELLIGENCE LIMITED 首席运营官。毕业于美国西北大学（Northwestern University）。负责日常运营、客户试点与跨团队协同，让研究、产品与合作按同一节奏推进。",
     "footer.p": "主动式上下文感知助手。产品信息来自当前工程实现。",
     "footer.addrLabel": "地址",
     "footer.phoneLabel": "电话",
@@ -254,14 +259,19 @@ const COPY = {
     "team.eyebrow": "Team",
     "team.title": "People behind the product",
     "team.lede":
-      "A compact founding team with backgrounds in multimodal AI, human–computer interaction, and on-device systems, building a context-aware assistant that can be run locally.",
-    "team.ceoRole": "Founder & CEO",
+      "The founding team combines product, technology, finance, and operations — spanning Northwestern, Georgia Tech, and UCL — to build a context-aware assistant that can be run locally.",
+    "team.ceoRole": "CEO",
     "team.ceoP":
       "Founder and CEO of PROACTIVE INTELLIGENCE LIMITED. Graduate of Northwestern University, leading product direction, partnerships, and the company’s work in Hong Kong’s AI ecosystem.",
-    "team.coreRole": "Core team",
-    "team.coreT": "Multimodal AI & systems",
-    "team.coreP":
-      "Engineers and researchers spanning vision–language models, speech, seven-layer memory, and GUI agents — turning first-person video, screen activity, and wearable data into timely help.",
+    "team.ctoRole": "CTO",
+    "team.ctoP":
+      "CTO of PROACTIVE INTELLIGENCE LIMITED. Graduate of the Georgia Institute of Technology. Leads the multimodal agent architecture — vision-language models, on-device inference, GUI automation, and the engineering that turns sensing into a reliable product.",
+    "team.cfoRole": "CFO",
+    "team.cfoP":
+      "CFO of PROACTIVE INTELLIGENCE LIMITED. Graduate of University College London (UCL). Oversees financial planning, capital structure, and fundraising, bringing investor-ready discipline to how the company scales in Hong Kong and beyond.",
+    "team.cooRole": "COO",
+    "team.cooP":
+      "COO of PROACTIVE INTELLIGENCE LIMITED. Graduate of Northwestern University. Runs day-to-day operations, client pilots, and cross-team execution so research, product, and partnerships move on the same timeline.",
     "footer.p": "A proactive, context-aware assistant. Product details reflect the current implementation.",
     "footer.addrLabel": "Address",
     "footer.phoneLabel": "Phone",
