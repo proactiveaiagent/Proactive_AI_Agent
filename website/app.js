@@ -31,6 +31,7 @@ const COPY = {
     "company.c3t": "记得，并跟进",
     "company.c3p":
       "七层记忆保存场景历史、用户偏好与过往建议；下一次会话会检查用户是否已经按上次方案行动。",
+    "company.photoAlt": "PROACTIVE INTELLIGENCE LIMITED 位于九龙塘创新中心的办公室",
     "products.eyebrow": "产品线",
     "products.title": "一套感知系统，两条产品线",
     "products.p1tag": "核心产品",
@@ -39,12 +40,14 @@ const COPY = {
     "products.p1l1": "场景识别 → 需求分析 → 方案生成 → 多通道交付",
     "products.p1l2": "支持 camera / screen_record / gui_agent / wearable / multimodal",
     "products.p1l3": "视觉理解使用 Qwen3-VL，语音转写使用 Whisper",
+    "products.p1alt": "Proactive AI Agent 智能眼镜产品图",
     "products.p2tag": "集成能力",
     "products.p2p":
       "PC 与 Android（应用名 XOOGUIAGT）全天录屏系统。GUI-Owl 识别应用、页面、UI 元素和用户操作，再交给 Proactive Agent 做需求推断。",
     "products.p2l1": "PC Web 壳录屏 + Android 上传到电脑",
     "products.p2l2": "本地 GUI-Owl 或云端视觉模型分析",
     "products.p2l3": "分析结果写入记忆，支持检索与用户画像",
+    "products.p2alt": "LLM-based GUI Agent 电脑与手机产品图",
     "io.inEyebrow": "输入",
     "io.inTitle": "看见用户正在经历什么",
     "io.in1t": "用户拍摄视频",
@@ -110,12 +113,15 @@ const COPY = {
     "clients.c1t": "健康与独立生活",
     "clients.c1p":
       "护理机构、长者照护与健康团队，借助场景与可穿戴信号，覆盖急救、健康防护，以及独居场景下的跟进。",
+    "clients.c1alt": "健康与独立生活客户头像",
     "clients.c2t": "出行、酒店与日常生活",
     "clients.c2p":
       "出行、酒店与消费服务团队，部署出国旅行、遗忘物品、前台接待、购物选择与对话辅助等主动提示。",
+    "clients.c2alt": "出行与酒店客户头像",
     "clients.c3t": "设备、职场与研究",
     "clients.c3p":
       "智能眼镜、可穿戴与机器人合作方，以及职场 GUI 自动化与香港研究实验室，在产品试验与本地试点中运行感知栈。",
+    "clients.c3alt": "设备、职场与研究客户头像",
     "team.eyebrow": "团队",
     "team.title": "产品背后的人",
     "team.lede":
@@ -170,6 +176,7 @@ const COPY = {
     "company.c3t": "Remember, then follow up",
     "company.c3p":
       "A seven-layer memory keeps scene history, preferences, and prior advice. The next session checks whether the user already acted on the last plan.",
+    "company.photoAlt": "PROACTIVE INTELLIGENCE LIMITED office at InnoCentre, Kowloon Tong",
     "products.eyebrow": "Products",
     "products.title": "One sensing stack, two product lines",
     "products.p1tag": "Core product",
@@ -178,12 +185,14 @@ const COPY = {
     "products.p1l1": "Scene recognition → need analysis → solutions → multi-channel delivery",
     "products.p1l2": "Inputs: camera / screen_record / gui_agent / wearable / multimodal",
     "products.p1l3": "Vision with Qwen3-VL, speech with Whisper",
+    "products.p1alt": "Proactive AI Agent smart glasses product",
     "products.p2tag": "Integrated capability",
     "products.p2p":
       "All-day screen recording on PC and Android (app name XOOGUIAGT). GUI-Owl recognizes apps, pages, UI elements, and actions, then Proactive Agent infers needs.",
     "products.p2l1": "PC web shell recording + Android upload",
     "products.p2l2": "Local GUI-Owl or cloud vision analysis",
     "products.p2l3": "Results persist to memory for search and user profiling",
+    "products.p2alt": "LLM-based GUI Agent on PC and phone",
     "io.inEyebrow": "Inputs",
     "io.inTitle": "See what the user is going through",
     "io.in1t": "User-shot video",
@@ -250,12 +259,15 @@ const COPY = {
     "clients.c1t": "Health & independent living",
     "clients.c1p":
       "Care providers, elder-care programs, and wellness teams use scene and wearable signals for first aid, health safeguard, and follow-up when someone is living alone.",
+    "clients.c1alt": "Health and independent living client",
     "clients.c2t": "Travel, hospitality & daily life",
     "clients.c2p":
       "Travel, hotel, and consumer services teams deploy proactive hints for abroad travel, forgotten items, reception, shopping, and conversation support.",
+    "clients.c2alt": "Travel and hospitality client",
     "clients.c3t": "Devices, workplaces & research",
     "clients.c3p":
       "Smart-glasses, wearable, and robot partners, plus workplace GUI automation and Hong Kong research labs, run the sensing stack in product trials and local pilots.",
+    "clients.c3alt": "Devices and workplace research client",
     "team.eyebrow": "Team",
     "team.title": "People behind the product",
     "team.lede":
@@ -286,6 +298,10 @@ function applyLang(lang) {
   document.querySelectorAll("[data-i18n]").forEach((el) => {
     const key = el.getAttribute("data-i18n");
     if (dict[key]) el.textContent = dict[key];
+  });
+  document.querySelectorAll("[data-i18n-alt]").forEach((el) => {
+    const key = el.getAttribute("data-i18n-alt");
+    if (dict[key]) el.setAttribute("alt", dict[key]);
   });
   document.querySelectorAll(".lang-switch button").forEach((btn) => {
     btn.classList.toggle("is-active", btn.dataset.lang === lang);
