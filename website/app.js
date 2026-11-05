@@ -33,7 +33,7 @@ const COPY = {
       "七层记忆保存场景历史、用户偏好与过往建议；下一次会话会检查用户是否已经按上次方案行动。",
     "company.photoAlt": "PROACTIVE INTELLIGENCE LIMITED 位于九龙塘创新中心的办公室",
     "products.eyebrow": "产品线",
-    "products.title": "一套感知系统，两条产品线",
+    "products.title": "QIAN BOT：一套感知系统，两条产品线",
     "products.p1tag": "核心产品",
     "products.p1p":
       "上下文感知助手。它读取视频、录屏与传感器，识别场景与需求，再把方案路由到 AR/通知、手机电脑操作，或智能家居与机器人。",
@@ -178,7 +178,7 @@ const COPY = {
       "A seven-layer memory keeps scene history, preferences, and prior advice. The next session checks whether the user already acted on the last plan.",
     "company.photoAlt": "PROACTIVE INTELLIGENCE LIMITED office at InnoCentre, Kowloon Tong",
     "products.eyebrow": "Products",
-    "products.title": "One sensing stack, two product lines",
+    "products.title": "QIAN BOT：One sensing stack, two product lines",
     "products.p1tag": "Core product",
     "products.p1p":
       "A context-aware assistant. It reads video, screen, and sensors, recognizes scenes and needs, then routes solutions to AR/notifications, phone and PC actions, or smart-home and robot commands.",
