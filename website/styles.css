@@ -322,9 +322,16 @@ h3 {
   grid-template-columns: 1.15fr 1fr;
 }
 
-.product-card.featured {
+.product-card.featured,
+.team-card.featured {
   border-color: rgba(91, 140, 255, 0.45);
   box-shadow: var(--shadow);
+}
+
+.team-grid {
+  display: grid;
+  grid-template-columns: 1.15fr 1fr;
+  gap: 20px;
 }
 
 .tag {
@@ -460,6 +467,18 @@ tbody tr:last-child td {
   align-items: start;
 }
 
+.backed-by {
+  color: var(--text) !important;
+  font-weight: 600;
+  margin-top: 0 !important;
+}
+
+.footer-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .footer-contact {
   font-style: normal;
   color: var(--muted);
@@ -513,6 +532,7 @@ tbody tr:last-child td {
 
   .grid-3,
   .product-grid,
+  .team-grid,
   .split,
   .steps,
   .memory-panel,
@@ -545,6 +565,7 @@ tbody tr:last-child td {
 
   .grid-3,
   .product-grid,
+  .team-grid,
   .split,
   .steps,
   .memory-panel,

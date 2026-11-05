@@ -4,6 +4,8 @@ const COPY = {
     "nav.products": "产品",
     "nav.pipeline": "能力",
     "nav.scenarios": "场景",
+    "nav.clients": "客户",
+    "nav.team": "团队",
     "nav.contact": "联系我们",
     "nav.cta": "了解产品",
     "hero.eyebrow": "主动式人工智能公司",
@@ -101,16 +103,43 @@ const COPY = {
     "stack.r1": "Qwen3-VL 视觉 + Whisper 语音",
     "stack.r2": "录屏与 GUI-Owl 屏幕分析",
     "stack.r3": "接收 Android 录屏",
+    "clients.eyebrow": "客户群",
+    "clients.title": "我们服务的对象",
+    "clients.lede":
+      "我们与需要「用户开口之前就能获得帮助」的机构合作——从日常个人协助，到基于视频、屏幕与传感器的行业流程。",
+    "clients.c1t": "健康与独立生活",
+    "clients.c1p":
+      "护理机构、长者照护与健康团队，借助场景与可穿戴信号，覆盖急救、健康防护，以及独居场景下的跟进。",
+    "clients.c2t": "出行、酒店与日常生活",
+    "clients.c2p":
+      "出行、酒店与消费服务团队，部署出国旅行、遗忘物品、前台接待、购物选择与对话辅助等主动提示。",
+    "clients.c3t": "设备、职场与研究",
+    "clients.c3p":
+      "智能眼镜、可穿戴与机器人合作方，以及职场 GUI 自动化与香港研究实验室，在产品试验与本地试点中运行感知栈。",
+    "team.eyebrow": "团队",
+    "team.title": "产品背后的人",
+    "team.lede":
+      "精干创始团队，背景覆盖多模态人工智能、人机交互与端侧系统，正在打造可本地运行的上下文感知助手。",
+    "team.ceoRole": "创始人兼首席执行官",
+    "team.ceoP":
+      "PROACTIVE INTELLIGENCE LIMITED 创始人兼首席执行官。毕业于美国西北大学（Northwestern University），负责产品方向、合作伙伴关系，以及公司在香港人工智能生态中的推进。",
+    "team.coreRole": "核心团队",
+    "team.coreT": "多模态 AI 与系统",
+    "team.coreP":
+      "工程师与研究者覆盖视觉语言模型、语音、七层记忆与 GUI Agent，把第一人称视频、屏幕活动与可穿戴数据转化为及时帮助。",
     "footer.p": "主动式上下文感知助手。产品信息来自当前工程实现。",
     "footer.addrLabel": "地址",
     "footer.phoneLabel": "电话",
     "footer.emailLabel": "邮箱",
+    "footer.backed": "由香港科技园公司（HKSTP）与 HKAI Lab 支持",
   },
   en: {
     "nav.company": "Company",
     "nav.products": "Products",
     "nav.pipeline": "How it works",
     "nav.scenarios": "Scenarios",
+    "nav.clients": "Clients",
+    "nav.team": "Team",
     "nav.contact": "Contact",
     "nav.cta": "See products",
     "hero.eyebrow": "Proactive AI company",
@@ -209,10 +238,35 @@ const COPY = {
     "stack.r1": "Qwen3-VL vision + Whisper speech",
     "stack.r2": "Screen recording and GUI-Owl analysis",
     "stack.r3": "Receive Android recordings",
+    "clients.eyebrow": "Client base",
+    "clients.title": "Who we work with",
+    "clients.lede":
+      "We partner with organizations that need help before the user has to ask — from everyday personal assistance to industry workflows that run on video, screens, and sensors.",
+    "clients.c1t": "Health & independent living",
+    "clients.c1p":
+      "Care providers, elder-care programs, and wellness teams use scene and wearable signals for first aid, health safeguard, and follow-up when someone is living alone.",
+    "clients.c2t": "Travel, hospitality & daily life",
+    "clients.c2p":
+      "Travel, hotel, and consumer services teams deploy proactive hints for abroad travel, forgotten items, reception, shopping, and conversation support.",
+    "clients.c3t": "Devices, workplaces & research",
+    "clients.c3p":
+      "Smart-glasses, wearable, and robot partners, plus workplace GUI automation and Hong Kong research labs, run the sensing stack in product trials and local pilots.",
+    "team.eyebrow": "Team",
+    "team.title": "People behind the product",
+    "team.lede":
+      "A compact founding team with backgrounds in multimodal AI, human–computer interaction, and on-device systems, building a context-aware assistant that can be run locally.",
+    "team.ceoRole": "Founder & CEO",
+    "team.ceoP":
+      "Founder and CEO of PROACTIVE INTELLIGENCE LIMITED. Graduate of Northwestern University, leading product direction, partnerships, and the company’s work in Hong Kong’s AI ecosystem.",
+    "team.coreRole": "Core team",
+    "team.coreT": "Multimodal AI & systems",
+    "team.coreP":
+      "Engineers and researchers spanning vision–language models, speech, seven-layer memory, and GUI agents — turning first-person video, screen activity, and wearable data into timely help.",
     "footer.p": "A proactive, context-aware assistant. Product details reflect the current implementation.",
     "footer.addrLabel": "Address",
     "footer.phoneLabel": "Phone",
     "footer.emailLabel": "Email",
+    "footer.backed": "Backed by HKSTP and HKAI Lab",
   },
 };
 
