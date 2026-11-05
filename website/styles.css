@@ -531,7 +531,21 @@ tbody tr:last-child td {
 .footer-meta {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 12px;
+}
+
+.partner-logos {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.partner-logos img {
+  height: 36px;
+  width: auto;
+  max-width: 140px;
+  object-fit: contain;
 }
 
 .footer-contact {
@@ -573,6 +587,7 @@ tbody tr:last-child td {
 
 .copyright {
   color: var(--faint) !important;
+  margin-top: 12px !important;
 }
 
 :focus-visible {
@@ -602,10 +617,6 @@ tbody tr:last-child td {
 
   .footer-inner {
     grid-template-columns: 1fr 1fr;
-  }
-
-  .copyright {
-    grid-column: 1 / -1;
   }
 }
 
