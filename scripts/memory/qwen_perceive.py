@@ -3760,6 +3760,7 @@ class QwenPerceiver:
             if (fields is None and validation_error_kind == "schema"
                     and "Person Observations is not a complete JSON array"
                     in str(validation_error or "")):
+                base_fields = None
                 try:
                     prefix_recovery = _prepare_truncated_structured_prefix_for_person_repair(
                         raw, len(bufs)
@@ -3860,6 +3861,8 @@ class QwenPerceiver:
                     # narrative and event facts are usable. Reuse the standard
                     # same-video repair-then-salvage path before rejecting the clip.
                     try:
+                        if base_fields is None:
+                            raise ValueError("No valid base fields available for person-reference salvage")
                         salvaged_fields, removed_people, salvage_log = _salvage_person_reference_gaps(
                             base_fields, repair_person_references
                         )
