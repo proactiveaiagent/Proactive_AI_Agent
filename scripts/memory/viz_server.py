@@ -1752,7 +1752,7 @@ class Handler(BaseHTTPRequestHandler):
                             ms = ir._load_jsonl(src)
                         p = ir.site_perceiver()
                     PREWARM["total"] = len(ms)
-                    worker_count = max(1, min(2, len(getattr(p, "api_urls", []) or [p.api_url]),
+                    worker_count = max(1, min(4, len(getattr(p, "api_urls", []) or [p.api_url]),
                                               len(ms) or 1))
                     PREWARM["worker_count"] = worker_count
                     with ThreadPoolExecutor(max_workers=worker_count,
