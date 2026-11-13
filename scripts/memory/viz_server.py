@@ -409,14 +409,25 @@ def _run_retrieval_test(job_id, moment, uploaded_path=None):
                                 "fields": fields,
                                 "audio_transcript": speech_text,
                             }})
+        # Perception-cache entries created before source_provenance was added do
+        # not carry an origin ID. Test-set moments already have the authoritative
+        # FEISHU_* segment ID, so always use it to prevent a read-only query from
+        # retrieving the same clip as its own historical memory.
+        source_ids = []
+        field_provenance = fields.get("source_provenance") or {}
+        for source_id in (
+                field_provenance.get("source_segment_id"),
+                moment.get("source_segment_id"),
+                (moment.get("id") if str(moment.get("id") or "").startswith("FEISHU_") else "")):
+            source_id = str(source_id or "").strip()
+            if source_id and source_id not in source_ids:
+                source_ids.append(source_id)
         result = session.daytime.retrieve_relevant_memories(
             situation, context={
                 "retrieval_only": True,
                 "memory_modalities": "text",
                 "retrieval_policy_version": "retrieval_test_ui_v1",
-                "exclude_source_segment_ids": [
-                    str((fields.get("source_provenance") or {}).get("source_segment_id") or "")
-                ] if (fields.get("source_provenance") or {}).get("source_segment_id") else [],
+                "exclude_source_segment_ids": source_ids,
                 "current_scene_observations": {
                     "person_observations": person_observations,
                     "visual_objects": values(fields.get("objects")),

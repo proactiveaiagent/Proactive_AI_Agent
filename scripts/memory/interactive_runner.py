@@ -76,7 +76,7 @@ _AGE_CLAIM_RE = re.compile(
 )
 
 
-PERSON_PROFILE_CACHE_VERSION = "source-grounded-role-inference-prompt-v44-english-profile-final-validation-2026-11-06"
+PERSON_PROFILE_CACHE_VERSION = "source-grounded-human-annotation-validated-identity-prompt-v48-english-2026-11-13"
 CONTENT_SUMMARY_VERSION = "source-grounded-audio-integrated-gist-v38-2026-10-25"
 
 
@@ -311,7 +311,7 @@ def person_profile_cache_key(source_segment_id, transcript, observations, frames
     payload = {
         # Invalidate pre-versioned profile cache entries that may have cached
         # generic/empty labels and otherwise bypass current speech-role logic.
-        "profile_cache_version": "person-profile-v6-evidence-calibrated-role-and-context-label-2026-11-06",
+        "profile_cache_version": "person-profile-v10-human-annotation-visual-validation-2026-11-13",
         "source": str(source_segment_id or ""),
         "transcript": hashlib.sha256(speech.encode("utf-8")).hexdigest(),
         "people": [(str(row.get("entity") or ""), str(row.get("appearance") or ""),
@@ -327,7 +327,7 @@ def person_profile_cache_key(source_segment_id, transcript, observations, frames
         "visual_context": {
             str(key): str(value or "")[:1200]
             for key, value in (visual_context or {}).items()
-            if key in {"scene", "content_summary", "activity", "interaction_details", "location", "environments"}
+            if key in {"scene", "content_summary", "activity", "interaction_details", "location", "environments", "human_identity_annotations"}
         },
         "visual_facts": [
             {key: row.get(key) for key in ("actor", "subject", "predicate", "value",
@@ -2360,6 +2360,18 @@ class InteractiveSession(PostWriteRetrievalMixin):
         image_frames = [frame for frame in (frames or [])
                         if isinstance(frame, dict) and frame.get("bytes")][:7]
         documents = _collect_document_evidence(document_evidence, visual_facts)
+        annotation_path = RUNS / "interactive_mem" / "person_identity_annotations.json"
+        try:
+            annotation_store = json.loads(annotation_path.read_text(encoding="utf-8")) if annotation_path.is_file() else {}
+        except (OSError, ValueError, TypeError):
+            annotation_store = {}
+        annotations = (annotation_store.get(str(source_segment_id or "")) or []
+                      if isinstance(annotation_store, dict) else [])
+        annotations = [dict(row) for row in annotations
+                       if isinstance(row, dict) and str(row.get("candidate_id") or "").strip()]
+        if annotations:
+            visual_context = dict(visual_context or {})
+            visual_context["human_identity_annotations"] = annotations
         historical_people = self._historical_people_mentioned_in_speech(
             speech, source_segment_id)
         frame_times = [round(float(frame.get("at_s") or 0), 3) for frame in image_frames]
@@ -2427,7 +2439,7 @@ class InteractiveSession(PostWriteRetrievalMixin):
                           for index, row in enumerate(rows[:16])]
             prompt = (
                 "Reconcile the ordered frames, existing visual facts, legible document text, and time-coded speech "
-                "from this same clip into a concise episodic memory. LANGUAGE RULE: Write every generated human-readable semantic field in natural English, including scene_context, location_context, user_action, people labels, identities, roles, relationships, profile_context, fact subjects, predicates, values, actors, and affected_people. Translate supported Chinese role/kinship terms (for example 姥姥 → grandmother, 妈妈 → mother, 医生 → doctor, 路人 → passerby); never leave Chinese in those semantic fields. Keep proper names in established Latin spelling, or use Hanyu Pinyin when only a Chinese name is available; do not translate a name’s meaning. Exact transcript/document quotations and evidence fields may remain in their original language for auditability. Put original-language words only in exact quote/evidence fields; never copy them into a summary or semantic value. This is a language requirement, not permission to guess an identity. Use only those inputs; do not use filenames, "
+                "from this same clip into a concise episodic memory. LANGUAGE RULE: Write every generated human-readable semantic field in natural English, including scene_context, location_context, user_action, people labels, identities, roles, relationships, profile_context, fact subjects, predicates, values, actors, and affected_people. Translate supported Chinese role/kinship terms (for example 姥姥 → grandmother, 妈妈 → mother, 医生 → doctor, 路人 → passerby); never leave Chinese in those semantic fields. Keep proper names in established Latin spelling, or use Hanyu Pinyin when only a Chinese name is available; do not translate a name’s meaning. Exact transcript/document quotations and evidence fields may remain in their original language for auditability. Put original-language words only in exact quote/evidence fields; never copy them into a summary or semantic value. This is a language requirement, not permission to guess an identity. When visual context contains human_identity_annotations, those are authoritative corrections explicitly supplied by the user: map each exact candidate_id to the specified English display_label, roles, and relationships. Do not replace a confirmed identity with an age/gender alias or a conflicting model guess. Cite the matching current visual frame and include exact speech evidence when available. Use only those inputs; do not use filenames, "
                 "dataset labels, prior assumptions, or outside knowledge. Candidate IDs identify the supplied visible "
                 "people and are unique even if labels repeat. Track a candidate only when the frames establish visual "
                 "continuity; otherwise keep the observations separate. Do not merge background people based only on "
@@ -2443,7 +2455,31 @@ class InteractiveSession(PostWriteRetrievalMixin):
                 "target, not necessarily the current listener. Never copy one turn's addressee to every fact in that "
                 "utterance. Compare ordered frame times with time-coded speech and use "
                 "medium confidence when synchronized mouth movement supports the match. A kinship vocative identifies "
-                "the addressee, not the speaker. When the first-person camera wearer is addressed as Dad, that identifies "
+                "the addressee, not the speaker. Determine the reference point for each kinship claim: a person’s episode "
+                "role may be relative to another visible participant, but the card display_label and any relationship to "
+                "the user must be stated from the camera wearer’s perspective only when evidence supports that link. Never "
+                "transfer a relationship between two visible candidates into a relationship to the user without evidence. "
+                "In family scenes, distinguish grandmother, mother, daughter, and granddaughter. A woman who is the "
+                "grandmother’s daughter is not automatically the user’s mother; confirm the user-relative link from a "
+                "clearly attributed kinship address, turn/reaction mapping, matching historical memory, or other direct "
+                "evidence. Conversely, when an exact kinship address and the full exchange uniquely link a visible person "
+                "to the user as mother or grandmother, use the concise English kinship term as that person’s display_label, "
+                "role, and relationship to the user, while keeping any separately supported relation between candidates. "
+                "For display_label, choose the most informative supported identity or kinship role. Do not use age/gender "
+                "labels such as elderly_woman, young_woman, man, or woman when a specific role is supported. If speaker or "
+                "addressee mapping remains ambiguous, keep the relation unknown rather than assigning it to the wrong person. "
+                "Before labeling a family scene, build a small evidence-linked family graph and keep user, visible "
+                "participants, speaker, and addressee as distinct nodes. A line such as “谢谢妈妈” identifies the "
+                "speaker’s mother as its addressee; it does not identify the speaker as mother. A line such as "
+                "“谢谢孙子” identifies the speaker’s grandchild as its addressee. Do not apply incompatible vocatives "
+                "to the same person when speaker/addressee attribution is unresolved; treat the relation as uncertain "
+                "instead of forcing a granddaughter label. If a visible adult is independently established as the "
+                "grandmother’s daughter and the exchange establishes the camera wearer as that grandmother’s grandchild, "
+                "consider the adult’s user-relative role as mother only when the full dialogue, interaction, or matching "
+                "prior memory supports that parent-child link; do not stop at daughter-of-grandmother or silently convert "
+                "it to granddaughter. Store the relation chain with explicit endpoints, such as 'mother of the user' or "
+                "'daughter of person_1', and choose the card label that best represents the supported user-relative role. "
+                "When the first-person camera wearer is addressed as Dad, that identifies "
                 "the addressee as the speaker's father; if a unique visible candidate's repeated, time-aligned mouth "
                 "movement identifies that candidate as the speaker, label them as the user's son at medium confidence. "
                 "Do not label an addressed visible listener as the son, or infer the speaker from the word Dad alone. "
@@ -2870,7 +2906,17 @@ class InteractiveSession(PostWriteRetrievalMixin):
                 and document.get("frame_index") in candidate_evidence_frames
             ]
             document_linked_frames = {doc.get("frame_index") for _, doc in document_matches}
-            if not matched and not document_matches:
+            identity_annotations = (visual_context or {}).get("human_identity_annotations") or []
+            human_annotation = next((
+                row for row in identity_annotations if isinstance(row, dict)
+                and str(row.get("candidate_id") or "") == str(candidate_id or "")
+            ), None)
+            annotation_frame_match = bool(
+                human_annotation and isinstance(target_frame, int)
+                and target_frame in candidate_evidence_frames
+                and any(index in candidate_evidence_frames for index in cited_frames)
+            )
+            if not matched and not document_matches and not annotation_frame_match:
                 continue
             confidence = str(update_row.get("confidence") or "low").casefold()
             target["profile_confidence"] = confidence if confidence in {"high", "medium", "low"} else "low"
@@ -2974,6 +3020,15 @@ class InteractiveSession(PostWriteRetrievalMixin):
                     if dob_note.casefold() not in current_context.casefold():
                         target["profile_context"] = (current_context + " " + dob_note).strip()[:700]
             refs = list(target.get("evidence_refs") or [])
+            if annotation_frame_match and isinstance(human_annotation, dict):
+                refs.append({
+                    "source_segment_id": str(source_segment_id or "")[:128],
+                    "modality": "user_annotation",
+                    "label": str(human_annotation.get("display_label") or "")[:80],
+                    "basis": str(human_annotation.get("basis") or "user-confirmed identity correction")[:160],
+                    "frame_index": target_frame,
+                    "frame_time_s": round(float(image_frames[target_frame - 1].get("at_s") or 0), 3),
+                })
             for _line_text, start_s, end_s in matched:
                 refs.append({"source_segment_id": str(source_segment_id or "")[:128],
                              "modality": "speech", "audio_start_s": round(start_s, 3),
