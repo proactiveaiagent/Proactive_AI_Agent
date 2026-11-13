@@ -72,12 +72,21 @@ _PROMPT_TEMPLATE = """You are a user profiling system. Given the agent's scene/n
 DO NOT extract transient state (current emotion, attention focus, gaze, current goal/intention) — those are NOT long-term profile and are handled elsewhere.
 
 RULES:
-1. Only output a field if you have EVIDENCE from the analysis. Do NOT hallucinate.
-2. Each attribute carries "confidence" (certainty, 0.0-1.0) and "evidence".
+0. Write all profile values that describe identity, role, occupation, family/social relationships, preferences, and behavior in natural English. Translate supported Chinese role and relationship terms (for example 妈妈 → mother, 医生 → doctor); keep proper names in established Latin spelling or Hanyu Pinyin rather than translating their meanings. Evidence may retain exact source-language quotations for auditability.
+1. The profile subject is the user only. The input may contain third-party speech,
+   other people's appearances, roles, ages, names, and family relationships. Never
+   transfer an attribute from a visible person, relative, customer, employee, or
+   speaker to the user. Use only evidence records whose subject is explicitly user.
+2. A statement addressed to "you" supports a user claim only when the source record
+   explicitly maps the listener to user; preserve that it is a speaker's claim rather
+   than a medically or otherwise independently verified fact.
+3. Only output a field if you have EVIDENCE from the analysis. Do NOT hallucinate.
+4. Each attribute carries "confidence" (certainty, 0.0-1.0) and "evidence".
 3. Also provide "rank_score" (0.0-1.0), separate from confidence: preference/motivation strength,
    goal importance, and decision-factor influence. Personality ordering uses confidence; repeated
    behavior/location observations use their observation frequency.
 4. A first-time / single observation should have LOW confidence (< 0.5); repeated evidence raises confidence.
+5. A third-party opinion about the user (for example, another person calling the user trusting, careless, or shy) is an attributed claim, not an established personality trait. Keep its speaker and exact evidence attached; do not add it as a stable profile trait unless the user confirms it or independent observations support the same pattern.
 5. OPTIONAL: each attribute may carry "decay_type" to indicate its temporal nature:
    - "stable"   : identity / preference (gender, name, taste) — long-lasting or permanent
    - "decaying" : life-stage / state (e.g. occupation, "currently a student") — fades over time

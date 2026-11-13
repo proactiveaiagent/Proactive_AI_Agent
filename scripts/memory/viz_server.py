@@ -18,10 +18,13 @@ viz_server.py — 7 层记忆模型可视化网站后端
 """
 
 import hashlib
+import email
+from email import policy
 import copy
 import math
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
+import mimetypes
 import os
 import re
 import shutil
@@ -171,6 +174,9 @@ ACTIVE_STEP_RUNNING = False
 ACTIVE_STEP_PHASE = None
 ACTIVE_REASON = {"request_id": None, "event": None}
 REASON_LOCK = threading.Lock()
+RETRIEVAL_TEST_JOBS = {}
+RETRIEVAL_TEST_LOCK = threading.Lock()
+RETRIEVAL_TEST_UPLOAD_ROOT = RUNS / "retrieval_test_uploads"
 
 try:
     from interactive_runner import InteractiveSession
@@ -217,6 +223,241 @@ def load_json(path):
         return None
     with open(path, encoding="utf-8") as f:
         return json.load(f)
+
+
+
+def _retrieval_test_person_profiles(session, current_fields, candidates):
+    """Return source-backed person observations and only verified portrait crops."""
+    archive = session.mem.memory.get("layer7", {}).get("moments", {})
+    candidate_ids = {str(row.get("id") or "") for row in candidates if row.get("id")}
+    if not candidate_ids:
+        return []
+    generic = re.compile(r"^(?:man|woman|person|people|user|camera wearer|speaker)(?:\s+\d+)?$", re.I)
+    # A generic visual label is only meaningful inside the source episode. It
+    # must not join unrelated people across videos. Cross-video expansion is
+    # allowed only when the stored identity resolver supplied a canonical name.
+    canonical_targets = set()
+    for mid in candidate_ids:
+        moment = archive.get(mid) or {}
+        for row in moment.get("person_observations") or []:
+            if not isinstance(row, dict):
+                continue
+            canonical = str((row.get("identity_resolution") or {}).get("canonical_name") or "").strip()
+            if canonical:
+                canonical_targets.add(canonical.casefold())
+    profiles = {}
+    for mid, moment in archive.items():
+        if not isinstance(moment, dict) or moment.get("merged_into") or moment.get("stale"):
+            continue
+        media = moment.get("multimodal") or {}
+        image_by_name = {}
+        for item in (media.get("person_visuals") or {}).get("items") or []:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("person") or item.get("visual_person") or "").strip()
+            if not name:
+                continue
+            refs = [ref for ref in (item.get("frame_refs") or [])
+                    if isinstance(ref, dict) and ref.get("asset")]
+            image_by_name[name.casefold()] = refs
+        rows = moment.get("person_observations") or []
+        if not rows:
+            rows = [{"entity": name} for name in (moment.get("people") or [])]
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            name = str(row.get("entity") or "").strip()
+            resolution = row.get("identity_resolution") or {}
+            canonical = str(resolution.get("canonical_name") or "").strip()
+            same_candidate_episode = str(mid) in candidate_ids
+            explicitly_same_person = bool(canonical and canonical.casefold() in canonical_targets)
+            if (not name or not same_candidate_episode and not explicitly_same_person
+                    or not same_candidate_episode and generic.fullmatch(name)):
+                continue
+            profile_key = canonical.casefold() if explicitly_same_person else f"{mid}:{name.casefold()}"
+            bucket = profiles.setdefault(profile_key, {
+                "name": canonical or name, "observations": [], "images": [], "source_memory_ids": []})
+            bucket["observations"].append({
+                "appearance": row.get("appearance") or "",
+                "role": row.get("role") or resolution.get("role") or "",
+                "identity": canonical,
+                "evidence": row.get("evidence") or "",
+                "memory_id": str(mid),
+            })
+            bucket["source_memory_ids"].append(str(mid))
+            for ref in image_by_name.get(name.casefold(), [])[:3]:
+                item = dict(ref)
+                item["url"] = "/api/memory_asset?p=" + quote(str(ref["asset"]))
+                bucket["images"].append(item)
+    return [
+        {**item,
+         "observations": item["observations"][:8],
+         "images": item["images"][:8],
+         "source_memory_ids": list(dict.fromkeys(item["source_memory_ids"]))[:12]}
+        for item in profiles.values()
+    ]
+
+
+def _run_retrieval_test(job_id, moment, uploaded_path=None):
+    """Perceive a selected clip, then retrieve against the existing memory without writing it."""
+    global SESSION
+    with RETRIEVAL_TEST_LOCK:
+        job = RETRIEVAL_TEST_JOBS.get(job_id)
+        if not job:
+            return
+        job.update({"state": "queued", "stage": "waiting",
+                    "message": "等待当前视频步骤完成后自动开始检索"})
+    # Video writes and retrieval tests share inference resources. Queue the test
+    # instead of failing it when a long video step currently owns the lock.
+    while not STEP_LOCK.acquire(timeout=1.0):
+        with RETRIEVAL_TEST_LOCK:
+            job = RETRIEVAL_TEST_JOBS.get(job_id)
+            if not job:
+                if uploaded_path:
+                    Path(uploaded_path).unlink(missing_ok=True)
+                return
+            job.update({"state": "queued", "stage": "waiting",
+                        "message": "当前视频步骤正在运行，检索任务会在完成后自动开始"})
+    with RETRIEVAL_TEST_LOCK:
+        job = RETRIEVAL_TEST_JOBS.get(job_id)
+        if job:
+            job.update({"state": "running", "stage": "perception",
+                        "message": "正在从视频抽帧并识别场景"})
+    try:
+        session = SESSION
+        if session is None:
+            raise RuntimeError("请先在“当前步骤”创建或恢复一个记忆会话")
+
+        def progress(event):
+            with RETRIEVAL_TEST_LOCK:
+                current = RETRIEVAL_TEST_JOBS.get(job_id)
+                if current:
+                    current.update({"stage": event.get("stage") or "perception",
+                                    "message": event.get("message") or "正在分析视频"})
+
+        progress({"stage": "perception", "message": "正在从视频抽帧并识别场景"})
+        perceived = session.perceiver.perceive(moment, force=False, progress_callback=progress)
+        fields = perceived.get("fields") or {}
+        if not fields:
+            raise RuntimeError(perceived.get("error") or "视频感知未返回结构化场景")
+        speech_text = ""
+        try:
+            video_path = ir.video_path_of(moment)
+            clip_start, clip_end = ir.clip_range(moment)
+            audio_end = min(float(clip_end), float(clip_start) + 20.0) if clip_end is not None else float(clip_start) + 20.0
+            if video_path and audio_end > float(clip_start):
+                progress({"stage": "speech_transcription", "message": "正在转写视频原声（最多取前 20 秒）"})
+                audio_bytes = ir._run_ffmpeg([
+                    "-ss", f"{float(clip_start):.3f}", "-i", str(video_path),
+                    "-t", f"{audio_end - float(clip_start):.3f}", "-vn", "-ac", "1",
+                    "-ar", "16000", "-c:a", "pcm_s16le", "-f", "wav", "pipe:1",
+                ])
+                if audio_bytes:
+                    import requests
+                    response = requests.post(
+                        session.perceiver.api_url + "/transcribe",
+                        files={"audio": ("retrieval_test.wav", audio_bytes, "audio/wav")},
+                        timeout=(4, 25),
+                    )
+                    response.raise_for_status()
+                    decoded = response.json()
+                    segments = decoded.get("segments") or []
+                    speech_text = " ".join(
+                        f"[{float(row.get('start') or 0):.1f}s] {str(row.get('text') or '').strip()}"
+                        for row in segments if isinstance(row, dict) and str(row.get("text") or "").strip()
+                    )[:1600]
+                    if not speech_text:
+                        speech_text = str(decoded.get("full_text") or "").strip()[:1600]
+        except Exception:
+            # Audio is optional evidence; video retrieval remains available if ASR fails.
+            speech_text = ""
+        def values(value):
+            if isinstance(value, (list, tuple)):
+                return [str(item).strip() for item in value if str(item or "").strip()]
+            return [str(value).strip()] if str(value or "").strip() else []
+        observed = [
+            ("Scene", fields.get("scene")), ("Action", fields.get("user_action")),
+            ("Interaction", fields.get("interaction_details")),
+            ("People", ", ".join(values(fields.get("people")))),
+            ("Location", fields.get("location")), ("Activity", fields.get("activity")),
+            ("Objects", ", ".join(values(fields.get("objects")))),
+            ("Environment", ", ".join(values(fields.get("environments")))),
+        ]
+        person_observations = fields.get("person_observations") or []
+        if person_observations:
+            observed.append(("Person observations", "; ".join(
+                f"{row.get('entity')}: {row.get('appearance', '')}"
+                for row in person_observations if isinstance(row, dict))))
+        situation = "Current observed scene: " + " ".join(
+            f"{key}: {value}" for key, value in observed if str(value or "").strip())
+        if fields.get("source_evidence"):
+            situation += " Source-video speech evidence: " + str(fields["source_evidence"])[:700]
+        if speech_text:
+            situation += " Source-video audio transcript: " + speech_text[:1200]
+        situation = situation[:1600]
+        with RETRIEVAL_TEST_LOCK:
+            job = RETRIEVAL_TEST_JOBS.get(job_id)
+            if job:
+                job.update({"stage": "retrieval", "message": "场景已解析，正在生成检索线索并查询记忆库",
+                            "perception": {
+                                "model": perceived.get("model") or "Qwen3-VL",
+                                "source": perceived.get("source"),
+                                "prompt_version": perceived.get("prompt_version"),
+                                "num_frames": perceived.get("num_frames"),
+                                "frame_times_s": perceived.get("frame_times_s") or [],
+                                "elapsed_ms": perceived.get("elapsed_ms"),
+                                "fields": fields,
+                                "audio_transcript": speech_text,
+                            }})
+        result = session.daytime.retrieve_relevant_memories(
+            situation, context={
+                "retrieval_only": True,
+                "memory_modalities": "text",
+                "retrieval_policy_version": "retrieval_test_ui_v1",
+                "exclude_source_segment_ids": [
+                    str((fields.get("source_provenance") or {}).get("source_segment_id") or "")
+                ] if (fields.get("source_provenance") or {}).get("source_segment_id") else [],
+                "current_scene_observations": {
+                    "person_observations": person_observations,
+                    "visual_objects": values(fields.get("objects")),
+                    "scene_fields": fields,
+                },
+            })
+        candidates = result.get("candidates") or []
+        result["retrieval_test"] = {
+            "read_only": True,
+            "memory_count": len(session.mem.memory.get("layer7", {}).get("moments", {})),
+            "perception_source": perceived.get("source"),
+        }
+        result["person_profiles"] = _retrieval_test_person_profiles(session, fields, candidates)
+        result["current_perception"] = {
+            "model": perceived.get("model") or "Qwen3-VL",
+            "source": perceived.get("source"),
+            "prompt_version": perceived.get("prompt_version"),
+            "num_frames": perceived.get("num_frames"),
+            "frame_times_s": perceived.get("frame_times_s") or [],
+            "elapsed_ms": perceived.get("elapsed_ms"),
+            "fields": fields,
+            "audio_transcript": speech_text,
+        }
+        with RETRIEVAL_TEST_LOCK:
+            job = RETRIEVAL_TEST_JOBS.get(job_id)
+            if job:
+                job.update({"state": "done", "stage": "done", "message": "检索完成",
+                            "result": result, "situation": situation})
+    except Exception as exc:
+        with RETRIEVAL_TEST_LOCK:
+            job = RETRIEVAL_TEST_JOBS.get(job_id)
+            if job:
+                job.update({"state": "error", "stage": "error", "message": str(exc)[:700]})
+    finally:
+        STEP_LOCK.release()
+        if uploaded_path:
+            try:
+                Path(uploaded_path).unlink(missing_ok=True)
+            except OSError:
+                pass
+
 
 
 def _preview_clip(qs):
@@ -309,8 +550,22 @@ def _compact_interactive_state(state):
             if isinstance(perception, dict):
                 moment_id = str(perception.get("moment_id") or "")
                 stored = ((SESSION.mem.memory.get("layer7") or {}).get("moments") or {}).get(moment_id)
-                if isinstance(stored, dict) and isinstance(stored.get("multimodal"), dict):
-                    perception["multimodal"] = copy.deepcopy(stored["multimodal"])
+                if isinstance(stored, dict):
+                    if isinstance(stored.get("multimodal"), dict):
+                        perception["multimodal"] = copy.deepcopy(stored["multimodal"])
+                    # The compact response omits full snapshots. Carry the finalized
+                    # stored fields for the just-written record so the step card does
+                    # not fall back to raw Qwen labels (e.g. woman instead of 姥姥/妈妈).
+                    display_fields = (
+                        "id", "timestamp", "scene", "content_summary", "user_action",
+                        "interaction_details", "source_evidence", "people", "location",
+                        "activity", "environments", "objects", "person_observations",
+                        "object_observations", "temporal_facts", "source_time",
+                        "source_provenance", "object_states", "document_evidence",
+                    )
+                    perception["stored_memory"] = {
+                        key: copy.deepcopy(stored[key]) for key in display_fields if key in stored
+                    }
         if item.get("kind") == "add" and isinstance(snapshot, dict):
             full = snapshot.get("full") or {}
             moments = full.get("layer7_moments") or []
@@ -372,14 +627,14 @@ class Handler(BaseHTTPRequestHandler):
 
     @staticmethod
     def _safe_video(rel):
-        """Allow videos only under the EgoLife corpus or copied Feishu test corpus."""
+        """Allow supported video containers only under configured corpora."""
         decoded = unquote(rel)
         for allowed_root in (VIDEO_ROOT, FEISHU_VIDEO_ROOT):
             try:
                 p = (allowed_root / decoded).resolve()
             except Exception:
                 continue
-            if p.suffix.lower() == ".mp4" and allowed_root in p.parents and p.is_file():
+            if p.suffix.lower() in {".mp4", ".mov"} and allowed_root in p.parents and p.is_file():
                 return p
         return None
 
@@ -439,7 +694,9 @@ class Handler(BaseHTTPRequestHandler):
                 code = 206
         length = end - start + 1
         self.send_response(code)
-        self.send_header("Content-Type", "video/mp4")
+        content_type = ("video/mp4" if quality == "preview"
+                        else mimetypes.guess_type(p.name)[0] or "application/octet-stream")
+        self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(length))
         self.send_header("Accept-Ranges", "bytes")
         self.send_header("Cache-Control", "private, max-age=86400")
@@ -927,6 +1184,39 @@ class Handler(BaseHTTPRequestHandler):
         # ---------------- 交互式步进执行 ----------------
         if url.path == "/api/interactive/options":
             return self._send(200, ir.interactive_dataset_options())
+
+        if url.path == "/api/retrieval-test/videos":
+            try:
+                moments = ir.feishu_test_moments("feishu:all")
+                rows = []
+                for moment in moments:
+                    relative = str(moment.get("video") or "")
+                    path = Path(relative)
+                    try:
+                        rel = (ROOT / relative).resolve().relative_to(FEISHU_VIDEO_ROOT).as_posix()
+                    except (OSError, ValueError):
+                        continue
+                    rows.append({
+                        "id": moment.get("id"),
+                        "clip_id": moment.get("test_clip_id") or path.stem,
+                        "category": moment.get("test_category") or "",
+                        "category_label": ir.FEISHU_TESTSET_LABELS.get(
+                            moment.get("test_category") or "", moment.get("test_category") or ""),
+                        "video": path.name,
+                        "duration_seconds": moment.get("duration_seconds"),
+                        "video_url": "/api/video?p=" + quote(rel),
+                    })
+                return self._send(200, {"items": rows, "count": len(rows)})
+            except Exception as exc:
+                return self._send(503, {"error": f"无法读取测试集视频：{exc}"})
+
+        if url.path == "/api/retrieval-test/jobs":
+            job_id = (qs.get("id") or [""])[0]
+            with RETRIEVAL_TEST_LOCK:
+                job = RETRIEVAL_TEST_JOBS.get(job_id)
+                if not job:
+                    return self._send(404, {"error": "检索测试任务不存在或已过期"})
+                return self._send(200, dict(job))
 
         if url.path == "/api/interactive/reason_cancel":
             with REASON_LOCK:
@@ -1507,6 +1797,88 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         global SESSION, ACTIVE_STEP_FORCE, ACTIVE_STEP_RUNNING, ACTIVE_STEP_PHASE
         url = urlparse(self.path)
+        if url.path == "/api/retrieval-test/run":
+            if SESSION is None:
+                return self._send(409, {"error": "请先在“当前步骤”创建或恢复一个记忆会话"})
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+            except (TypeError, ValueError):
+                length = 0
+            max_upload = 300 * 1024 * 1024
+            if length <= 0 or length > max_upload:
+                return self._send(413, {"error": "请求为空或视频超过 300 MB"})
+            body = self.rfile.read(length)
+            content_type = self.headers.get("Content-Type", "")
+            uploaded_path = None
+            moment = None
+            display_name = ""
+            try:
+                if content_type.lower().startswith("multipart/form-data"):
+                    envelope = (f"Content-Type: {content_type}\r\nMIME-Version: 1.0\r\n\r\n").encode("utf-8") + body
+                    message = email.message_from_bytes(envelope, policy=policy.default)
+                    form = {}
+                    upload = None
+                    for part in message.iter_parts():
+                        name = part.get_param("name", header="content-disposition")
+                        data = part.get_payload(decode=True) or b""
+                        filename = part.get_filename()
+                        if filename:
+                            upload = (filename, data)
+                        elif name:
+                            form[name] = data.decode("utf-8", "replace").strip()
+                    if upload:
+                        filename, data = upload
+                        suffix = Path(filename).suffix.lower()
+                        if suffix not in {".mp4", ".mov", ".webm", ".mkv", ".avi"}:
+                            return self._send(400, {"error": "仅支持 MP4、MOV、WebM、MKV 或 AVI 视频"})
+                        if not data:
+                            return self._send(400, {"error": "上传的视频文件为空"})
+                        digest = hashlib.sha256(data).hexdigest()
+                        RETRIEVAL_TEST_UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
+                        uploaded_path = RETRIEVAL_TEST_UPLOAD_ROOT / f"{uuid.uuid4().hex}{suffix}"
+                        uploaded_path.write_bytes(data)
+                        moment = {
+                            "id": "retrieval_upload_" + digest[:24],
+                            "video": uploaded_path.resolve().relative_to(ROOT).as_posix(),
+                            "start_time": 0.0,
+                            "end_time": None,
+                        }
+                        display_name = Path(filename).name[:180]
+                    else:
+                        clip_id = form.get("clip_id", "")
+                        moment = next((row for row in ir.feishu_test_moments("feishu:all")
+                                       if row.get("test_clip_id") == clip_id
+                                       or row.get("id") == clip_id), None)
+                        if moment is None:
+                            return self._send(400, {"error": "测试集里没有找到所选视频"})
+                        display_name = str(moment.get("test_clip_id") or moment.get("video") or "")
+                else:
+                    payload = json.loads(body.decode("utf-8"))
+                    clip_id = str(payload.get("clip_id") or "")
+                    moment = next((row for row in ir.feishu_test_moments("feishu:all")
+                                   if row.get("test_clip_id") == clip_id
+                                   or row.get("id") == clip_id), None)
+                    if moment is None:
+                        return self._send(400, {"error": "测试集里没有找到所选视频"})
+                    display_name = str(moment.get("test_clip_id") or moment.get("video") or "")
+            except (ValueError, UnicodeDecodeError, TypeError) as exc:
+                if uploaded_path:
+                    uploaded_path.unlink(missing_ok=True)
+                return self._send(400, {"error": f"无法读取检索测试请求：{exc}"})
+            job_id = uuid.uuid4().hex
+            with RETRIEVAL_TEST_LOCK:
+                RETRIEVAL_TEST_JOBS[job_id] = {
+                    "id": job_id, "state": "queued", "stage": "queued",
+                    "message": "任务已排队", "source_name": display_name,
+                    "created_at": time.time(),
+                }
+                for old_id, old_job in sorted(
+                        RETRIEVAL_TEST_JOBS.items(), key=lambda pair: pair[1].get("created_at", 0))[:-20]:
+                    if old_job.get("state") in {"done", "error"}:
+                        RETRIEVAL_TEST_JOBS.pop(old_id, None)
+            threading.Thread(target=_run_retrieval_test,
+                             args=(job_id, moment, uploaded_path), daemon=True).start()
+            return self._send(202, {"id": job_id, "state": "queued"})
         if url.path not in ("/api/interactive/merge", "/api/interactive/unmerge",
                             "/api/interactive/person_identity", "/api/interactive/clear_memory",
                             "/api/interactive/nightly"):
@@ -1552,6 +1924,10 @@ class Handler(BaseHTTPRequestHandler):
                 if SESSION is None:
                     return self._send(409, {"error": "请先创建交互会话"})
                 old_dir = Path(SESSION.mem.memory_dir)
+                old_memory = SESSION.mem.memory if isinstance(SESSION.mem.memory, dict) else {}
+                old_layer7 = old_memory.get("layer7") or {}
+                layer7_cleared = len(old_layer7.get("moments") or {})
+                cleared_layers = [f"layer{i}" for i in range(1, 8)]
                 try:
                     SESSION.daytime.end_scene()
                 except Exception:
@@ -1563,6 +1939,10 @@ class Handler(BaseHTTPRequestHandler):
                     os.rename(old_dir, archived)
                 old_dir.mkdir(parents=True, exist_ok=True)
                 SESSION.mem = ir.PersonMemory(memory_dir=str(old_dir))
+                SESSION.mem._save()  # Persist empty pool to prevent legacy seed import on session restart.
+                cleared_layer7_now = SESSION.mem.memory.get("layer7", {}).get("moments") or {}
+                if cleared_layer7_now:
+                    raise RuntimeError("Layer 7 归档没有清空")
                 SESSION.media_store = ir.MultimodalAssetStore(old_dir)
                 SESSION.daytime = ir.DaytimeProcessor(SESSION.mem)
                 SESSION.daytime.start_scene(f"accumulation_{time.strftime('%Y-%m-%d')}")
@@ -1576,8 +1956,11 @@ class Handler(BaseHTTPRequestHandler):
                 MEMORY_ASSET_CACHE.clear()
                 ENTITY_ARCHIVE_INDEX_CACHE.clear()
                 return self._send(200, {"ok": True, "archived": archived.name,
+                                        "cleared_layers": cleared_layers,
+                                        "layer7_moments_cleared": layer7_cleared,
+                                        "layer7_moments_remaining": 0,
                                         "memory_count": 0,
-                                        "message": "当前累积记忆已清空；原记忆已保留在可恢复归档中"})
+                                        "message": f"当前 Layer 1–7 记忆已清空（Layer 7 归档 {layer7_cleared} 条）；原记忆已保留在可恢复归档中"})
             except Exception as exc:
                 return self._send(500, {"error": f"清空累积记忆失败：{exc}"})
             finally:

@@ -140,6 +140,30 @@ def main() -> int:
     memory = json.loads((runs / "interactive_mem" / "current" / "memory.json")
                         .read_text(encoding="utf-8"))
     report = summarize(memory)
+    latency_path = runs / "interactive_mem" / "current" / "processing_latency_log.jsonl"
+    retrieval_audit = []
+    if latency_path.exists():
+        for line in latency_path.read_text(encoding="utf-8").splitlines():
+            try:
+                item = json.loads(line)
+            except (TypeError, ValueError):
+                continue
+            audit = item.get("retrieval_before_write")
+            if isinstance(audit, dict):
+                retrieval_audit.append({
+                    "source_segment_id": item.get("source_segment_id"),
+                    "retrieval": audit,
+                })
+    report["retrieval_before_write_audit"] = {
+        "segments": len(retrieval_audit),
+        "segments_with_candidates": sum(
+            1 for row in retrieval_audit
+            if (row.get("retrieval") or {}).get("candidate_count", 0)),
+        "candidate_total": sum(
+            int((row.get("retrieval") or {}).get("candidate_count", 0) or 0)
+            for row in retrieval_audit),
+        "per_segment": retrieval_audit,
+    }
     out = scratch / "summary.json"
     out.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps({"totals": report["totals"],

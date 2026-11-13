@@ -57,8 +57,8 @@ _SOURCE_FINGERPRINT_LOCK = threading.RLock()
 
 DEFAULT_API = os.environ.get("QWEN_API_URL", "http://127.0.0.1:8001")
 DEFAULT_FRAMES = 6
-PROMPT_VERSION = "memory-v10.4-pov-body-and-measurement-grounding-2026-10-23"
-LIST_PARSER_VERSION = "json-clinical-document-evidence-v10-2026-10-23"
+PROMPT_VERSION = "memory-v10.20-authoritative-object-memory-2026-11-13"
+LIST_PARSER_VERSION = "json-source-grounded-person-age-group-v17-typed-reference-safe-2026-10-24"
 
 
 # ---------------------------------------------------------------------------
@@ -68,30 +68,31 @@ LIST_PARSER_VERSION = "json-clinical-document-evidence-v10-2026-10-23"
 def build_prompt(n_frames: int) -> str:
     return f"""Create a detailed, source-grounded episodic memory using only these {n_frames} ordered frames sampled from one first-person video clip.
 
-Use visible pixels only. Do not use transcript files, captions, test annotations, reference answers, filenames, or dataset metadata as evidence. Do not invent names, exact ages, dialogue, intent, plans, relationships, or facts not supported by the frames. A relationship or social role may be used only when plainly established by readable text or an explicit interaction; an occupational role may be used when the work setting and directly observed duties support it, never from clothing alone. Exact age and age categories require explicit readable text. Read on-screen text only when clearly legible and directly relevant. Inspect legible receipts, bills, menus, tickets, badges, and screens as evidence: quote important line items, amounts, totals, names, and their source item exactly. A receipt establishes what is printed, not that payment was completed. Distinguish airport/public-address announcements from face-to-face conversation; do not turn an announcement ending with thanks into a personal social interaction.
+Use visible pixels only. Do not use transcript files, captions, test annotations, reference answers, filenames, or dataset metadata as evidence. LANGUAGE RULE: Every generated human-readable semantic field must be natural English, not only identity labels. This applies to Scene, Content Summary, Location, Time/Occasion, People, descriptive Person Observations, User Action, Activity, Objects, Environment, Interaction Details, and semantic fields in Temporal Facts. Translate supported roles and relationships into concise English (for example, 姥姥 → grandmother, 妈妈 → mother, 医生 → doctor, 路人 → passerby); never leave Chinese in those generated fields. Keep proper names in established Latin spelling or use Hanyu Pinyin for Chinese names. Exact visible document/source quotations and evidence text may remain in their original language so they remain verifiable; do not copy source-language wording into semantic fields. This language rule never permits unsupported identities, facts, or relationships. Do not invent names, exact numerical ages, dialogue, intent, plans, relationships, or facts not supported by the frames. A coarse apparent-age category may be recorded only when multiple visible cues make it reasonably clear: infant/child/teen categories from developmental body proportions, and adult/older-adult bands from facial age features together with cues such as gray or white hair; hair color alone is never sufficient. Use the broadest defensible band, mark it as visual_estimate, and omit it when cues are ambiguous. When the central subject is visibly an infant, label the visual category as baby and cite developmental/body-proportion cues; do not downgrade a clear infant to a clothing-based label or split that same child into identities across poses. This is only a revisable visual category, not a claim about exact age or family identity. Keep this as an uncertain visual category, never an exact age, and omit it when cues are ambiguous. A relationship or social role may be used only when plainly established by readable text or an explicit interaction; an occupational role may be used when the work setting and directly observed duties support it, never from clothing alone. Exact age requires a clearly legible age value explicitly labeled as age; never calculate age from a birth date. Read on-screen text only when clearly legible and materially relevant to the episode. Transcribe exact values with their visible labels and source item, and distinguish what a document displays from what the video independently establishes.
 
-Understand the full clip as one coherent scene. Before answering, scan all frames in order and inventory visible people, their actions and interactions, important objects and their locations/states, the activity, setting, and visible time/place clues. Record a short chronological account, not a bag of keywords. Preserve distinct supported actions and state changes, including who/what they affect. A person or unchanged object seen in several frames is one entity; give it a short, stable, semantic name and summarize its visible interval. Track each person using stable visual anchors such as face, clothing, and position; never transfer one person's action to another because their pose or background is similar. Keep identifying names separate from appearance details. Do not omit a visible person. If identity continuity is unclear, keep observations separate and use a generic event subject rather than merging identities. Camera pans/tilts or viewpoint changes are camera motion; do not attribute them to a person in view unless that person's body visibly moves. In narrative prose call the first-person camera holder "the user"; reserve "camera wearer" for internal actor labels in Temporal Facts. A visible person standing outside the camera at a doorway is a separate person, never the user merely because the user speaks to them or later moves the camera.
+Understand the full clip as one coherent scene. Before answering, scan all frames in order and identify the main subject, people who participate in or materially affect the event, important objects and their locations/states, the activity, setting, and visible time/place clues. Record a short chronological account, not a bag of keywords. Preserve distinct supported actions and state changes, including who/what they affect. A person or unchanged object seen in several frames is one entity; give it one short, stable, semantic name and summarize its visible interval. Track identity across frames using face, body proportions, clothing, position, movement, and carried objects together. A new angle, pose, expression, partial-body detection, or repeat appearance is not a new person. Merge references when continuity is clear; when it is not, do not create another identity from a weak detection. Do not create individual person memories for distant bystanders, partial bodies, or incidental background figures who do not affect the event; they may be summarized collectively in Environment. Include a background person individually only when they clearly participate in the event or their identity is important to understanding it. Keep identifying names separate from appearance details. Camera pans/tilts or viewpoint changes are camera motion; do not attribute them to a person in view unless that person's body visibly moves. In first-person footage, compare a hazard or target's relative size and position across ordered frames to distinguish moving closer, stopping, or moving away; do not call the user stationary solely because their body is offscreen, and do not infer avoidance from a camera pan without spatial evidence. A warning sign identifies a hazard but does not by itself prove the user's response. In narrative prose call the first-person camera holder "the user"; reserve "camera wearer" for internal actor labels in Temporal Facts. A visible person is separate from the user unless the frames directly establish first-person body/action evidence.
 
 Return exactly these English fields, each on its own line:
-Scene: two to four concise chronological sentences describing the whole scene, people, actions, interactions, object changes, and outcome; quote short, important legible text only when it materially identifies a person, place, object, or event
+Scene: two to four concise chronological sentences describing the visible scene, people, actions, interactions, object changes, and outcome
+Content Summary: required, never blank; one concise high-level sentence stating what the clip is mainly about (overall situation, occasion, purpose, or outcome), including a visible hazard response or meaningful decision when ordered frames support it; use the broad context supported by the frames, do not retell actions in order, list dialogue, or repeat scene details; when broader context is unclear, give a simple grounded setting-and-activity gist
 Location: the broadest clearly supported place
 Time/Occasion: only a date, clock, or occasion clearly readable in a supplied frame; otherwise blank
 People: only literal names clearly readable in supplied-frame text and visibly linked to a specific person; otherwise leave blank. Never infer names from appearance, roles, filenames, or context
-Person Observations: one JSON row per distinct, visually distinguishable person (up to 16); include visible people in the background. Never create a separate person or portrait from a body part. In a downward/first-person POV, feet, toes, hands, arms, legs, or a partial reflection belonging to the camera holder are the user's own body/action evidence, not another person; when only these parts are visible, return no person observation and attribute the supported action to "user". Do not label the user's feet as an anonymous person. Schema: {{"entity":"neighbor 1","appearance":"clothing, accessories, posture, and distinguishing visible traits","face_features":"clear visible face details only; otherwise empty","readable_name":"literal name from legible in-frame text directly linked to this person, or empty","name_evidence":"exact visible name text and where it appears, or empty","age":"exact age only when readable in-frame text links it to this person, or empty","age_basis":"visible_text|unknown","frame_index":1,"evidence":"specific visible evidence for this label and appearance","confidence":"high|medium|low"}}. Keep entity short: use a literal name only with readable-name evidence; use a supported relationship/role such as grandma, friend 2, or neighbor 1 only when clearly established by visible text or explicit interaction; otherwise use a concise visible category such as woman 1/man 1 when clear, or a stable position such as person at doorway. Never infer age from appearance; do not use old/young/elderly labels unless readable text establishes them. Put detailed clothing and face traits in appearance/face_features, not entity. Use the exact same short entity label in Scene, Interaction Details, Temporal Facts, affected_people, and actor. If two people cannot be distinguished from the frames, do not invent identities or separate them. Leave face_features empty when the face is too small, obscured, or unclear. Keep readable_name/name_evidence only for exact visible text linked to this person; age only for exact readable text linked to them.
-Personal measurement rule: when the user is visibly using a measuring device in first-person POV, record the device as a salient object, transcribe its exact displayed value and unit only when legible, and record the result as a time-bounded measurement of the user (not a permanent attribute). Do not create a person observation from the user's body parts.
-User Action: visible actions performed by the user only; otherwise blank. In narrative fields use "the user", not "the camera wearer".
+Person Observations: one JSON row for each distinct main subject or event participant (up to 16), not one row per frame or per detected body fragment. Do not create cards for distant, incidental bystanders; summarize them collectively in Environment. Never create a separate person or portrait from a body part. In a downward/first-person POV, feet, toes, hands, arms, legs, or a partial reflection belonging to the camera holder are the user's own body/action evidence, not another person; when only these parts are visible, return no person observation and attribute the supported action to "user". Do not label the user's feet as an anonymous person. Schema: {{"entity":"baby","appearance":"clothing, accessories, posture, and distinguishing visible traits","face_features":"clear visible face details only; otherwise empty","apparent_age_range":"baby|toddler|child|teenager|18-29|30-44|45-59|60-74|75+ or empty","apparent_age_basis":"visual_estimate|unknown","readable_name":"literal name from legible in-frame text directly linked to this person, or empty","name_evidence":"exact visible name text and where it appears, or empty","age":"exact age only when a clearly labeled age value is readable, or empty","age_basis":"visible_text|unknown","frame_index":1,"evidence":"specific visible evidence for this label and appearance","confidence":"high|medium|low"}}. Keep entity short: use a literal name only with readable-name evidence; use a supported relationship or role only when clearly established by visible text or interaction; otherwise use a concise, semantically supported category or stable position. Use a coarse visual age category only when multiple compatible cues make it clear, including developmental/body-proportion cues for young people or facial age features together with gray/white hair for older-adult bands; record apparent_age_range with apparent_age_basis=visual_estimate and cite the cues in evidence. Hair color alone is insufficient. When the central subject is visibly an infant, use the semantic alias baby and cite developmental/body-proportion cues. A onesie, toy, or clothing by itself is not enough; age categories never imply a real name or family relationship. Never infer an exact age or calculate age from date of birth. Put detailed clothing and face traits in appearance/face_features, not entity. Use the exact same short entity label in Scene, Interaction Details, Temporal Facts, affected_people, and actor. If two people cannot be distinguished from the frames, do not invent identities or separate them. Leave face_features empty when the face is too small, obscured, or unclear. Keep readable_name/name_evidence only for exact visible text linked to this person; age only for a clearly labeled age value linked to them.
+First-person interaction rule: when the camera viewpoint and visible interaction clearly show the user handling or using an item, attribute that action to the user. A visible person's own hands holding or moving an item remain that person's action, even when the camera moves; do not transfer the item action to the user because of the POV. In a first-person view, a visible other person extending or presenting an item toward the lens is that person's offering action; treat the user as recipient only when direction and interaction support that reading. Do not say the user extended or handed the item unless the user's own hand/body visibly carries it outward or another direct cue establishes that action. Preserve exact instrument readings as time-bounded observations only when their value and unit are legible. Do not create a person observation from the user's body parts.
+User Action: visible actions performed by the user only; otherwise blank. A visible counterpart presenting something toward the first-person camera is not by itself evidence that the user performed the action. In narrative fields use "the user", not "the camera wearer".
 Activity: the specific observable activity, participants, supported roles, what each participant is doing, and how it develops; use the same short person labels
-Objects: list only salient items that matter to this episode: items visibly handled, used, moved, transferred, changed, explicitly mentioned, uniquely identifiable/personal, or central to understanding the activity/event. Use concise canonical nouns, at most 8. Do not inventory generic background fixtures or duplicate variants merely because they are visible (for example ordinary doors, floors, walls, chairs, tables, windows, gates, or appliances); keep broad setting details in Location/Environment instead. Include a common item only when the video shows its direct role in an action, interaction, state change, or event. If no item meets this relevance rule, return a blank Objects field. Never infer item ownership; bind an owner only when directly supported by explicit speech or visible interaction. Keep item color, material, position, condition, and printed text in Environment or evidence-linked Temporal Facts, especially for handled/moved items.
+Objects: answer from a first-person smart-glasses wearer's perspective: what would be useful to remember after this clip ends so the assistant can help the wearer later? Most visible things are scene context, not memories; default to an empty Objects field and list only 0–2 items with clear, durable future value. Retain a distinctive personal belonging only when its identity, ownership, location, or condition may matter later (for example, a wallet, keys, passport, or uniquely identifiable personal bag); a meaningful gift or keepsake; an item the wearer explicitly asks to remember for a later task; or a consequential medical/legal document or assistive item tied to an ongoing need. Ordinary commercial products are never object memories merely because they are central, visible, touched, picked up, compared, purchased once, or shown in an advertisement. In particular, supermarket/store browsing, comparing ordinary brands or prices, selecting a snack, handling product packaging, and watching an ad must not produce object entries for products, packages, brands, shelves, promotional props, or price tags. A product qualifies only if the wearer explicitly asks to remember that exact item for a future action or explicitly states lasting personal significance (such as a favorite personal item or meaningful gift); a one-time selection, comparison, purchase, or use alone is insufficient. Do not inventory ordinary furniture, fixtures, utensils, scenery, public infrastructure, generic tools, bowls, signs, menus, receipts, or incidental background objects. Describe needed context in Scene/Activity/Environment, and keep exact text as evidence when relevant, without creating an object portrait or crop. Do not infer ownership, preference, purchase intent, or sentimental value from visibility, proximity, price comparison, or brief interaction. If nothing meets this standard, leave Objects blank. This is a memory-selection decision, not an exhaustive object inventory. The Objects field is the authoritative list of durable object memories: do not add an item merely because it appears in Temporal Facts, is held/moved/picked up, or is mentioned in Activity. Example: reaching for, lifting, inspecting, comparing, choosing, or buying one bag of chips during ordinary grocery shopping means Objects must remain empty; preserve that action only in Scene/Activity. Only populate Objects when the clip provides positive evidence of continuing personal value or a future need.
 Environment: concise details of indoor/outdoor setting, layout, legible signs or landmarks (quote exact short wording and where it appears), lighting, weather, and background; omit unsupported guesses
-Document Evidence: a JSON array of up to 8 rows for legible, episode-relevant documents, receipts, bills, menus, tickets, name badges, or screens; [] if none. Schema: {{"document":"medical record","text":"exact legible patient name, age, diagnosis, institution, and care instruction text","frame_index":3,"evidence":"where it appears and why it is legible"}}. For a clinical document, transcribe only clearly readable labels and values, especially patient name, age, diagnosis, and provider; keep the content as text printed on the document. Do not put an unseen patient into Person Observations or infer that the record belongs to the camera holder from the image alone. Preserve item names and amounts on receipts; do not guess obscured text. A document proves only what it displays, not an independently verified medical diagnosis.
+Document Evidence: return only legible text that a smart-glasses wearer would reasonably want preserved for later help: consequential medical/legal identity or diagnosis details, a document the wearer explicitly asks to inspect/save, or a receipt/ticket tied to an explicit expense-tracking, refund, dispute, reimbursement, or other consequential task. Do not transcribe routine restaurant receipts, ordinary menus, generic signs, open-hours notices, ads, price tags, or one-off tickets just because text is readable; [] when none qualifies. Schema: {{"document":"document type","text":"exact legible labels and values needed for the user's consequential task","frame_index":3,"evidence":"where it appears and why it is legible"}}. Keep printed claims separate from inferred facts. Link a document to a visible person only when frames show a direct physical or interaction link; otherwise leave ownership/subject unresolved. Do not transcribe full account or government-ID numbers unless essential. A document proves only what it displays, not an independently verified claim.
 Interaction Details: a chronological account of who did what to whom or to which item, including responses, transfers, and affected people; use the exact short person labels and concise object names
-Temporal Facts: one JSON array of up to 16 separately retrievable facts. If any visible action, interaction, object handling/change, or meaningful change in posture/expression occurs, this array must not be empty. Reconcile the verbs and state changes in Scene, Activity, and Interaction Details against this array before returning: every distinct visible action must have its own atomic row, with the visible actor, affected person/object, event order, and specific frame evidence when available. Do not let a broad summary sentence stand in for multiple approach, greeting, touch, response, movement, or object-state events. Keep uncertain speaker/actor identity unknown rather than assigning it by guess. A static clip with no separable action may use []. Schema: {{"subject_type":"person|object|place|environment|event","subject":"entity label","predicate":"appearance|state|located_at|moved|held|used|placed|picked_up|handed_over|participated_in|occurred_at|other","value":"one specific supported fact","actor":"person who visibly acted, if known","affected_people":["only people visibly affected by this fact"],"from_location":"only when visually supported","to_location":"only when visually supported","from_state":"only when visually supported","to_state":"only when visually supported","time_scope":"observed clip-time range when supported","time_order":1,"frame_index":1,"modality":"visual","evidence":"short description of visible pixels or legible text","status":"observed|completed|unclear","confidence":"high|medium|low"}}. Include distinct actions/interactions, important object states and transitions, activity, place, environmental conditions, and time context. Preserve actor, affected people, before/after state/location, and order. When a legible document, sign, label, menu, or screen carries important information, add a separate evidence-linked fact quoting the exact visible text and identify the source item; record displayed claims as text shown, not as independently verified truth. Use each person observation’s exact short entity label for person subject, actor, and affected_people; use concise object names. Never replace names with clothing descriptions. Do not repeat unchanged facts across frames or emit one duplicate row per sampled frame for a continuing posture. Do not infer waiting or intent from a static pose; describe the visible state unless duration or an explicit cue supports the activity. Do not claim an item moved unless the frames show the transition. Keep each fact atomic and evidence-linked. Return up to 16 high-value facts: prioritize actions and interactions, object changes, person details, and place/environment context; cover more than one category when the clip supports it instead of filling the list with repeated appearance facts. Keep each value and evidence phrase short, omit unsupported or empty optional fields, and fit all arrays completely within the response. Use the correct subject type: a moved item is an object, while the person is its actor.
+Temporal Facts: one JSON array of up to 16 separately retrievable facts. If any visible action, interaction, object handling/change, or meaningful change in posture/expression occurs, this array must not be empty. Reconcile the verbs and state changes in Scene, Activity, and Interaction Details against this array before returning: every distinct visible action must have its own atomic row, with the visible actor, affected person/object, event order, and specific frame evidence when available. Do not let a broad summary sentence stand in for multiple approach, greeting, touch, response, movement, or object-state events. Keep uncertain speaker/actor identity unknown rather than assigning it by guess. A static clip with no separable action may use []. Schema: {{"subject_type":"person|object|place|environment|event","subject":"entity label","predicate":"appearance|state|located_at|moved|held|used|placed|picked_up|handed_over|participated_in|occurred_at|other","value":"one specific supported fact","actor":"person who visibly acted, if known","affected_people":["only people visibly affected by this fact"],"from_location":"only when visually supported","to_location":"only when visually supported","from_state":"only when visually supported","to_state":"only when visually supported","time_scope":"observed clip-time range when supported","time_order":1,"frame_index":1,"modality":"visual","evidence":"short description of visible pixels or legible text","status":"observed|completed|unclear","confidence":"high|medium|low"}}. Include distinct actions/interactions, important object states and transitions, activity, place, environmental conditions, and time context. Preserve actor, affected people, before/after state/location, and order. For measurements, record the device as an object and the displayed reading with its exact value/unit as an observed, time-bounded fact; when the user is visibly using it, link the action to user without creating a person observation from body parts or promoting one measurement into a permanent profile. When a legible document, sign, label, menu, or screen carries important information, add a separate evidence-linked fact quoting the exact visible text and identify the source item; record displayed claims as text shown, not as independently verified truth. Use each person observation’s exact short entity label for person subject, actor, and affected_people; use concise object names. Never replace names with clothing descriptions. Do not repeat unchanged facts across frames or emit one duplicate row per sampled frame for a continuing posture. Do not infer waiting or intent from a static pose; describe the visible state unless duration or an explicit cue supports the activity. Do not claim an item moved unless the frames show the transition. For a transaction, distinguish a displayed price or receipt, cash being prepared or offered, recipient acceptance, and confirmed completion. Cash beside a receipt or cash extended toward a person supports preparation or an offer; state that payment is completed only when acceptance or completion is shown. Keep each fact atomic and evidence-linked. Return up to 16 high-value facts: prioritize actions and interactions, object changes, person details, and place/environment context; cover more than one category when the clip supports it instead of filling the list with repeated appearance facts. Keep each value and evidence phrase short, omit unsupported or empty optional fields, and fit all arrays completely within the response. Use the correct subject type: a moved item is an object, while the person is its actor.
 
-For sequence questions, preserve only order visible across these frames. Include only actions directly visible in the sampled frames; do not infer a prior/completed action from its aftermath alone (for example, an empty bowl alone does not prove eating), or infer purpose/intent. Recognize a search when the user repeatedly checks storage places, opens a drawer/cabinet and inspects or rummages through its contents, or visibly checks several likely places; record those actions and whether the target is found by the end. A single camera pan or incidental touch of furniture is not a search. A target can be named only when visible or explicitly named in this clip; a separate memory system may later link an explicitly grounded search to a previously recorded item location. A readable bill plus a matching spoken total may support the amount owed, but payment requires a visible tender/acceptance or explicit spoken confirmation. A legible itemized receipt and matching food-service context should be retained as evidence even when the meal/action cannot be fully established. Do not infer speech, plans, needs, advice, reminders, names, age, or relationships. Do not infer illness from appearance or setting, and do not turn an unreadable or ambiguous medical document into a diagnosis. For clearly legible clinical text, preserve the exact printed claim in Document Evidence and as a source-linked document fact; describe it as a record statement, not as independently verified truth. Occupational roles require the setting plus directly observed duties; clothing alone is not enough. In a hospital or clinic, a uniquely visible person who presents a patient record and conducts a condition-specific consultation may be labeled doctor when the combined scene evidence supports it. Keep concise wording, but retain useful supported detail in structured observations and facts while keeping both arrays complete: person appearance at most 18 words, face_features at most 8 words, person evidence at most 12 words; each Temporal Facts value at most 20 words and evidence at most 12 words. Omit empty optional keys and do not repeat the scene in each fact. Before returning, check that every key action in Scene, User Action, and Interaction Details has a corresponding Temporal Facts row; actors and affected people use the same short person labels; object subjects use concise nouns; visible object locations/states and environment are represented; and every distinguishable person has an observation. People names must match name_evidence. Use [] for Temporal Facts only when no separable action or state change is visible. Use [] for Person Observations only when no distinct human figure is visible; first-person body parts do not count as separate people. Leave unsupported details blank and add no other text."""
+For sequences, preserve only the order visible across frames. Record observable actions, exchanges, requests, responses, object state changes, and outcomes as separate evidence-linked facts. Do not infer a completed action from aftermath alone or infer intent, mental state, advice, or relationship without direct evidence. A document, screen, sign, or spoken statement supports only the claim it actually presents; preserve its exact wording and source, and do not treat a statement as independently verified truth. Keep the user's first-person actions separate from visible other people. Assign a role only when the setting and directly observed duties support it. Keep concise wording while retaining distinct supported facts: person appearance at most 18 words, face_features at most 8 words, person evidence at most 12 words; each Temporal Facts value at most 20 words and evidence at most 12 words. Omit empty optional keys and do not repeat the scene in each fact. Before returning, check that every key action in Scene, User Action, and Interaction Details has a corresponding Temporal Facts row; actors and affected people use the same short person labels; object subjects use concise nouns; visible object locations/states and environment are represented; and every main subject/event participant has an observation. People names must match name_evidence. Use [] for Temporal Facts only when no separable action or state change is visible. Use [] for Person Observations only when no distinct main subject or event participant is visible; incidental background people may be summarized collectively in Environment, and first-person body parts do not count as separate people. Leave unsupported details blank and add no other text."""
 
 
 _FIELD_LINE_RE = re.compile(
-    r"^\s*(?:[-*]\s*)?(Scene|Location|Time/Occasion|People|Person Observations|User Action|"
+    r"^\s*(?:[-*]\s*)?(Scene|Content Summary|Location|Time/Occasion|People|Person Observations|User Action|"
     r"Activity|Objects|Environment|Document Evidence|Interaction Details|Temporal Facts)\s*:\s*(.*)$",
     re.I,
 )
@@ -229,7 +230,7 @@ def _split_list(raw: str, person: bool = False, preserve_commas: bool = False):
 
 _PERSON_INDEXED_LABEL_RE = re.compile(r"^(?:(?:unidentified|unknown)\s+)?person\s+\d+$", re.I)
 _GENERIC_PERSON_LABELS = {"person", "unidentified person", "unknown person", "someone", "somebody"}
-_PERSON_LABEL_SCHEMA_VERSION = 3
+_PERSON_LABEL_SCHEMA_VERSION = 5
 _PERSON_DETAIL_MARKERS = re.compile(
     r"\b(?:wearing|with|dressed|jacket|coat|shirt|pants|trousers|scarf|hat|hair|"
     r"headscarf|puffer|padded|holding|standing|sitting|seated|walking|looking)\b", re.I)
@@ -347,6 +348,11 @@ def _semantic_person_alias(row: dict, counters: dict, context_gender=None) -> st
         counters[("role", base)] = counters.get(("role", base), 0) + 1
         return f"{base} {ordinal or counters[('role', base)]}"
 
+    apparent_age = " ".join(str(row.get("apparent_age_range") or "").casefold().split())
+    if (row.get("apparent_age_basis") == "visual_estimate"
+            and apparent_age in {"baby", "toddler", "child", "teenager"}):
+        return apparent_age
+
     # Keep concise model-produced names. Detailed clothing belongs in appearance.
     if (original and len(original.split()) <= 3
             and not _is_generic_person_label(original)
@@ -394,8 +400,38 @@ def _organize_person_entity_aliases(fields: dict) -> dict:
         return fields
     rows = [dict(row) for row in fields.get("person_observations") or []
             if isinstance(row, dict)]
+    # Preserve a grounded participant role on every person card. Prefer explicit
+    # model roles; when omitted, infer only a narrow scene-function from visible
+    # context (for example, someone seated at a restaurant table is a diner).
+    scene_context = " ".join(str(fields.get(key) or "") for key in
+                             ("scene", "activity", "interaction_details", "location", "environments"))
+    for row in rows:
+        roles = row.get("roles")
+        if isinstance(roles, str):
+            roles = [roles] if roles.strip() else []
+        elif not isinstance(roles, list):
+            roles = []
+        roles = [str(role).strip() for role in roles if str(role).strip()]
+        if not roles:
+            local_context = " ".join(str(row.get(key) or "") for key in
+                                     ("entity", "appearance", "evidence", "profile_context"))
+            combined = (scene_context + " " + local_context).casefold()
+            restaurant_setting = bool(re.search(r"\b(?:restaurant|dining|diner|restaurant table)\b", combined))
+            seated_at_table = bool(re.search(r"\b(?:seated|sitting)\b", combined) and re.search(r"\btable\b", combined))
+            if restaurant_setting and seated_at_table:
+                roles = ["diner / restaurant guest"]
+            else:
+                roles = ["unidentified participant"]
+        row["roles"] = roles
     mapping = {}
     counters = {}
+    # Reserve existing ordinals before assigning aliases to unnumbered rows.
+    for row in rows:
+        original_label = str(row.get("entity") or "").strip()
+        indexed = re.fullmatch(r"(woman|man)\s+(\d+)", original_label, re.I)
+        if indexed:
+            counter_key = ("kind", indexed.group(1).casefold())
+            counters[counter_key] = max(counters.get(counter_key, 0), int(indexed.group(2)))
     context = " ".join(str(fields.get(key) or "") for key in
                        ("scene", "activity", "interaction_details"))
     context_gender = None
@@ -408,28 +444,41 @@ def _organize_person_entity_aliases(fields: dict) -> dict:
     for row in rows:
         original = " ".join(str(row.get("entity") or "").split()).strip(" .;,:-")
         alias = _semantic_person_alias(row, counters, context_gender)
-        if alias and original and alias.casefold() != original.casefold():
+        if alias and original:
             mapping[original] = alias
             row["entity"] = alias
     if not mapping:
         return fields
 
-    def remap_tree(value):
-        if isinstance(value, str):
-            result = value
-            for old, new in sorted(mapping.items(), key=lambda item: len(item[0]), reverse=True):
-                result = re.sub(r"(?<![\w])" + re.escape(old) + r"(?![\w])",
-                                lambda _match, replacement=new: replacement,
-                                result, flags=re.I)
-            return result
-        if isinstance(value, list):
-            return [remap_tree(item) for item in value]
-        if isinstance(value, dict):
-            return {key: remap_tree(item) for key, item in value.items()}
-        return value
+    aliases = {old.casefold(): new for old, new in mapping.items()}
+    pattern = r"(?<![\w])(?:" + "|".join(
+        re.escape(old) for old in sorted(mapping, key=len, reverse=True)
+    ) + r")(?![\w])"
 
-    organized = remap_tree(dict(fields))
+    def replace_reference(value):
+        if not isinstance(value, str):
+            return value
+        # Apply the original mapping once. Never recursively rewrite identifiers,
+        # type enums, quoted speech, or evidence text when a display alias changes.
+        return re.sub(pattern, lambda match: aliases[match.group(0).casefold()],
+                      value, flags=re.I)
+
+    organized = dict(fields)
+    for key in ("scene", "content_summary", "user_action", "interaction_details", "activity", "location"):
+        organized[key] = replace_reference(organized.get(key))
+    for key in ("environments", "people"):
+        value = organized.get(key)
+        if isinstance(value, list):
+            organized[key] = [replace_reference(item) for item in value]
     organized["person_observations"] = rows
+    for fact in organized.get("temporal_facts") or []:
+        if not isinstance(fact, dict):
+            continue
+        for key in ("subject", "actor"):
+            fact[key] = replace_reference(fact.get(key))
+        affected = fact.get("affected_people")
+        if isinstance(affected, list):
+            fact["affected_people"] = [replace_reference(item) for item in affected]
     organized["person_label_schema_version"] = _PERSON_LABEL_SCHEMA_VERSION
     return organized
 
@@ -658,7 +707,21 @@ def _reconcile_person_references_by_frame(fields: dict) -> dict:
 
 
 def _strip_unverified_age_categories(fields: dict) -> dict:
-    """Keep age only in the text-backed age field, never as a visual guess."""
+    """Remove unsupported age guesses while retaining grounded coarse age groups."""
+    supported_groups = set()
+    allowed_groups = {"baby", "toddler", "child", "teenager", "18-29", "30-44",
+                      "45-59", "60-74", "75+"}
+    for row in (fields or {}).get("person_observations") or []:
+        if not isinstance(row, dict):
+            continue
+        group = " ".join(str(row.get("apparent_age_range") or "").casefold().split())
+        basis = str(row.get("apparent_age_basis") or "").casefold()
+        if (group in allowed_groups and basis == "visual_estimate"
+                and str(row.get("appearance") or "").strip()
+                and str(row.get("evidence") or "").strip()
+                and str(row.get("confidence") or "").casefold() in {"medium", "high"}):
+            supported_groups.add(group)
+
     def clean(value, key=""):
         if key in {"age", "age_basis", "readable_name", "name_evidence"}:
             return value
@@ -669,10 +732,18 @@ def _strip_unverified_age_categories(fields: dict) -> dict:
                 "babies", "infants", "toddlers", "newborns", "children", "girls",
                 "boys", "teens", "adolescents", "adults", "seniors", "men", "women",
             }
-            text = _PERSON_AGE_NOUN_RE.sub(
-                lambda match: "people" if match.group(0).casefold() in plural_person_terms else "person",
-                text,
-            )
+            def replace_age_noun(match):
+                noun = match.group(0).casefold()
+                singular = {
+                    "babies": "baby", "infants": "infant", "toddlers": "toddler",
+                    "newborns": "newborn", "children": "child", "girls": "girl",
+                    "boys": "boy", "teens": "teen", "adolescents": "adolescent",
+                    "adults": "adult", "seniors": "senior",
+                }.get(noun, noun)
+                if singular in supported_groups:
+                    return match.group(0)
+                return "people" if noun in plural_person_terms else "person"
+            text = _PERSON_AGE_NOUN_RE.sub(replace_age_noun, text)
             text = re.sub(r"\s+", " ", text)
             text = re.sub(r"\s+([,.;:!?])", r"\1", text)
             text = re.sub(r"([,;:])\s*([,;:])", r"\1 \2", text)
@@ -689,40 +760,113 @@ def _strip_unverified_age_categories(fields: dict) -> dict:
     return _reconcile_person_references_by_frame(cleaned)
 
 
-def _retain_episode_objects(fields):
-    """Keep object memories only when source-linked evidence ties them to this event.
+def _retention_norm(value):
+    return re.sub(r"[^a-z0-9\u3400-\u9fff]+", " ", str(value or "").casefold()).strip()
 
-    Static background objects remain described by scene/environment text, but do not
-    become object-index entries or trigger object crops by themselves.
+
+def _retention_contains(text, term):
+    text, term = _retention_norm(text), _retention_norm(term)
+    if not text or not term:
+        return False
+    if re.search(r"[a-z0-9]", term):
+        return bool(re.search(r"(?<![a-z0-9])" + re.escape(term) + r"(?![a-z0-9])", text))
+    return term in text
+
+
+def _retention_same_entity(left, right):
+    a, b = _retention_norm(left), _retention_norm(right)
+    if not a or not b:
+        return False
+    if re.search(r"[a-z0-9]", a) or re.search(r"[a-z0-9]", b):
+        short, long = (a, b) if len(a) <= len(b) else (b, a)
+        return bool(re.search(r"(?<![a-z0-9])" + re.escape(short) + r"(?![a-z0-9])", long))
+    return a in b or b in a
+
+
+ROUTINE_CONTEXT_OBJECT_TERMS = (
+    # Transport/venue infrastructure is scene context, not a wearable user's possession.
+    "jet bridge", "aircraft", "airplane", "airplane cabin", "escalator", "baggage carousel",
+    "luggage carousel", "moving walkway", "boarding bridge", "airport conveyor",
+    # Ordinary dining serviceware and consumables do not need persistent object records.
+    "bowl", "plate", "chopsticks", "cutlery", "fork", "spoon", "drinking cup",
+    "paper cup", "water glass", "napkin", "food tray", "serving dish",
+    # Generic venue signage and one-off commercial paper are temporary evidence.
+    "sign", "signage", "open sign", "hours sign", "menu board", "price tag", "shelf tag", "sale tag",
+    "packaging", "product package", "advertisement", "promotional display",
+    "告示牌", "标识牌", "牌子", "价签", "包装", "广告",
+    "receipt", "sales slip", "one-time ticket", "boarding pass",
+    # Static common fixtures belong in Environment unless personally distinctive.
+    "ordinary door", "ordinary gate", "elevator", "chair", "stool", "dining table",
+    "counter", "shelf", "bench",
+)
+ROUTINE_ITEM_RETAIN_CUES = (
+    "save this", "keep this", "remember this", "track this expense", "expense tracking",
+    "reimburse", "refund", "return this", "dispute this charge", "budget tracking",
+    "lost", "left behind", "forgot", "find my", "retrieve my", "belongs to me",
+    "bought", "buy this", "purchased", "purchase this", "selected this", "chose this", "compare these",
+    "my wallet", "my keys", "my passport", "gift from", "keepsake", "sentimental",
+    "有纪念意义", "送给我的", "替我保存", "帮我记住", "记录这笔开销", "报销", "退款", "退货",
+    "遗失", "落下", "忘带", "帮我找", "属于我", "我的钱包", "我的钥匙", "我的护照", "纪念品",
+)
+
+
+def _retain_episode_objects(fields):
+    """Keep durable, wearer-relevant objects, not ordinary scene inventory.
+
+    Scene prose remains available for episode understanding. Only durable or
+    explicitly useful object memories and their object-index facts are retained.
+    Routine venue infrastructure, tableware, signage and one-off paper are
+    removed even if they appear in an action; task-specific exceptions survive.
     """
     result = dict(fields or {})
     objects = result.get("objects") or []
     facts = [row for row in result.get("temporal_facts") or [] if isinstance(row, dict)]
-    interaction = str(result.get("interaction_details") or "").casefold()
+    texts = [str(result.get(key) or "") for key in
+             ("scene", "content_summary", "user_action", "interaction_details", "activity",
+              "source_evidence")]
+    context = "\n".join(texts)
+    context_norm = _retention_norm(context)
     action_predicates = {"held", "used", "moved", "placed", "picked_up",
                          "handed_over", "transferred", "opened", "closed", "changed", "documented"}
+
     def key(value):
         value = " ".join(str(value or "").casefold().split())
-        value = re.sub(r"^(?:object\s*[·:]\s*)", "", value)
-        return value
+        return re.sub(r"^(?:object\s*[·:]\s*)", "", value)
 
+    def explicit_keep(label, raw=None):
+        if isinstance(raw, dict) and any(str(raw.get(field) or "").strip()
+                for field in ("owner", "owner_id", "owned_by", "personalized_for",
+                              "distinctive_identifier", "serial_number", "belongs_to")):
+            return True
+        label_norm = _retention_norm(label)
+        # Durable personal categories and unique/significant possessions bypass
+        # the routine-context filter; the separate image policy still requires evidence.
+        if any(_retention_contains(label_norm, term) for term in (
+                "wallet", "purse", "keys", "key", "passport", "id card", "identity card",
+                "phone", "smartphone", "medicine", "medication", "hearing aid", "prosthesis",
+                "cane", "walker", "personalized bag", "keepsake", "sentimental item",
+                "钱包", "钥匙", "护照", "身份证", "手机", "药物", "助听器", "拐杖", "纪念品")):
+            return True
+        for sentence in re.split(r"(?<=[.!?;])\s+|[\n\r]+", context):
+            if _retention_same_entity(label, sentence) and any(_retention_contains(sentence, cue)
+                                                     for cue in ROUTINE_ITEM_RETAIN_CUES):
+                return True
+        return False
+
+    # The model's Objects field is the explicit durable-memory selection.
+    # Temporal facts describe clip events; they must not promote every handled
+    # item into a persistent object portrait.
     object_rows = list(objects) if isinstance(objects, list) else []
-    known_keys = {key(row.get("name") or row.get("object") or row.get("entity") or "")
-                  if isinstance(row, dict) else key(row) for row in object_rows}
-    for fact in facts:
-        if (str(fact.get("subject_type") or "").casefold() == "object"
-                and str(fact.get("predicate") or "").casefold() in action_predicates | {"other"}
-                and str(fact.get("evidence") or "").strip()):
-            subject = str(fact.get("subject") or "").strip()
-            if subject and key(subject) not in known_keys:
-                object_rows.append(subject)
-                known_keys.add(key(subject))
 
     kept, removed, kept_keys = [], [], set()
     for row in object_rows:
         label = str(row.get("name") or row.get("object") or row.get("entity") or "").strip() if isinstance(row, dict) else str(row or "").strip()
         normalized = key(label)
-        if not normalized:
+        if not normalized or normalized in kept_keys:
+            continue
+        if (any(_retention_contains(label, term) for term in ROUTINE_CONTEXT_OBJECT_TERMS)
+                and not explicit_keep(label, row)):
+            removed.append(label)
             continue
         matching = [fact for fact in facts
                     if str(fact.get("subject_type") or "").casefold() == "object"
@@ -735,10 +879,8 @@ def _retain_episode_objects(fields):
             or (fact.get("from_location") and fact.get("to_location")
                 and fact.get("from_location") != fact.get("to_location"))
             or str(fact.get("modality") or "").casefold() == "speech"
-            for fact in matching
-        )
-        if not event_linked and re.search(
-                r"(?<!\w)" + re.escape(normalized) + r"(?!\w)", interaction):
+            for fact in matching)
+        if not event_linked and re.search(r"(?<!\w)" + re.escape(normalized) + r"(?!\w)", _norm(result.get("interaction_details"))):
             event_linked = True
         if event_linked:
             kept.append(row)
@@ -752,13 +894,27 @@ def _retain_episode_objects(fields):
         if str(fact.get("subject_type") or "").casefold() != "object"
         or key(fact.get("subject")) in kept_keys
     ]
+    # Routine receipts/tickets and shop signage are not persistent records unless
+    # the wearer explicitly has an expense, return, refund, or legal task.
+    documents = result.get("document_evidence") or []
+    kept_documents = []
+    for row in documents if isinstance(documents, list) else []:
+        if not isinstance(row, dict):
+            continue
+        label = str(row.get("document") or row.get("document_type") or "")
+        if (any(_retention_contains(label, term) for term in
+                ("receipt", "sales slip", "price tag", "menu", "ticket", "收据", "小票", "价签", "菜单", "票据"))
+                and not explicit_keep(label)):
+            removed.append(label or "routine document")
+            continue
+        kept_documents.append(row)
+    result["document_evidence"] = kept_documents
     result["object_relevance_filter"] = {
-        "policy": "source-linked event participation required; static context stays in scene/environment",
+        "policy": "wearer future-value threshold; routine scene props remain scene context, not object memories",
         "kept": [str(row.get("name") or row.get("object") or row.get("entity") or row) if isinstance(row, dict) else str(row) for row in kept],
         "removed": removed,
     }
     return result
-
 
 
 def parse_analysis(text: str, strict: bool = False) -> dict:
@@ -774,6 +930,7 @@ def parse_analysis(text: str, strict: bool = False) -> dict:
     if action.casefold().startswith(prefix):
         action = action[len(prefix):].lstrip()
     interaction = _empty_scalar(_field(text, "Interaction Details"))
+    content_summary = _empty_scalar(_field(text, "Content Summary"))
     activity = _empty_scalar(_field(text, "Activity"))
     objects = _split_list(_field(text, "Objects"))
     envs = _split_list(_field(text, "Environment"), preserve_commas=True)
@@ -792,7 +949,7 @@ def parse_analysis(text: str, strict: bool = False) -> dict:
         kind = {"Person Observations": "person", "Temporal Facts": "fact",
                 "Document Evidence": "document"}.get(label, "fact")
         allowed = {
-            "person": {"entity", "appearance", "face_features", "readable_name", "name_evidence", "age", "age_basis", "frame_index", "evidence", "confidence"},
+            "person": {"entity", "appearance", "face_features", "readable_name", "name_evidence", "age", "age_basis", "apparent_age_range", "apparent_age_basis", "frame_index", "evidence", "confidence"},
             "fact": {"subject_type", "subject", "predicate", "value", "actor", "affected_people", "from_location", "to_location", "from_state", "to_state", "time_scope", "time_order", "frame_index", "modality", "evidence", "status", "confidence"},
             "document": {"document", "text", "frame_index", "evidence"},
         }[kind]
@@ -817,6 +974,14 @@ def parse_analysis(text: str, strict: bool = False) -> dict:
                             "none", "null", "unknown", "n/a", "na", "not specified"}:
                         continue
                     clean[key] = value.strip()[:500]
+            if kind == "fact":
+                subject_type = str(clean.get("subject_type") or "").strip().casefold()
+                if subject_type not in {"person", "object", "place", "environment", "event"}:
+                    if strict:
+                        raise ValueError(
+                            f"Temporal Facts has unsupported subject_type: {subject_type or '<missing>'}")
+                    continue
+                clean["subject_type"] = subject_type
             if kind == "person":
                 age_text = str(clean.get("age") or "").strip()
                 age_basis = str(clean.get("age_basis") or "").casefold()
@@ -830,6 +995,20 @@ def parse_analysis(text: str, strict: bool = False) -> dict:
                 else:
                     clean["age"] = str(age_value)
                     clean["age_basis"] = "visible_text"
+                age_group = " ".join(str(clean.get("apparent_age_range") or "").casefold().split())
+                age_group_basis = str(clean.get("apparent_age_basis") or "").casefold()
+                allowed_age_groups = {"baby", "toddler", "child", "teenager",
+                                      "18-29", "30-44", "45-59", "60-74", "75+"}
+                if (age_group_basis != "visual_estimate"
+                        or age_group not in allowed_age_groups
+                        or not str(clean.get("appearance") or "").strip()
+                        or not str(clean.get("evidence") or "").strip()
+                        or str(clean.get("confidence") or "").casefold() not in {"medium", "high"}):
+                    clean.pop("apparent_age_range", None)
+                    clean.pop("apparent_age_basis", None)
+                else:
+                    clean["apparent_age_range"] = age_group
+                    clean["apparent_age_basis"] = "visual_estimate"
             if clean.get("entity") or clean.get("subject") or clean.get("document"):
                 out.append(clean)
         if kind == "person":
@@ -841,6 +1020,24 @@ def parse_analysis(text: str, strict: bool = False) -> dict:
 
     person_observations = json_rows("Person Observations", 16)
     document_evidence = json_rows("Document Evidence", 8, required=False)
+    for person in person_observations:
+        age = str(person.get("age") or "").strip()
+        if not age:
+            continue
+        explicit_age_pattern = re.compile(
+            rf"(?:\bage\s*[:#\-]?\s*{re.escape(age)}\b|"
+            rf"\b{re.escape(age)}\s+(?:years?\s+old|yo)\b|"
+            rf"(?:年龄\s*[:：]?\s*{re.escape(age)}\s*岁|"
+            rf"{re.escape(age)}\s*岁))", re.I)
+        age_sources = [person.get("evidence"), person.get("name_evidence")]
+        age_sources.extend(row.get("text") for row in document_evidence
+                           if isinstance(row, dict)
+                           and (row.get("frame_index") == person.get("frame_index")
+                                or str(person.get("readable_name") or "").casefold()
+                                in str(row.get("text") or "").casefold()))
+        if not any(explicit_age_pattern.search(str(source or "")) for source in age_sources):
+            person.pop("age", None)
+            person.pop("age_basis", None)
     temporal_facts = json_rows("Temporal Facts", 16)
     document_facts = []
     for row in document_evidence:
@@ -873,6 +1070,7 @@ def parse_analysis(text: str, strict: bool = False) -> dict:
     result = {
         # Store the event narrative separately from the location so search can find facts.
         "scene": _empty_scalar(_field(text, "Scene")) or location,
+        "content_summary": content_summary,
         "user_action": action,
         "interaction_details": interaction,
         "person_observations": person_observations,
@@ -890,6 +1088,7 @@ def parse_analysis(text: str, strict: bool = False) -> dict:
         "needs": [],
         "solutions": [],
     }
+    result = _prune_incidental_background_people(result)
     organized = _organize_person_entity_aliases(result)
     organized = _organize_object_entity_labels(organized)
     organized = _strip_unverified_age_categories(
@@ -901,7 +1100,7 @@ def parse_analysis(text: str, strict: bool = False) -> dict:
 def _camera_wearer_reference(value: object) -> bool:
     key = " ".join(str(value or "").casefold().replace("-", " ").split())
     key = re.sub(r"^(?:the|a|an)\s+", "", key)
-    return key == "camera wearer"
+    return key in {"camera wearer", "user"}
 
 
 def _camera_wearer_body_part_reference(value: object) -> bool:
@@ -1009,7 +1208,7 @@ def _normalize_camera_wearer_actor_aliases(fields: dict) -> dict:
     # other person or group is described. "First-person perspective" is camera
     # terminology, not a visible-human observation.
     if not (fields.get("person_observations") or []):
-        narrative_keys = ("scene", "activity", "interaction_details", "user_action")
+        narrative_keys = ("scene", "content_summary", "activity", "interaction_details", "user_action")
         narrative = " ".join(str(fields.get(key) or "") for key in narrative_keys)
         other_person = re.search(
             r"\b(?:another|other|background|group|several|multiple|people|crowd|"
@@ -1024,7 +1223,7 @@ def _normalize_camera_wearer_actor_aliases(fields: dict) -> dict:
             without_pov_phrase, re.I,
         )
         if not other_person and person_mentions:
-            for key in ("scene", "activity", "interaction_details"):
+            for key in ("scene", "content_summary", "activity", "interaction_details"):
                 value = str(updated.get(key) or "")
                 value = re.sub(
                     r"\b(?:a|the) person\b", "the camera wearer", value,
@@ -1034,7 +1233,7 @@ def _normalize_camera_wearer_actor_aliases(fields: dict) -> dict:
                     r"\bfirst[- ]person(?:\s+perspective)?\b",
                     "camera POV", value, flags=re.I,
                 )
-    for key in ("scene", "activity", "interaction_details", "user_action"):
+    for key in ("scene", "content_summary", "activity", "interaction_details", "user_action"):
         value = str(updated.get(key) or "")
         value = re.sub(
             r"\b(?:the )?camera wearer[\'’]s (?:left |right )?(?:hand|hands|arm|arms|leg|legs|foot|feet)\b",
@@ -1092,6 +1291,14 @@ def _person_observation_references(fields: dict) -> list[str]:
     return labels
 
 
+def _normalize_person_alias_reference(value: str) -> str:
+    # Normalize non-identifying modifiers without collapsing distinct aliases.
+    text = " ".join(str(value or "").casefold().split())
+    text = re.sub(r"^(?:(?:the|a|an)\s+)?(?:clearly\s+)?visible\s+", "", text)
+    text = re.sub(r"^(?:the|a|an)\s+", "", text)
+    return text
+
+
 _VISIBLE_HUMAN_CONTEXT_RE = re.compile(
     r"\b(?:people|person|persons|humans?|human figures?|men|women|children|boys|girls|"
     r"man|woman|child|boy|girl|bab(?:y|ies)|infants?|toddlers?|newborns?|"
@@ -1121,38 +1328,115 @@ _PERSON_COUNT_WORDS = {
 }
 
 
-def _visible_person_narrative_error(fields: dict, observations: list[dict]) -> str:
-    """Reject narrative claims of visible people when visual records are missing."""
-    narrative = " ".join(
-        str(fields.get(key) or "")
-        for key in ("scene", "activity", "interaction_details", "user_action")
+_BACKGROUND_ONLY_CUE_RE = re.compile(
+    r"\b(?:in the background|background figure|distant|far away|off in the distance|"
+    r"bystander|passerby|passersby|incidental|visible from the waist down|"
+    r"only the legs|partial body|body fragment)\b", re.I,
+)
+_DIRECT_PARTICIPATION_CUE_RE = re.compile(
+    r"\b(?:approach(?:es|ed|ing)?|greet(?:s|ed|ing)?|talk(?:s|ed|ing)?|speak(?:s|ing)?|"
+    r"ask(?:s|ed|ing)?|reply|repl(?:y|ies)|respond(?:s|ed|ing)?|hand(?:s|ed|ing)?|"
+    r"give(?:s|gave|n|ing)?|receive(?:s|d|ing)?|touch(?:es|ed|ing)?|assist(?:s|ed|ing)?|"
+    r"help(?:s|ed|ing)?|thank(?:s|ed|ing)?|invite(?:s|d|ing)?|interact(?:s|ed|ing)?|"
+    r"serve(?:s|d|ing)?)\b", re.I,
+)
+
+
+def _prune_incidental_background_people(fields: dict) -> dict:
+    """Keep visual person cards for event participants, not incidental scenery."""
+    if not isinstance(fields, dict):
+        return fields
+    result = dict(fields)
+    observations = [dict(row) for row in result.get("person_observations") or []
+                    if isinstance(row, dict)]
+    if not observations:
+        return result
+
+    fact_refs = set()
+    for fact in result.get("temporal_facts") or []:
+        if not isinstance(fact, dict):
+            continue
+        values = [fact.get("actor")]
+        if str(fact.get("subject_type") or "").casefold() == "person":
+            values.append(fact.get("subject"))
+        values.extend(fact.get("affected_people") or [])
+        fact_refs.update(" ".join(str(value or "").casefold().split())
+                         for value in values if str(value or "").strip())
+
+    action_clauses = " ".join(str(result.get(key) or "") for key in
+                              ("activity", "interaction_details", "user_action"))
+    action_clauses = " ".join(
+        clause for clause in re.split(r"(?<=[.!?;])\s+", action_clauses)
+        if _DIRECT_PARTICIPATION_CUE_RE.search(clause)
     )
+    removed = set()
+    kept = []
+    for row in observations:
+        entity = " ".join(str(row.get("entity") or "").casefold().split())
+        evidence = " ".join(str(row.get(key) or "") for key in
+                             ("entity", "appearance", "face_features", "evidence"))
+        clearly_incidental = bool(_BACKGROUND_ONLY_CUE_RE.search(evidence))
+        referenced_in_fact = entity in fact_refs
+        named_in_direct_event = bool(entity and re.search(
+            r"(?<![\w])" + re.escape(entity) + r"(?![\w])", action_clauses, re.I))
+        if clearly_incidental and not referenced_in_fact and not named_in_direct_event:
+            removed.add(entity)
+        else:
+            kept.append(row)
+    if not removed:
+        return result
+    result["person_observations"] = kept
+    result["people"] = [value for value in result.get("people") or []
+                        if " ".join(str(value or "").casefold().split()) not in removed]
+    return result
+
+
+def _visible_person_narrative_error(fields: dict, observations: list[dict]) -> str:
+    """Require cards for participants while allowing incidental people in scenery."""
+    narrative = " ".join(str(fields.get(key) or "") for key in
+                         ("scene", "activity", "interaction_details", "user_action"))
     if not narrative.strip():
         return ""
+
+    def remove_background_clauses(value):
+        clauses = re.split(r"(?<=[.!?;])\s+", value)
+        return " ".join(clause for clause in clauses
+                        if not (_BACKGROUND_ONLY_CUE_RE.search(clause)
+                                and not _DIRECT_PARTICIPATION_CUE_RE.search(clause)))
+
     positive_narrative = re.sub(
         r"\b(?:no|not any|none of the)\s+(?:visible\s+)?(?:people|persons|humans)\b",
         " ", narrative, flags=re.I,
     )
+    positive_narrative = remove_background_clauses(positive_narrative)
     if not observations and _VISIBLE_HUMAN_CONTEXT_RE.search(positive_narrative):
         return ("Scene, Activity, or Interaction Details describe a visible person/group, "
                 "but Person Observations is empty; inspect the supplied frames and add "
                 "source-grounded visual records.")
-    count_match = _VISIBLE_PERSON_COUNT_RE.search(positive_narrative)
+
+    # Scene prose may mention unrelated people in the setting. Only event-focused
+    # fields are used for participant counting, after background clauses are removed.
+    participant_narrative = remove_background_clauses(" ".join(
+        str(fields.get(key) or "") for key in ("activity", "interaction_details")
+    ))
+    if not participant_narrative.strip():
+        return ""
+    count_match = _VISIBLE_PERSON_COUNT_RE.search(participant_narrative)
     if count_match:
         count_text = " ".join(count_match.group("count").casefold().split())
         expected = int(count_text) if count_text.isdigit() else _PERSON_COUNT_WORDS[count_text]
         if expected <= 16 and len(observations) < expected:
             return (f"The narrative identifies {expected} visible people but only "
                     f"{len(observations)} Person Observations rows are present.")
-    if len(observations) < 2 and _VISIBLE_PLURAL_GROUP_RE.search(positive_narrative):
-        return ("The narrative describes multiple visible people, but fewer than two "
+    if len(observations) < 2 and _VISIBLE_PLURAL_GROUP_RE.search(participant_narrative):
+        return ("The narrative describes multiple visible participants, but fewer than two "
                 "Person Observations rows are present; inspect all supplied frames.")
     if (len(observations) < 2 and re.search(
             r"\b(?:another|second|other)\s+(?:person|man|woman|child|boy|girl)\b|"
             r"\b(?:man|woman|person|child|boy|girl)\b.{0,80}\band\s+"
             r"(?:a|the|another)\s+(?:man|woman|person|child|boy|girl)\b",
-            positive_narrative, re.I)):
-        return "The narrative distinguishes multiple people but Person Observations does not."
+            participant_narrative, re.I)):
+        return "The event narrative distinguishes multiple participants but Person Observations does not."
     return ""
 
 
@@ -1166,8 +1450,12 @@ def _person_observation_coverage_error(fields: dict) -> str | None:
                     if isinstance(row, dict) and str(row.get("entity") or "").strip()]
     # First-person hand/arm/foot actions remain in User Action and Temporal Facts;
     # they are not automatically a separate person-memory entity.
-    observed = {" ".join(str(row.get("entity") or "").casefold().split()): row
-                for row in observations}
+    observed = {}
+    for row in observations:
+        label = " ".join(str(row.get("entity") or "").casefold().split())
+        normalized = _normalize_person_alias_reference(label)
+        if normalized:
+            observed.setdefault(normalized, set()).add(label)
     missing = []
     for entity in _person_observation_references(fields):
         # The camera wearer is a first-person role and may be outside the frame;
@@ -1175,7 +1463,10 @@ def _person_observation_coverage_error(fields: dict) -> str | None:
         if _camera_wearer_reference(entity):
             continue
         key = " ".join(str(entity or "").casefold().split())
-        if key and key not in observed and key not in missing:
+        normalized = _normalize_person_alias_reference(key)
+        # Only ignore article/visibility modifiers when the normalized alias
+        # uniquely names one existing observation; never fuzzy-merge identities.
+        if key and (len(observed.get(normalized, set())) != 1) and key not in missing:
             missing.append(key)
     if missing:
         return "Temporal Facts or People names refer to people without matching Person Observations: " + ", ".join(missing[:8])
@@ -1208,26 +1499,28 @@ def _build_person_repair_prompt(context: dict, reference_labels: list) -> str:
     return (
         "Use only the attached images extracted from this source video. The JSON context below was "
         "generated earlier from these same images; it is not ground truth. Independently inspect every supplied "
-        "frame and enumerate distinct, visually distinguishable people, including background people when "
-        "their appearance is clear. An empty person_references_to_resolve list does NOT mean no person is visible. "
-        "Create one Person Observations row per distinguishable person across the clip, not one per frame. "
+        "frame and identify the main subject and people who participate in or materially affect the event. "
+        "An empty person_references_to_resolve list does NOT mean no main subject is visible. Do not create "
+        "individual records for distant bystanders, partial bodies, or incidental people; group those in the "
+        "environment when useful. Create one Person Observations row per distinct event participant across the "
+        "clip, not one per frame, pose, or body fragment. "
         "Record first-person hand/arm/foot actions in User Action and Temporal Facts, but never create a Person Observation for the camera wearer or any first-person body part, even when it is distinctive. Hands, arms, legs, and feet in a first-person view are evidence of the wearer's action, not separate portrait identities. "
         "Use a descriptive alias only when supported by visible details, and describe "
         "only the visible body parts; explicitly say the face/full body is outside the sampled view when applicable. "
         "Do not turn an off-screen actor with no visible body part into a visual observation. "
         "Verify every match against visible pixels. Use a stable descriptive visual alias based on distinctive "
-        "visible clothing, accessories, or clear facial details; never number people or invent real names. Add readable_name and name_evidence only for exact legible in-frame text visibly linked to the person; otherwise leave both empty. Do not infer age categories from appearance. "
+        "visible clothing, accessories, or clear facial details; never number people or invent real names. Add readable_name and name_evidence only for exact legible in-frame text visibly linked to the person; otherwise leave both empty. A coarse visual age group (baby, toddler, child, or teenager) is allowed only when clear body-proportion/development cues support it; clothing alone is insufficient. When the main subject is visibly an infant, label the visual category baby and cite the developmental cues. Set apparent_age_range and apparent_age_basis=visual_estimate; otherwise leave them empty. Repeated poses/angles of one child remain one person. "
         "Reuse the same alias for the same visible person. Add an entity_map row from an existing reference "
         "to the new alias only when frame evidence clearly supports the match; omit uncertain mappings. Do not "
-        "infer real identity, age, gender, job, relationship, or plans. Put clearly visible facial details in "
+        "infer real identity, exact age, gender, job, relationship, or plans. Put clearly visible facial details in "
         "face_features; describe hair, body, clothing, accessories, and posture in appearance. Record age only "
         "when legible on-screen text explicitly links the age to that person, marked age_basis=visible_text; "
         "otherwise leave age blank. Include a 1-based sampled-frame index and visible evidence. Use an empty "
-        "array only if no human figure is visible. Return one JSON object with person_observations and entity_map, "
-        'JSON only. Schema: {"person_observations":[{"entity":"person wearing a blue padded jacket and gray headscarf",'
-        '"appearance":"wearing a blue padded jacket and gray headscarf","face_features":"clear visible facial details, or empty",'
+        "array only if no main subject or event participant is visible. Return one JSON object with person_observations and entity_map, "
+        'JSON only. Schema: {"person_observations":[{"entity":"baby","appearance":"wearing a light blue onesie; seated on the floor",'
+        '"face_features":"clear visible facial details, or empty","apparent_age_range":"baby","apparent_age_basis":"visual_estimate",'
         '"readable_name":"","name_evidence":"","age":"","age_basis":"unknown","frame_index":1,'
-        '"evidence":"visible detail in frame 1","confidence":"high|medium|low"}], '
+        '"evidence":"infant-sized body proportions and facial features in frame 1","confidence":"high|medium|low"}], '
         '"entity_map":[{"reference":"person wearing a blue jacket","entity":"person wearing a blue padded jacket and gray headscarf"}]}. Context: '
         + json.dumps(payload, ensure_ascii=True)
     )
@@ -1522,10 +1815,39 @@ def _apply_person_repair(fields: dict, payload: dict, reference_labels: list,
         if age_basis != "visible_text" or not 0 <= age_value <= 120:
             age_text = ""
             age_basis = "unknown"
+        else:
+            # A date of birth is not an age. Revalidate repaired claims against
+            # the exact visible evidence, since a model can incorrectly mark a
+            # calculated age as visible text.
+            explicit_age = re.compile(
+                rf"(?:\bage\s*[:#\-]?\s*{re.escape(str(age_value))}\b|"
+                rf"\b{re.escape(str(age_value))}\s+(?:years?\s+old|yo)\b|"
+                rf"(?:年龄\s*[:：]?\s*{re.escape(str(age_value))}\s*岁|"
+                rf"{re.escape(str(age_value))}\s*岁))", re.IGNORECASE)
+            age_sources = [row.get("evidence"), row.get("name_evidence")]
+            for document in fields.get("document_evidence") or []:
+                if not isinstance(document, dict):
+                    continue
+                if document.get("frame_index") == frame_index:
+                    age_sources.append(document.get("text"))
+            if not any(explicit_age.search(str(source or "")) for source in age_sources):
+                age_text = ""
+                age_basis = "unknown"
+        apparent_age = " ".join(str(row.get("apparent_age_range") or "").casefold().split())
+        apparent_age_basis = str(row.get("apparent_age_basis") or "").casefold()
+        if (apparent_age_basis != "visual_estimate"
+                or apparent_age not in {"baby", "toddler", "child", "teenager",
+                                        "18-29", "30-44", "45-59", "60-74", "75+"}
+                or not appearance or not evidence
+                or str(row.get("confidence") or "").casefold() not in {"medium", "high"}):
+            apparent_age = ""
+            apparent_age_basis = ""
         observation = {
             "entity": entity,
             "appearance": appearance[:500],
             **({"face_features": face_features[:500]} if face_features else {}),
+            **({"apparent_age_range": apparent_age,
+                "apparent_age_basis": apparent_age_basis} if apparent_age else {}),
             "age": age_text,
             "age_basis": age_basis,
             "readable_name": (" ".join(str(row.get("readable_name") or "").split())[:160] if str(row.get("readable_name") or "").strip() and str(row.get("name_evidence") or "").strip() else ""),
@@ -1909,6 +2231,13 @@ def _action_cues_in_text(value: str, narrative: bool = False) -> set[str]:
         # and "close to" describe shot scale or distance, not closing an object.
         if cue == "close" and re.match(r"\s*(?:-\s*up|(?:to|up)\b)", tail, re.I):
             continue
+        # Adjectival state descriptions do not prove an opening/closing event.
+        if cue in {"open", "close"} and (
+                re.search(r"\b(?:is|was|remains?|initially|already)\s*$", prefix, re.I)
+                or (match.group(0).casefold() == "open"
+                    and re.search(r"\b(?:an?|the|with|of)\s*$", prefix, re.I)
+                    and re.match(r"\s+(?:door|drawer|window|gate|manhole|box|bag)\b", tail, re.I))):
+            continue
         # First-person camera motion is viewpoint evidence, not a body action by
         # a visible subject. "Camera wearer" remains a separate actor phrase.
         if cue == "move" and re.search(r"\b(?:the\s+)?camera(?:\s+then)?\s*$", prefix, re.I):
@@ -1918,6 +2247,11 @@ def _action_cues_in_text(value: str, narrative: bool = False) -> set[str]:
                 prefix, re.I):
             continue
         show_prefix = re.sub(r"\bcamera wearer\b", " ", prefix, flags=re.I)
+        # Displayed text and visible symptoms are not presentation actions.
+        if cue == "show" and (
+                re.search(r"\b(?:display|screen|sign|label|paper|card|document|receipt|monitor)\s*$", prefix, re.I)
+                or re.match(r"\s+(?:signs|symptoms)\s+of\b", tail, re.I)):
+            continue
         if cue == "show" and (
                 re.search(r"\b(?:camera|viewpoint|view|background|scene|video|clip|image|frame|shot|footage|visual effect)\b[^.!?:;]*$", show_prefix, re.I)
                 or re.search(r"\b(?:smile|grin|teeth|expression|mouth|face|eyes)\s*$", prefix, re.I)):
@@ -1958,6 +2292,18 @@ def _temporal_fact_coverage_error(fields: dict) -> str:
     cue_sets = [_action_cues_in_text(narrative, narrative=True)
                 for narrative in narratives]
     cues = max(cue_sets, key=len, default=set())
+    cue_text = " ".join(narratives).casefold()
+    # Persistent posture or possession describes the visible state of a scene;
+    # it is not an event transition unless the narration explicitly says the
+    # person changed into that state. Requiring separate fact rows for "sitting"
+    # or "holding" caused valid scenes to be rejected even when the actual
+    # action (for example laughing, handing, opening, or moving an item) was
+    # represented. Object transfer/state-change checks remain separate.
+    cues.discard("hold")
+    if not re.search(r"\b(?:sit(?:s|ting)? down|sat down|take(?:s|n)? a seat)\b", cue_text):
+        cues.discard("sit")
+    if not re.search(r"\b(?:stand(?:s|ing)? up|stood up|rise|rises|rising|rose)\b", cue_text):
+        cues.discard("stand")
     if not cues:
         return ""
     facts = [row for row in fields.get("temporal_facts") or [] if isinstance(row, dict)]
@@ -1979,6 +2325,8 @@ def _temporal_fact_coverage_error(fields: dict) -> str:
         fact_text = " ".join(str(row.get(field) or "")
                              for field in ("subject", "predicate", "value", "action"))
         fact_cues = _action_cues_in_text(fact_text)
+        if re.fullmatch(r"present(?:s|ed|ing)?|show(?:s|ed|ing)?", str(row.get("predicate") or ""), re.I):
+            fact_cues.add("show")
         if str(row.get("subject_type") or "").casefold() == "object" and re.search(
                 r"\b(?:sign|label|text|display|screen|banner|notice|poster|billboard)\b",
                 str(row.get("subject") or ""), re.I):
@@ -2034,7 +2382,7 @@ def _build_temporal_fact_coverage_repair_prompt(fields: dict, frame_count: int,
     cues = sorted(_action_cues_in_text(
         " ".join((scene, interaction, activity)), narrative=True))
     coverage = _temporal_fact_coverage_error(fields)
-    missing_match = re.search(r"missing cues \\[(.*?)\\]", coverage)
+    missing_match = re.search(r"missing cues \[(.*?)\]", coverage)
     missing_cues = ([value.strip() for value in missing_match.group(1).split(",")
                      if value.strip()] if missing_match else cues)
     existing = []
@@ -2069,7 +2417,9 @@ def _build_temporal_fact_coverage_repair_prompt(fields: dict, frame_count: int,
         "Existing facts (do not repeat): " + json.dumps(existing, ensure_ascii=True),
         "Visual people and their appearance/role evidence: " + json.dumps(person_context, ensure_ascii=True),
         "Existing visual person aliases: " + json.dumps(aliases, ensure_ascii=True),
-        'Schema: [{"subject_type":"person|object|place|environment|event","subject":"entity label","predicate":"state|used|moved|placed|other","value":"one supported fact","actor":"visible actor or empty","affected_people":[],"from_location":"supported or empty","to_location":"supported or empty","time_order":1,"frame_index":1,"evidence":"visible detail","confidence":"high|medium|low"}]',
+        'Every row MUST contain ALL seven required keys: subject_type, subject, predicate, value, frame_index, evidence, confidence. subject_type must be one literal value: person, object, place, environment, or event. For user actions use subject_type=person and subject=user. Missing subject_type or frame_index makes the row unusable. Use only existing aliases for visible people; do not introduce a new person in this fact-only pass.',
+        'Valid example (format only; never copy this event): [{"subject_type":"object","subject":"door","predicate":"opened","value":"user opens the door","actor":"user","frame_index":1,"evidence":"hand pulls door outward","confidence":"high"}]',
+        'Before returning, verify every row has subject_type and a valid frame_index, and every claim is visible in its cited frame.',
     ]
     return "\n".join(parts)
 
@@ -2094,12 +2444,21 @@ def _person_object_quality_error(fields: dict) -> str:
 
 def _unresolved_person_reference_error(fields: dict) -> str:
     """Return dangling person aliases, excluding a separate narrative-count gap."""
-    observations = {" ".join(str(row.get("entity") or "").casefold().split())
-                    for row in fields.get("person_observations") or []
-                    if isinstance(row, dict) and row.get("entity")}
-    missing = [label for label in _person_observation_references(fields)
-               if not _camera_wearer_reference(label)
-               and " ".join(label.casefold().split()) not in observations]
+    observations = {}
+    for row in fields.get("person_observations") or []:
+        if not isinstance(row, dict) or not row.get("entity"):
+            continue
+        label = " ".join(str(row.get("entity") or "").casefold().split())
+        normalized = _normalize_person_alias_reference(label)
+        if normalized:
+            observations.setdefault(normalized, set()).add(label)
+    missing = []
+    for label in _person_observation_references(fields):
+        if _camera_wearer_reference(label):
+            continue
+        normalized = _normalize_person_alias_reference(label)
+        if len(observations.get(normalized, set())) != 1:
+            missing.append(label)
     if missing:
         return ("Temporal Facts or People names refer to people without matching "
                 "Person Observations: " + ", ".join(missing[:8]))
@@ -3276,7 +3635,7 @@ class QwenPerceiver:
                 elif validation_error_kind == "final_english_only":
                     prompt = (
                         "Use only these video frames. Ignore all speech and all writing/signs, especially "
-                        "non-English writing; do not quote or transcribe any text. Return concise English only. "
+                        "non-English writing; do not quote or transcribe any text. Translate every supported person identity, role, and relationship into natural English; use Latin spelling/Pinyin for proper names and preserve exact source wording only in evidence fields. Return concise English only. "
                         "Output exactly these fields, each on its own line: Scene (one sentence describing the "
                         "visible event and action sequence); Location (broad visible place or blank); Time/Occasion "
                         "(only clearly readable time/date or blank); People (visually readable names only or blank); "
@@ -3430,16 +3789,22 @@ class QwenPerceiver:
                     references = _person_reference_labels(base_fields)
                     repair_prompt = (
                         "Inspect ONLY the supplied video frames. Return one complete valid JSON object with "
-                        "person_observations and entity_map. For every clearly visible person, assign or reuse "
-                        "a short stable descriptive visual alias from visible traits; never number people. "
+                        "person_observations and entity_map. Record the main subject and people who participate "
+                        "in or materially affect the event; do not create cards for distant bystanders, partial "
+                        "bodies, or incidental background figures. Use one stable row per participant across "
+                        "the clip, merging repeat views and poses of the same person. Assign a concise visual "
+                        "alias from visible traits; never number people. "
                         "Put clearly visible facial details in face_features; describe body/clothing/posture in appearance. Leave face_features empty if unclear. "
-                        "Record age only when legible on-screen text explicitly links it to this person; never estimate age from appearance. "
+                        "A coarse visual age group (baby, toddler, child, teenager) is allowed only when clear "
+                        "body-proportion/development cues support it, not from clothing alone; set apparent_age_range "
+                        "and apparent_age_basis=visual_estimate and cite cues. Record exact age only when legible "
+                        "on-screen text explicitly links it to this person. "
                         "Do not guess real identity, job, or relationship, "
-                        "or use information from outside the frames. Include frame_index and visual evidence. If no person "
-                        "is visible, use an empty array. Earlier person references generated from these same frames: "
+                        "or use information from outside the frames. Include frame_index and visual evidence. If no main "
+                        "subject/event participant is visible, use an empty array. Earlier person references generated from these same frames: "
                         + json.dumps(references, ensure_ascii=True)
                         + ". Add an entity_map row only when pixels clearly map a reference to one descriptive alias; "
-                        "omit uncertain mappings. Schema: {\"person_observations\":[{\"entity\":\"person wearing a blue jacket\",\"appearance\":\"visible body/clothing details\",\"face_features\":\"clear facial details, or empty\",\"age\":\"\",\"age_basis\":\"unknown\",\"frame_index\":1,\"evidence\":\"visible detail\",\"confidence\":\"high|medium|low\"}],\"entity_map\":[{\"reference\":\"source label\",\"entity\":\"person wearing a blue jacket\"}]}. Return JSON only."
+                        "omit uncertain mappings. Schema: {\"person_observations\":[{\"entity\":\"baby\",\"appearance\":\"visible body/clothing details\",\"face_features\":\"clear facial details, or empty\",\"apparent_age_range\":\"baby\",\"apparent_age_basis\":\"visual_estimate\",\"age\":\"\",\"age_basis\":\"unknown\",\"frame_index\":1,\"evidence\":\"visible developmental cues\",\"confidence\":\"high|medium|low\"}],\"entity_map\":[{\"reference\":\"source label\",\"entity\":\"baby\"}]}. Return JSON only."
                     )
                     repair_request_id = uuid.uuid4().hex
                     repair_api_url = self.next_api_url()
@@ -3533,9 +3898,10 @@ class QwenPerceiver:
                     and _person_observation_coverage_error(candidate_fields)):
                 references = _person_reference_labels(candidate_fields)
                 repair_schema = (
-                    "{\"person_observations\":[{\"entity\":\"person wearing a blue jacket\","
+                    "{\"person_observations\":[{\"entity\":\"baby\","
                     "\"appearance\":\"visible body/clothing/posture details\",\"face_features\":\"clear visible facial details, or empty\","
-                    "\"frame_index\":1,\"evidence\":\"visible detail in frame 1\","
+                    "\"apparent_age_range\":\"baby\",\"apparent_age_basis\":\"visual_estimate\","
+                    "\"frame_index\":1,\"evidence\":\"visible developmental cues in frame 1\","
                     "\"confidence\":\"high|medium|low\"}],"
                     "\"entity_map\":[{\"reference\":\"existing label\",\"entity\":\"person wearing a blue jacket\"}]}"
                 )
@@ -3546,14 +3912,15 @@ class QwenPerceiver:
                 )
                 repair_prompt = (
                     "Inspect ONLY the supplied video frames. Return one valid JSON object with key "
-                    "person_observations. For every visibly present person, "
+                    "person_observations. Include the main subject and people who participate in or materially "
+                    "affect the event, not distant bystanders, partial bodies, or incidental background figures. "
                     + id_instruction
                     + ". Reuse exactly the same descriptive alias when the same individual appears in multiple frames. "
-                    "Return one row per distinct person, not a separate row for each frame. Describe only "
+                    "Return one row per distinct event participant, not one per frame, pose, or body fragment. Describe only "
                     "visible face features when clear, plus clothing and distinguishing visual features. "
-                    "Record age only when legible on-screen text explicitly links it to this person; never estimate age from appearance. "
+                    "A coarse visual age group (baby, toddler, child, teenager) is allowed only when clear body-proportion/development cues support it, not from clothing alone; set apparent_age_range and apparent_age_basis=visual_estimate and cite cues. Record exact age only when legible on-screen text links it to the person. "
                     "Do not guess real identity, job, or relationship, "
-                    "or use information from outside these frames. Include evidence and a 1-based frame_index. If no person is visible, return an empty "
+                    "or use information from outside these frames. Include evidence and a 1-based frame_index. If no main subject/event participant is visible, return an empty "
 
                     "array. Schema: " + repair_schema
                 )
@@ -3856,32 +4223,46 @@ class QwenPerceiver:
                     repair_prompt = _build_temporal_fact_coverage_repair_prompt(
                         candidate_fields, len(bufs), repair_limit
                     )
-                    repair_request_id = uuid.uuid4().hex
-                    repair_api_url = self.next_api_url()
-                    self._activate_request(repair_request_id, repair_api_url)
-                    try:
-                        emit("repair_temporal_facts", "正在用同一组视频帧补齐缺失的原子事件事实")
-                        repair_response = _post_with_inference_cancel(
-                            f"{repair_api_url}/analyze_video",
-                            files=files,
-                            data={"prompt": repair_prompt, "request_id": repair_request_id},
-                            timeout=900,
-                        )
-                    finally:
-                        self._finish_request(repair_request_id)
-                    if ((cancel_event is not None and cancel_event.is_set())
-                            or repair_response.status_code == 409):
-                        return self._cancelled_result()
-                    if repair_response.status_code != 200:
-                        raise ValueError(
-                            f"focused temporal coverage pass returned HTTP {repair_response.status_code}"
-                        )
-                    repair_raw = str(repair_response.json().get("analysis") or "")
-                    if _contains_cjk(repair_raw):
-                        raise ValueError("focused temporal coverage pass returned non-English text")
-                    additions = _apply_temporal_fact_repair(
-                        _parse_json_array(repair_raw), len(bufs)
-                    )
+                    for schema_attempt in range(2):
+                        repair_request_id = uuid.uuid4().hex
+                        repair_api_url = self.next_api_url()
+                        self._activate_request(repair_request_id, repair_api_url)
+                        try:
+                            emit("repair_temporal_facts", "正在用同一组视频帧补齐缺失的原子事件事实")
+                            repair_response = _post_with_inference_cancel(
+                                f"{repair_api_url}/analyze_video",
+                                files=files,
+                                data={"prompt": repair_prompt, "request_id": repair_request_id},
+                                timeout=900,
+                            )
+                        finally:
+                            self._finish_request(repair_request_id)
+                        if ((cancel_event is not None and cancel_event.is_set())
+                                or repair_response.status_code == 409):
+                            return self._cancelled_result()
+                        if repair_response.status_code != 200:
+                            raise ValueError(
+                                f"focused temporal coverage pass returned HTTP {repair_response.status_code}"
+                            )
+                        repair_raw = str(repair_response.json().get("analysis") or "")
+                        if _contains_cjk(repair_raw):
+                            raise ValueError("focused temporal coverage pass returned non-English text")
+                        rows = _parse_json_array(repair_raw)
+                        required_keys = {"subject_type", "subject", "predicate", "value", "frame_index", "evidence"}
+                        malformed = [sorted(required_keys - set(row)) if isinstance(row, dict)
+                                     else ["JSON object"] for row in rows]
+                        malformed = [missing for missing in malformed if missing]
+                        if malformed and schema_attempt == 0:
+                            repair_prompt += (
+                                "\nYour previous response omitted required keys: "
+                                + json.dumps(malformed)
+                                + ". Reinspect the SAME images and return corrected rows with ALL required keys. "
+                                "Choose a literal subject_type from person, object, place, environment, event; "
+                                "never omit it. Do not add facts absent from the images. Previous response: "
+                                + repair_raw[:5000])
+                            continue
+                        additions = _apply_temporal_fact_repair(rows, len(bufs))
+                        break
                     if not additions:
                         raise ValueError("focused temporal coverage pass returned no grounded facts")
                     combined = list(existing_facts)
@@ -4025,21 +4406,262 @@ class QwenPerceiver:
         out["qwen_input_frame_bytes"] = bufs
         return out
 
-    def ground_objects(self, objects, frames, cancel_event=None, progress_callback=None):
-        """Locate objects with the local CPU HOG/CLIP cropper; never call Qwen."""
+    def ground_objects(self, objects, frames, cancel_event=None, progress_callback=None,
+                       temporal_facts=(), source_frame_times=(), document_evidence=(),
+                       object_observations=(), qwen_fallback=False):
+        """Use local CLIP first, with optional Qwen boxes for otherwise unlocalized items."""
         try:
             from clip_crop_grounding import ground_objects
         except ImportError:
             from scripts.memory.clip_crop_grounding import ground_objects
-        return ground_objects(objects, frames, cancel_event, progress_callback)
+        result = ground_objects(objects, frames, cancel_event, progress_callback, temporal_facts,
+                                source_frame_times=source_frame_times,
+                                document_evidence=document_evidence,
+                                object_observations=object_observations)
+        if not qwen_fallback or result.get("status") != "completed":
+            return result
+        def has_local_region(item):
+            for box in item.get("frame_boxes") or []:
+                bbox = box.get("bbox") if isinstance(box, dict) else None
+                try:
+                    score = float(box.get("score") or item.get("score") or 0)
+                    area = (float(bbox[2]) - float(bbox[0])) * (float(bbox[3]) - float(bbox[1]))
+                except (TypeError, ValueError, IndexError):
+                    continue
+                if (len(bbox) == 4 and score >= .70 and .0008 <= area <= .88
+                        and not (bbox[0] <= .01 and bbox[1] <= .01
+                                 and bbox[2] >= .99 and bbox[3] >= .99)):
+                    return True
+            return False
+        by_label = {str(item.get("object") or "").strip().casefold(): item
+                    for item in result.get("items") or [] if isinstance(item, dict)}
+        weak_labels = []
+        for value in objects or ():
+            label = str(value.get("object") or value.get("name") or value.get("entity") or "").strip()                 if isinstance(value, dict) else str(value or "").strip()
+            item = by_label.get(label.casefold())
+            if label and (item is None or not has_local_region(item)):
+                weak_labels.append(label)
+        if not weak_labels:
+            return result
+        def visual_context_for(label):
+            key = str(label or "").casefold()
+            clues = []
+            for obs in object_observations or ():
+                if not isinstance(obs, dict) or str(obs.get("object") or "").casefold() != key:
+                    continue
+                appearance = str(obs.get("appearance") or "").strip()
+                if appearance:
+                    clues.append("visual appearance: " + appearance)
+                for ref in obs.get("evidence_refs") or ():
+                    if isinstance(ref, dict) and ref.get("modality") == "visual":
+                        clues.append("visual evidence at " + str(ref.get("frame_time_s")) + "s")
+            for fact in temporal_facts or ():
+                if not isinstance(fact, dict) or fact.get("modality") not in (None, "visual"):
+                    continue
+                fields = " ".join(str(fact.get(field) or "") for field in ("subject", "value", "evidence"))
+                if key in fields.casefold():
+                    clue = str(fact.get("evidence") or fact.get("value") or "").strip()
+                    when = fact.get("frame_time_s")
+                    if clue:
+                        clues.append(("visual event at " + str(when) + "s: " if when is not None else "visual event: ") + clue)
+            for doc in document_evidence or ():
+                if not isinstance(doc, dict):
+                    continue
+                fields = " ".join(str(doc.get(field) or "") for field in ("document", "evidence", "text"))
+                if key in fields.casefold() or key in str(doc.get("document") or "").casefold():
+                    when = doc.get("frame_time_s")
+                    clue = ", ".join(x for x in (str(doc.get("text") or "").strip(),
+                                                   str(doc.get("evidence") or "").strip()) if x)
+                    if clue:
+                        clues.append(("visual text/evidence at " + str(when) + "s: " if when is not None else "visual text/evidence: ") + clue)
+            return " | ".join(dict.fromkeys(clues))[:500]
+        vlm_targets = [{"object": label, "visual_context": visual_context_for(label)}
+                       for label in weak_labels]
+        vlm_by_label = {}
+        vlm_methods = set()
+        vlm_errors = []
+        for target in vlm_targets:
+            label = str(target.get("object") or "").strip()
+            current = by_label.get(label.casefold())
+            if not label or current is None:
+                continue
+            anchor_indices = sorted({int(value) for value in current.get("anchor_frame_indices") or []
+                                     if (isinstance(value, int) or str(value).isdigit())
+                                     and 1 <= int(value) <= len(frames)})
+            if not anchor_indices:
+                anchor_indices = list(range(1, min(12, len(frames)) + 1))
+            # Independent source frames prevent VL coordinate/index confusion when
+            # the same entity has multiple time-stamped evidence anchors.
+            mapped_boxes = []
+            grounded_status = "uncertain"
+            for original_index in anchor_indices[:4]:
+                vlm_result = self.ground_objects_vlm(
+                    [target], [frames[original_index - 1]], cancel_event, progress_callback)
+                vlm_methods.add(str(vlm_result.get("method") or "qwen3-vl-explicit-object-box-v1"))
+                if vlm_result.get("status") != "completed":
+                    if vlm_result.get("message"):
+                        vlm_errors.append(str(vlm_result.get("message"))[:200])
+                    continue
+                grounded = next((item for item in vlm_result.get("items") or []
+                                 if isinstance(item, dict)
+                                 and str(item.get("object") or "").strip().casefold() == label.casefold()), None)
+                if not grounded:
+                    continue
+                grounded_status = str(grounded.get("status") or grounded_status)
+                for box in grounded.get("frame_boxes") or []:
+                    mapped_boxes.append({**box, "frame_index": original_index})
+            if mapped_boxes:
+                vlm_by_label[label.casefold()] = {
+                    "object": label, "status": grounded_status,
+                    "frame_boxes": mapped_boxes,
+                    "frame_indices": [box["frame_index"] for box in mapped_boxes],
+                    "anchor_frame_indices": [box["frame_index"] for box in mapped_boxes],
+                    "score": max(float(box.get("score") or 0) for box in mapped_boxes),
+                    "reason": "qwen_explicit_object_box_v1"}
+        replaced = 0
+        for label in weak_labels:
+            grounded = vlm_by_label.get(label.casefold())
+            current = by_label.get(label.casefold())
+            if not grounded or not grounded.get("frame_boxes") or current is None:
+                continue
+            current.update({key: value for key, value in grounded.items()
+                            if key in {"status", "frame_indices", "anchor_frame_indices",
+                                       "frame_boxes", "score", "reason"}})
+            replaced += 1
+        result["qwen_fallback"] = {"status": "completed" if not vlm_errors else "partial",
+                                    "updated_items": replaced,
+                                    "method": "+".join(sorted(vlm_methods)),
+                                    "errors": vlm_errors}
+        if replaced:
+            result["model"] = "local-clip+qwen3-vl-explicit-object-box-v1"
+            result["method"] = "local-clip+qwen3-vl-explicit-object-box-v1"
+            result["prompt_version"] = "qwen3-vl-explicit-object-box-v1-20261105"
+        return result
 
-    def ground_people(self, people, frames, cancel_event=None, progress_callback=None):
-        """Locate people with local HOG/CLIP proposals; never call Qwen."""
+    def ground_objects_vlm(self, objects, frames, cancel_event=None,
+                           progress_callback=None):
+        """Ask Qwen-VL for explicit object boxes when local CLIP has no safe crop."""
+        labels = []
+        contexts = {}
+        seen = set()
+        for value in objects or ():
+            label = str(value.get("object") or value.get("name") or value.get("entity") or "").strip()                 if isinstance(value, dict) else str(value or "").strip()
+            if label and label.casefold() not in seen:
+                labels.append(label[:100])
+                seen.add(label.casefold())
+                if isinstance(value, dict):
+                    contexts[label.casefold()] = str(value.get("visual_context") or "").strip()[:500]
+        frames = [row for row in (frames or []) if isinstance(row, dict) and row.get("bytes")]
+        if not labels or not frames:
+            return {"schema": 1, "status": "no_visual_evidence", "model": "qwen3-vl-object-box-v1",
+                    "items": []}
+        if cancel_event is not None and cancel_event.is_set():
+            return {"schema": 1, "status": "cancelled", "model": "qwen3-vl-object-box-v1",
+                    "items": []}
+        prompt = (
+            "You are locating only the explicitly named objects in a sequence of video frames. "
+            "The uploaded images are in chronological order and their 1-based indices are their frame indices. "
+            "For each requested object, return at most the two clearest frames where it is visible. "
+            "Do not repeat a box across frames unless the object's position and boundaries really match. "
+            "Give a tight bounding box around the complete named object itself; do not box the person, "
+            "hand, nearby body part, shelf, or whole scene. Do not infer presence from speech or context. "
+            "If the object cannot be visually distinguished, mark it not visible. Visual context is only a "
+            "disambiguation clue: verify the requested object and boundaries in pixels; never box a nearby "
+            "object merely because context mentions it. Coordinates are integers normalized from 0 to 1000, "
+            "[x1,y1,x2,y2], origin at top-left. Output only JSON with this shape: "
+            "{\"items\":[{\"object\":string,\"visible\":boolean,\"frames\":["
+            "{\"frame_index\":integer,\"bbox\":[x1,y1,x2,y2],"
+            "\"confidence\":\"high|medium|low\",\"visual_check\":string}]}]}. "
+            "Use high confidence only when the object boundaries and identity are clear; medium when visible "
+            "but partly occluded; low or visible=false when uncertain. Requested objects: "
+            + json.dumps([{"object": label, "visual_context": contexts.get(label.casefold(), "")}
+                          for label in labels], ensure_ascii=False)
+        )
+        request_id = uuid.uuid4().hex
+        api_url = self.next_api_url()
+        try:
+            if progress_callback:
+                progress_callback({"stage": "object_vlm_grounding",
+                                   "message": "局部裁剪置信度不足，正在用视觉模型核对物品边界"})
+            response = _post_with_inference_cancel(
+                api_url + "/analyze_video",
+                files=[("images", (f"object_frame_{index + 1}.jpg",
+                                    bytes(frame.get("bytes") or b""),
+                                    str(frame.get("mime") or "image/jpeg")))
+                       for index, frame in enumerate(frames[:12])],
+                data={"prompt": prompt, "request_id": request_id},
+                timeout=(5, 300),
+            )
+            response.raise_for_status()
+            analysis = str(response.json().get("analysis") or "")
+            fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", analysis, re.I | re.S)
+            candidate = fenced.group(1) if fenced else None
+            if not candidate:
+                start, end = analysis.find("{"), analysis.rfind("}")
+                candidate = analysis[start:end + 1] if start >= 0 and end > start else ""
+            parsed = json.loads(candidate)
+            rows = parsed.get("items") if isinstance(parsed, dict) else None
+            by_name = {str(row.get("object") or "").strip().casefold(): row
+                       for row in rows or [] if isinstance(row, dict)}
+            output = []
+            for label in labels:
+                raw = by_name.get(label.casefold()) or {}
+                box_rows = []
+                for box in raw.get("frames") or []:
+                    if not isinstance(box, dict) or str(box.get("confidence") or "").casefold() not in {"high", "medium"}:
+                        continue
+                    try:
+                        frame_index = int(box.get("frame_index"))
+                        coords = [float(value) / 1000.0 for value in box.get("bbox")]
+                    except (TypeError, ValueError):
+                        continue
+                    if not (1 <= frame_index <= min(12, len(frames)) and len(coords) == 4):
+                        continue
+                    x1, y1, x2, y2 = coords
+                    area = (x2 - x1) * (y2 - y1)
+                    if (min(coords) < 0 or max(coords) > 1 or x2 <= x1 or y2 <= y1
+                            or area < 0.0008 or area > 0.88
+                            or (x1 <= .01 and y1 <= .01 and x2 >= .99 and y2 >= .99)):
+                        continue
+                    confidence = str(box.get("confidence") or "").casefold()
+                    box_rows.append({"frame_index": frame_index,
+                                     "bbox": [round(value, 5) for value in coords],
+                                     "score": .92 if confidence == "high" else .78,
+                                     "method": "qwen3-vl-explicit-object-box-v1",
+                                     "identity_evidence": "qwen_visual_object_boundary",
+                                     "visual_check": str(box.get("visual_check") or "")[:180]})
+                visible = bool(raw.get("visible"))
+                if box_rows:
+                    output.append({"object": label, "status": "visible_unlabeled",
+                                   "appearance": "", "frame_indices": [r["frame_index"] for r in box_rows],
+                                   "anchor_frame_indices": [r["frame_index"] for r in box_rows],
+                                   "frame_boxes": box_rows,
+                                   "score": max(r["score"] for r in box_rows),
+                                   "reason": "qwen_explicit_object_box_v1"})
+                else:
+                    output.append({"object": label,
+                                   "status": "not_visible" if not visible else "uncertain",
+                                   "appearance": "", "frame_indices": [],
+                                   "anchor_frame_indices": [], "frame_boxes": [],
+                                   "score": 0.0, "reason": "qwen_object_box_not_confident"})
+            return {"schema": 1, "status": "completed", "model": "Qwen3-VL",
+                    "method": "qwen3-vl-explicit-object-box-v1",
+                    "prompt_version": "qwen3-vl-explicit-object-box-v1-20261105",
+                    "items": output}
+        except Exception as exc:
+            return {"schema": 1, "status": "unavailable", "model": "Qwen3-VL",
+                    "method": "qwen3-vl-explicit-object-box-v1",
+                    "message": str(exc)[:240], "items": []}
+
+    def ground_people(self, people, frames, cancel_event=None, progress_callback=None,
+                      face_detections=None):
+        """Locate people with local HOG/CLIP proposals and optional face-count evidence."""
         try:
             from clip_crop_grounding import ground_people
         except ImportError:
             from scripts.memory.clip_crop_grounding import ground_people
-        return ground_people(people, frames, cancel_event, progress_callback)
+        return ground_people(people, frames, cancel_event, progress_callback,
+                             face_detections=face_detections)
 
     def prewarm(self, moments, force: bool = False):
         """批量预热缓存，返回 (成功数, 失败数)。"""

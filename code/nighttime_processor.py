@@ -38,6 +38,7 @@ DEFAULT_QWEN_API_URL = (
     or "http://127.0.0.1:8001"
 )
 DEFAULT_CHUNK_CHARS = 18000
+NIGHTLY_PROCESSOR_VERSION = "nightly-v15-english-person-identities-20261106"
 _INDEX_FIELDS = {
     "people": ("people", "list"),
     "locations": ("location", "scalar"),
@@ -106,7 +107,7 @@ class NightlyProcessor:
         if provenance.get("source_segment_id"):
             out["source_segment_id"] = str(provenance["source_segment_id"])[:240]
         for key, limit in (("scene", 500), ("user_action", 500),
-                           ("interaction_details", 1200),
+                           ("content_summary", 500), ("interaction_details", 1200),
                            ("location", 200), ("activity", 200),
                            ("notes", 500), ("extra_notes", 500)):
             if item.get(key):
@@ -185,17 +186,144 @@ class NightlyProcessor:
                     plans.append(plan)
         return plans[:80]
 
+    @staticmethod
+    def _user_profile_evidence(moments, max_facts=120):
+        """Build Layer 6 evidence only from atomic claims whose subject is the user.
+
+        Scene summaries and person observations routinely describe other people;
+        passing them directly to user profiling can turn a relative's age, gender,
+        occupation, or relationship into a false user attribute. Preserve source
+        IDs and attribution while excluding those third-party descriptions.
+        """
+        user_aliases = {"user", "camera wearer", "camera-wearer", "wearer", "用户"}
+        rows = []
+        for moment in moments:
+            moment_id = str(moment.get("id") or "")
+            for fact in moment.get("temporal_facts") or []:
+                if not isinstance(fact, dict):
+                    continue
+                subject = " ".join(str(fact.get("subject") or "").casefold().split())
+                if subject not in user_aliases:
+                    continue
+                provenance = moment.get("source_provenance") or {}
+                row = {
+                    "source_moment_id": moment_id,
+                    "source_video_id": str(provenance.get("source_video_id") or ""),
+                    "source_date": str(moment.get("timestamp") or "")[:10],
+                }
+                for key in ("predicate", "value", "status", "modality", "confidence",
+                            "evidence", "evidence_ref", "evidence_refs", "actor"):
+                    value = fact.get(key)
+                    if value not in (None, "", [], {}):
+                        row[key] = value
+                rows.append(row)
+                if len(rows) >= max_facts:
+                    return rows
+        return rows
+
+    @staticmethod
+    def _gate_profile_stability(profile, evidence_records):
+        """Reject one-off behavior as a stable user profile attribute.
+
+        Demographics need a matching user-scoped source fact. Preferences and
+        long-term patterns need either an explicit user statement or corroboration
+        across distinct source videos. A visible action in one clip is not a
+        preference, frequent location, personality trait, or habit.
+        """
+        import re
+
+        def norm(value):
+            return " ".join(re.findall(r"[a-z0-9]+|[\u4e00-\u9fff]+",
+                                       str(value or "").casefold()))
+
+        records = [row for row in evidence_records if isinstance(row, dict)]
+        direct_markers = ("i like", "i love", "i prefer", "my favorite", "i enjoy",
+                          "i want", "i plan", "i decided", "我喜欢", "我最喜欢",
+                          "我偏好", "我打算", "我计划", "我决定")
+        output = dict(profile or {})
+        rejected = {}
+
+        def support(value):
+            target = norm(value)
+            if not target:
+                return [], False
+            # Exact normalized phrase match avoids treating unrelated facts in
+            # the same clip as evidence for the candidate profile attribute.
+            matched = []
+            for row in records:
+                corpus = norm(" ".join(str(row.get(k) or "") for k in
+                                       ("predicate", "value", "evidence", "actor")))
+                if target in corpus or (len(target.split()) > 1 and
+                        all(token in corpus for token in target.split())):
+                    matched.append(row)
+            videos = {str(row.get("source_video_id")) for row in matched
+                      if row.get("source_video_id")}
+            dates = {str(row.get("source_date")) for row in matched
+                     if row.get("source_date")}
+            explicit = any(str(row.get("modality") or "").casefold() == "speech"
+                           and any(marker in norm(" ".join(str(row.get(k) or "")
+                               for k in ("predicate", "value", "evidence")))
+                                   for marker in direct_markers)
+                           for row in matched)
+            return videos, dates, explicit
+
+        # Preserve only source-grounded demographic claims (e.g. a name/age
+        # explicitly shown in a document and attributed to the user).
+        demographics = output.get("demographics")
+        if isinstance(demographics, dict):
+            for key, node in list(demographics.items()):
+                if isinstance(node, dict) and "value" in node:
+                    videos, _, _ = support(node.get("value"))
+                    if not videos:
+                        demographics.pop(key, None)
+                        rejected["demographics"] = rejected.get("demographics", 0) + 1
+
+        def filter_tree(node, field):
+            if isinstance(node, list):
+                kept = []
+                for item in node:
+                    if isinstance(item, dict) and "value" in item:
+                        videos, dates, explicit = support(item.get("value"))
+                        stable = (len(dates) >= 2 if field == "frequent_locations"
+                                  else len(videos) >= 2 or explicit)
+                        if stable:
+                            kept.append(item)
+                        else:
+                            rejected[field] = rejected.get(field, 0) + 1
+                    else:
+                        clean = filter_tree(item, field)
+                        if clean not in (None, [], {}): kept.append(clean)
+                return kept
+            if isinstance(node, dict):
+                if "value" in node:
+                    videos, dates, explicit = support(node.get("value"))
+                    stable = (len(dates) >= 2 if field == "frequent_locations"
+                              else len(videos) >= 2 or explicit)
+                    if stable: return node
+                    rejected[field] = rejected.get(field, 0) + 1
+                    return None
+                clean = {}
+                for key, value in node.items():
+                    child = filter_tree(value, field)
+                    if child not in (None, [], {}): clean[key] = child
+                return clean
+            return node
+
+        for field in ("preferences", "frequent_locations", "behavior_patterns",
+                      "personality", "goals", "decisions", "motivations"):
+            if field in output:
+                output[field] = filter_tree(output[field], field)
+        return output, [f"{field}({count})" for field, count in rejected.items()]
+
     def _chunks(self, moments):
+        """Batch only for model context limits; source-video boundaries are provenance, not topics."""
         chunks, current, size = [], [], 2
-        current_source = None
         for item in moments:
             brief = self._brief(item)
-            source = str(brief.get("source_video_id") or "")
             n = len(json.dumps(brief, ensure_ascii=False))
-            if current and (source != current_source or size + n > self.chunk_chars):
+            if current and size + n > self.chunk_chars:
                 chunks.append(current)
                 current, size = [], 2
-            current_source = source
             current.append(brief)
             size += n
         if current:
@@ -243,6 +371,7 @@ class NightlyProcessor:
         prompt = f"""TASK: NIGHTLY_CHUNK_SUMMARY
 Summarize this chronological slice of memories for {day}. Use only observations
 provided; distinguish repeated patterns from one-off events; preserve uncertainty.
+Write all human-readable person identities, roles, kinship relationships, and person references in natural English. Translate supported Chinese terms such as 姥姥 to grandmother, 妈妈 to mother, and 医生 to doctor. Keep proper names in established Latin spelling or Hanyu Pinyin; do not translate their meanings. Exact evidence quotations may remain in the source language.
 Keep explicit person appearance/age evidence separate from identity, preserve
 plans as plans, and retain object state/location changes with their before/after
 details and event order. source_evidence is timestamped automatic speech
@@ -325,9 +454,67 @@ Slice {i}/{total}:
             "source_moment_ids": item.get("source_moment_ids") or [],
         } for item in summaries]
         from nightly_curation import NightlyCurator
-        # First consolidate each source family independently. This keeps the
-        # visual/person evidence together where clip continuity exists, while
-        # bounding the Qwen context even when a full custom dataset is large.
+        source_text_by_mid = {}
+        for moment in moments or []:
+            mid = str(moment.get("id") or "")
+            if not mid:
+                continue
+            source_text_by_mid[mid] = " ".join(str(moment.get(key) or "") for key in (
+                "scene", "content_summary", "user_action", "interaction_details",
+                "activity", "location", "source_evidence"))
+        generic = {"user", "man", "woman", "person", "people", "scene", "video",
+                       "camera", "restaurant", "office", "home", "room", "setting",
+                       "indoors", "outdoors", "clip", "appears", "shows", "visible",
+                       "interaction", "moment", "area", "place", "same", "a", "an",
+                       "the", "and", "or", "but", "of", "to", "for", "in", "on", "by",
+                       "with", "from", "as", "is", "are", "was", "were", "be", "been",
+                       "being", "at", "this", "that", "it", "his", "her", "their",
+                       "they", "them", "who", "what", "when", "where", "how", "then",
+                       "now", "very", "have", "has", "had", "you", "your", "i", "we",
+                       "he", "she", "do", "does", "did", "not", "into", "up", "down",
+                       "out", "back", "first", "next", "after", "before", "its", "while"}
+
+        def event_has_source_support(summary, refs):
+            claim_tokens = NightlyCurator._tokens(summary)
+            claim_tokens -= generic
+            if len(claim_tokens) < 2:
+                return False
+            kinship_terms = {"granddaughter", "grandson", "daughter", "son", "mother",
+                             "mom", "father", "dad", "wife", "husband", "sister",
+                             "brother", "grandmother", "grandfather"}
+            for mid in refs:
+                source_text = source_text_by_mid.get(mid, "")
+                source_tokens = NightlyCurator._tokens(source_text)
+                source_tokens -= generic
+                if len(claim_tokens & source_tokens) < 2:
+                    continue
+                # A kinship label must be grounded in this clip's own spoken or
+                # visual record; don't infer one family member's role transitively.
+                claim_relations = {term for term in kinship_terms
+                                   if re.search(r"\b" + re.escape(term) + r"\b",
+                                                summary.casefold())}
+                source_lower = source_text.casefold()
+                if any(not re.search(r"\b" + re.escape(term) + r"\b", source_lower)
+                       for term in claim_relations):
+                    continue
+                return True
+            return False
+
+        def event_has_strong_support(summary, refs):
+            claim = NightlyCurator._tokens(summary)
+            if len(claim) < 3:
+                return False
+            for mid in refs:
+                source = source_text_by_mid.get(str(mid), "")
+                source_tokens = NightlyCurator._tokens(source) - generic
+                overlap = len(claim & source_tokens)
+                if overlap >= max(3, int(len(claim) * 0.4 + 0.999)):
+                    return True
+            return False
+
+        # First consolidate by dataset category, but never treat the folder as
+        # evidence that clips are related. Every retained claim is checked
+        # against the cited clip's own visual/audio record.
         families = {}
         for moment in moments or []:
             provenance = moment.get("source_provenance") or {}
@@ -351,6 +538,7 @@ Slice {i}/{total}:
                 compact = dict(row)
                 compact["scene"] = str(compact.get("scene") or "")[:360]
                 compact["interaction_details"] = str(compact.get("interaction_details") or "")[:240]
+                compact["content_summary"] = str(compact.get("content_summary") or "")[:240]
                 compact["source_evidence"] = str(compact.get("source_evidence") or "")[:650]
                 compact["speech_and_person_facts"] = [
                     {key: (str(value)[:200] if isinstance(value, str) else value)
@@ -387,18 +575,16 @@ Slice {i}/{total}:
                         "profile_evidence": str(summary.get("profile_evidence") or "")[:220],
                     })
             group_prompt = f"""TASK: NIGHTLY_SOURCE_FAMILY_CURATION
-Consolidate this related source-video family, not each clip independently.
-Use the evidence below to connect recurring people across its clips, preserve
-distinct events with citations, compress repeated descriptions, and select only
-the most useful source memories and representative images. A supported person
-must form one logical profile/gallery across the family; collect only that
-person's verified crops from cited source moments. Keep each crop attached to
-its original moment and never combine different faces into a composite image.
-Resolve a visible person to a spoken family name only when introduction/kinship
-speech is tied to that visible person or matching person evidence supports it.
-Never merge clip-local labels by gender, clothing, or label alone. Preserve
-uncertainty. Do not attribute undiarized speech to a face. Keep Qwen input frames
-and source moments as audit evidence; this stage only marks curation importance.
+This folder groups videos by dataset category and may contain unrelated clips.
+Keep every event within one source video. Never combine different videos into a
+single event. Connect people across clips only with direct, identity-specific
+visual evidence; category membership, clothing, gender, or label are not proof.
+All person labels, canonical_entity values, roles, relationship descriptions, reasons, and summaries must use natural English. Translate supported Chinese identity/kinship terms; use Latin spelling or Hanyu Pinyin for proper names. Keep exact source quotes only in evidence fields.
+A kinship word spoken by an unidentified speaker does not establish a relation
+between two visible people. Do not infer daughter/granddaughter transitively from
+someone being called Mom or Grandma. Preserve uncertainty. Do not attribute
+undiarized speech to a face. Keep source moments and frames as audit evidence.
+A supported person may have a gallery only from that person's verified crops.
 
 Return JSON only:
 {{"summary":"one concise family-level synthesis, <=80 words",
@@ -423,14 +609,20 @@ Image candidates: {json.dumps(image_rows, ensure_ascii=False, separators=(',', '
             raw_group, _group_hit = self._call(group_prompt, cache, cache_path, use_cache)
             group = self._json(raw_group)
             valid_images = {item["ref_id"] for item in image_rows}
+            source_video_by_mid = {
+                str(item.get("id") or ""): str((item.get("source_provenance") or {}).get("source_video_id") or "")
+                for item in moments or [] if item.get("id")
+            }
             local_events = []
             for event in group.get("key_events") or []:
                 if not isinstance(event, dict):
                     continue
                 refs = list(dict.fromkeys(str(mid) for mid in event.get("source_moment_ids") or []
                                           if str(mid) in family_ids))
+                source_videos = {source_video_by_mid.get(mid, "") for mid in refs}
                 text = " ".join(str(event.get("summary") or "").split())[:260]
-                if refs and text:
+                if (refs and text and len(source_videos - {""}) <= 1
+                        and event_has_source_support(text, refs)):
                     local_events.append({"summary": text, "source_moment_ids": refs})
             local_identity = [item for item in (group.get("identity_resolutions") or [])
                               if isinstance(item, dict)
@@ -460,7 +652,7 @@ Image candidates: {json.dumps(image_rows, ensure_ascii=False, separators=(',', '
 
         prompt = f"""TASK: NIGHTLY_ROLLUP
 You are performing actual cross-memory consolidation for {day}, not writing one
-summary per clip. Integrate the new evidence with retained prior memory:
+summary per clip. Integrate the new evidence with retained prior memory. Write all human-readable person identities, canonical_entity values, roles, kinship relationships, and person references in natural English; translate supported Chinese terms and use Latin spelling/Hanyu Pinyin for proper names. Preserve exact source-language wording only in quoted evidence fields.
 compress repeated descriptions, merge recurring people/relations and stable
 patterns, remove low-value duplicate items from the compact Layer 5 event list,
 and identify a small number of durable, high-utility memories and source images.
@@ -482,6 +674,7 @@ IDENTITY RESOLUTION:
   across several videos. Never attribute undiarized speech to a face without
   explicit visual/person evidence.
 - Layer 6 profile evidence must come from repeated or explicit stable facts.
+- Do not promote a single third-party judgment of the user into personality/profile evidence. Preserve it as an attributed quote/event with its speaker and source moment; only repeated independent evidence or explicit user confirmation can support a stable trait.
   Cross-clip event continuity is allowed; unsupported ownership, location,
   identity, or intent is not.
 - Global index alias maps are unsafe for clip-local labels; leave combine.people
@@ -490,33 +683,44 @@ IDENTITY RESOLUTION:
   the fact. Choose only standout, reusable memories/images (score >= 0.82);
   do not mark every item.
 
-Return JSON only:
+Return one JSON object using this exact nested shape:
 {{
- "layer4_summary":"current/recent compressed summary, at most 100 words",
- "layer5_summary":"compact durable summary across new and retained evidence, at most 120 words",
- "key_events":[{{"summary":"concise event","source_moment_ids":["valid source IDs"]}}],
+ "layer4": {{"summary":"coherent recent-memory summary, <=100 words",
+   "topics":[{{"summary":"one complete topic sentence","source_moment_ids":["IDs from one source video"]}}],
+   "source_moment_ids":["IDs directly supporting the summary"],
+   "current_tasks":[],"life_trajectory":"preserve unless cited evidence changes it"}},
+ "layer5": {{"summary":"durable-memory summary, <=100 words",
+   "key_events":[{{"summary":"one important event","source_moment_ids":["IDs"]}}],
+   "long_term_patterns":[{{"summary":"cross-family pattern","source_moment_ids":["IDs"]}}]}},
  "replace_key_events":true,
- "retained_source_moment_ids":["IDs supporting the retained Layer 5 summary/events/patterns"],
- "long_term_patterns":["only repeated patterns with source support; at most 6"],
- "layer6_summary":"at most 60 words; preserve prior if no new stable evidence",
- "profile_evidence":"at most 180 words for separate validated profile extraction",
+ "retained_source_moment_ids":["only IDs cited by selected key events or patterns"],
+ "layer6_summary":"preserve prior unless new user-scoped evidence supports a change",
+ "profile_evidence":"source-grounded user facts only",
  "combine":{{"people":{{}},"locations":{{}},"activity_events":{{}},"environments":{{}},"objects":{{}}}},
- "identity_resolutions":[{{"moment_id":"target moment","observed_entity":"clip-local label",
-   "canonical_entity":"stable identity","confidence":0.0,
-   "evidence_moment_ids":["source moments"],"reason":"short evidence explanation"}}],
- "highlight_moments":[{{"moment_id":"...","score":0.0,"reason":"why this is unusually reusable",
-   "evidence_moment_ids":["..."]}}],
- "highlight_images":[{{"ref_id":"exact image ref_id from candidates","score":0.0,
-   "reason":"why this is the representative frame"}}]
+ "identity_resolutions":[{{"moment_id":"target","observed_entity":"clip-local label",
+   "canonical_entity":"supported identity","confidence":0.0,"evidence_moment_ids":["IDs"],
+   "reason":"evidence"}}],
+ "highlight_moments":[{{"moment_id":"...","score":0.0,"reason":"...","evidence_moment_ids":["..."]}}],
+ "highlight_images":[{{"ref_id":"exact candidate ID","score":0.0,"reason":"..."}}]
 }}
-For key_events, retain at most 24 after removing semantic duplicates and low-value
-one-off details. Every retained event must include its source_moment_ids. Preserve
-important relationship changes, explicit plans, object-location transitions,
-safety/health events, and recurring meaningful interactions. Do not combine
-different events into a single event. Patterns and Layer 5 summary may consolidate
-across source videos, but remain source-grounded. Retain at most 8 highlighted
-memories and 12 highlighted images; usually fewer. Select image refs only from the
-provided list. Output valid source IDs and image IDs exactly as given.
+Layer 4 is a readable synthesis of the most useful recent topics, not an event dump.
+Return 3-8 separate topics when evidence allows. Every topic must cite moments from
+exactly one source video; do not join people or events across videos in one topic.
+Build the Layer 4 summary only from these topic sentences, in complete prose, and
+omit dataset/category labels. Do not concatenate truncated event fragments.
+If no topic passes source validation, preserve the prior summary.
+Layer 5 is not a report of processing counts. Keep only durable, high-utility,
+source-cited events (usually 0-8, never more than 12). Ordinary one-off actions,
+incidental bystanders, generic scenery, and routine purchases are not durable
+events unless there is explicit personal significance or a meaningful transition.
+An empty key_events list is valid when nothing merits long-term retention.
+A long-term pattern requires at least 3 moments from at least 2 independent
+source groups. Keep patterns empty when that threshold is not met. Never invent
+or infer user preferences from a purchase alone.
+Each event must cite valid moments from one source video. Cross-video identity
+links must remain in identity_resolutions with their own evidence IDs. Never
+merge unrelated source groups.
+Only return exact source IDs and image candidate IDs supplied below.
 
 Prior compact memory: {json.dumps(prior, ensure_ascii=False, separators=(',', ':'))}
 Source-family consolidations: {json.dumps(family_rows, ensure_ascii=False, separators=(',', ':'))}
@@ -544,6 +748,14 @@ resolutions from source-family evidence will be preserved with their citations.
 
             l4 = output.get("layer4") if isinstance(output.get("layer4"), dict) else {}
             l5 = output.get("layer5") if isinstance(output.get("layer5"), dict) else {}
+            if not l4.get("summary") and isinstance(output.get("layer4_summary"), str):
+                l4["summary"] = output["layer4_summary"]
+            if not l5.get("summary") and isinstance(output.get("layer5_summary"), str):
+                l5["summary"] = output["layer5_summary"]
+            if "key_events" not in l5 and isinstance(output.get("key_events"), list):
+                l5["key_events"] = output["key_events"]
+            if "long_term_patterns" not in l5 and isinstance(output.get("long_term_patterns"), list):
+                l5["long_term_patterns"] = output["long_term_patterns"]
             archive = self.memory.memory.get("layer7", {}).get("moments", {})
             valid_ids = {str(mid) for mid in archive}
             valid_ids.update(str(item.get("id")) for item in moments or [] if item.get("id"))
@@ -564,25 +776,229 @@ resolutions from source-family evidence will be preserved with their citations.
                     return ""
                 return "[moments:" + ",".join(refs) + "] " + summary
 
-            raw_events = output.get("key_events", l5.get("key_events", []))
+            # Bound compact events to their source-family curation rows.
+            # Global prose cannot merge unrelated topics into one event.
+            bounded_events = []
+            for family_row in family_rows:
+                family_label = " ".join(str(family_row.get("family") or "").split())[:80]
+                for item in family_row.get("key_events") or []:
+                    if not isinstance(item, dict):
+                        continue
+                    refs = list(dict.fromkeys(str(mid) for mid in
+                        item.get("source_moment_ids") or [] if str(mid) in valid_ids))
+                    summary = " ".join(str(item.get("summary") or "").split())[:300]
+                    if refs and summary:
+                        bounded_events.append({"summary": f"[{family_label}] {summary}",
+                                               "source_moment_ids": refs})
+            global_events = l5.get("key_events")
+            if not isinstance(global_events, list):
+                global_events = output.get("key_events")
+            has_global_event_selection = isinstance(global_events, list)
+            raw_events = global_events if has_global_event_selection else bounded_events
             if not isinstance(raw_events, list):
                 raw_events = []
-            events = [value for value in (event_text(item) for item in raw_events) if value][:24]
-            raw_patterns = output.get("long_term_patterns", l5.get("long_term_patterns", []))
-            if isinstance(raw_patterns, str):
-                patterns = [x.strip() for x in raw_patterns.split(";") if x.strip()][:6]
-            elif isinstance(raw_patterns, list):
-                patterns = [str(x).strip()[:240] for x in raw_patterns[:6] if str(x).strip()]
+            validated_events = []
+            seen_event_tokens = []
+            for item in raw_events:
+                if isinstance(item, dict):
+                    text = " ".join(str(item.get("summary") or "").split())[:300]
+                    refs = list(dict.fromkeys(str(mid) for mid in
+                        item.get("source_moment_ids") or [] if str(mid) in valid_ids))
+                else:
+                    text = " ".join(str(item or "").split())[:360]
+                    refs = list(dict.fromkeys(mid for value in re.findall(
+                        r"\[(?:moment|moments):([^\]]+)\]", text)
+                        for mid in value.split(",") if mid in valid_ids))
+                    text = re.sub(r"^(?:\[(?:source|moment|moments):[^\]]+\]\s*)+", "", text)
+                if not text or not refs or not event_has_strong_support(text, refs):
+                    continue
+                cited_videos = {source_video_by_mid.get(mid, "") for mid in refs}
+                if len(cited_videos - {""}) > 1:
+                    continue
+                tokens = NightlyCurator._tokens(text)
+                if any(tokens and len(tokens & prior_tokens) / max(1, len(tokens | prior_tokens)) >= 0.82
+                       for prior_tokens in seen_event_tokens):
+                    continue
+                seen_event_tokens.append(tokens)
+                validated_events.append({"summary": text, "source_moment_ids": refs})
+                if len(validated_events) >= 12:
+                    break
+            def importance_score(text):
+                value = str(text or "").casefold()
+                score = 0
+                if re.search(r"heart attack|heart disease|diagnos|hospital|doctor|patient|emergency|ambulance|medical|injur|illness|medication|心脏病|心脏病发作|诊断|医院|医生|患者|急救|受伤|疾病|药物", value):
+                    score += 100
+                if re.search(r"scam|fraud|warning|danger|safety|caution|警告|诈骗|欺诈|危险|安全", value):
+                    score += 90
+                if re.search(r"wallet|passport|keys?|identity card|忘带|遗失|丢失|钱包|护照|钥匙|身份证", value) and re.search(r"forgot|left|lost|found|retriev|return|store|put|misplac|忘|放|找回|取回|收纳|归还", value):
+                    score += 80
+                if re.search(r"explicit plan|plans? to|decided to|计划|打算|决定", value):
+                    score += 70
+                if re.search(r"grandmother|grandfather|granddaughter|grandson|mother|father|birthday|family|姥姥|奶奶|外婆|外公|妈妈|爸爸|生日|家人", value):
+                    score += 30
+                # Long-term events need durable personal significance. Drop transient
+                # observations (e.g. a baby briefly holding a toy) from Layer 5.
+                if re.search(r"fired|termination|laid off|dismissed|辞退|解雇|裁员", value):
+                    score += 85
+                return score
+
+            validated_events = [item for item in validated_events
+                                if importance_score(item["summary"]) > 0]
+            selected_signatures = {
+                frozenset(NightlyCurator._tokens(item["summary"]))
+                for item in validated_events if item.get("summary")
+            }
+            mandatory = []
+            for family_row in family_rows:
+                for candidate in family_row.get("key_events") or []:
+                    if not isinstance(candidate, dict):
+                        continue
+                    text = " ".join(str(candidate.get("summary") or "").split())[:300]
+                    refs = list(dict.fromkeys(str(mid) for mid in
+                        candidate.get("source_moment_ids") or [] if str(mid) in valid_ids))
+                    videos = {source_video_by_mid.get(mid, "") for mid in refs}
+                    score = importance_score(text)
+                    signature = frozenset(NightlyCurator._tokens(text))
+                    if (score and text and refs and len(videos - {""}) == 1
+                            and event_has_strong_support(text, refs)
+                            and not any(signature and len(signature & prior_tokens) /
+                                        max(1, len(signature | prior_tokens)) >= 0.82
+                                        for prior_tokens in selected_signatures)):
+                        mandatory.append((score, text, refs, signature))
+            for score, text, refs, signature in sorted(mandatory, key=lambda row: (-row[0], row[1])):
+                validated_events.append({"summary": text, "source_moment_ids": refs})
+                selected_signatures.add(signature)
+                if len(validated_events) >= 12:
+                    break
+            # Keep one integrated long-term event per source video. Multiple
+            # observations from a single clip often describe one episode; retaining
+            # each as a separate event makes the durable layer noisy and repetitive.
+            best_event_by_video = {}
+            for position, item in enumerate(validated_events):
+                videos = {source_video_by_mid.get(mid, "")
+                          for mid in item.get("source_moment_ids") or []}
+                if len(videos) != 1 or "" in videos:
+                    continue
+                video_id = next(iter(videos))
+                rank = (importance_score(item["summary"]), len(item["summary"]), -position)
+                previous = best_event_by_video.get(video_id)
+                if previous is None or rank > previous[0]:
+                    best_event_by_video[video_id] = (rank, item)
+            validated_events = [pair[1] for pair in best_event_by_video.values()]
+            events = ["[moments:" + ",".join(item["source_moment_ids"]) + "] " + item["summary"]
+                      for item in validated_events]
+            # Patterns require explicit citations spanning independent families.
+            raw_patterns = l5.get("long_term_patterns", output.get("long_term_patterns", []))
+            patterns = []
+            pattern_source_ids = []
+            if isinstance(raw_patterns, list):
+                family_by_mid = {str(mid): str(row.get("family") or "")
+                                 for row in family_rows
+                                 for mid in row.get("source_moment_ids") or []}
+                for item in raw_patterns:
+                    if not isinstance(item, dict):
+                        continue
+                    refs = list(dict.fromkeys(str(mid) for mid in
+                        item.get("source_moment_ids") or [] if str(mid) in valid_ids))
+                    families_cited = {family_by_mid[mid] for mid in refs if mid in family_by_mid}
+                    summary = " ".join(str(item.get("summary") or "").split())[:240]
+                    if summary and len(refs) >= 3 and len(families_cited) >= 2:
+                        patterns.append(summary)
+                        pattern_source_ids.extend(refs)
+                    if len(patterns) >= 6:
+                        break
+            valid_topics = []
+            topic_video_seen = set()
+            for topic in l4.get("topics") or []:
+                if not isinstance(topic, dict):
+                    continue
+                text = " ".join(str(topic.get("summary") or "").split())[:300]
+                refs = list(dict.fromkeys(str(mid) for mid in
+                    topic.get("source_moment_ids") or [] if str(mid) in valid_ids))
+                topic_videos = {source_video_by_mid.get(mid, "") for mid in refs}
+                if (not text or not refs or len(topic_videos - {""}) != 1
+                        or "" in topic_videos
+                        or next(iter(topic_videos)) in topic_video_seen
+                        or not event_has_strong_support(text, refs)
+                        or not event_has_source_support(text, refs)):
+                    continue
+                tokens = NightlyCurator._tokens(text)
+                if any(tokens and len(tokens & prior_tokens) / max(1, len(tokens | prior_tokens)) >= 0.82
+                       for prior_tokens in (NightlyCurator._tokens(x["summary"]) for x in valid_topics)):
+                    continue
+                valid_topics.append({"summary": text, "source_moment_ids": refs})
+                topic_video_seen.add(next(iter(topic_videos)))
+                if len(valid_topics) >= 6:
+                    break
+            summary_topics = list(valid_topics)
+            used_topic_tokens = [NightlyCurator._tokens(item["summary"])
+                                 for item in summary_topics]
+            used_topic_videos = {
+                source_video_by_mid.get(mid, "")
+                for item in summary_topics for mid in item["source_moment_ids"]}
+            for item in bounded_events:
+                if len(summary_topics) >= 6:
+                    break
+                text = re.sub(r"^\[[^\]]+\]\s*", "",
+                              " ".join(str(item.get("summary") or "").split()))
+                refs = list(dict.fromkeys(str(mid) for mid in
+                    item.get("source_moment_ids") or [] if str(mid) in valid_ids))
+                videos = {source_video_by_mid.get(mid, "") for mid in refs}
+                tokens = NightlyCurator._tokens(text)
+                if (not text or not refs or len(videos - {""}) != 1
+                        or "" in videos or next(iter(videos)) in used_topic_videos
+                        or not event_has_strong_support(text, refs)
+                        or not event_has_source_support(text, refs)
+                        or any(tokens and len(tokens & old_tokens) /
+                               max(1, len(tokens | old_tokens)) >= 0.65
+                               for old_tokens in used_topic_tokens)):
+                    continue
+                if text[-1:] not in ".!?":
+                    text += "."
+                summary_topics.append({"summary": text, "source_moment_ids": refs})
+                used_topic_tokens.append(tokens)
+                used_topic_videos.add(next(iter(videos)))
+                if len(summary_topics) >= 6:
+                    break
+            if summary_topics:
+                summary4 = " ".join(item["summary"] for item in summary_topics)
+                summary4_ids = list(dict.fromkeys(
+                    mid for item in summary_topics for mid in item["source_moment_ids"]))
             else:
-                patterns = []
-            summary4 = str(output.get("layer4_summary") or l4.get("summary") or "").strip()
-            summary5 = str(output.get("layer5_summary") or l5.get("summary") or "").strip()
+                summary4 = str(prior["layer4_summary"] or "").strip()
+                summary4_ids = list(old_l4.get("source_moment_ids") or [])
+            summary4 = summary4[:1800]
+
+            final_event_text = " ".join(item["summary"] for item in validated_events).casefold()
+            retained_themes = []
+            theme_rules = (
+                ("health and emergency events", r"heart attack|heart disease|diagnos|hospital|doctor|patient|emergency|ambulance|medical|injur|illness|medication|心脏病|诊断|医院|医生|患者|急救|受伤|疾病"),
+                ("safety warnings", r"scam|fraud|warning|danger|safety|caution|诈骗|欺诈|警告|危险|安全"),
+                ("personal-item storage and retrieval", r"wallet|passport|keys?|identity card|钱包|护照|钥匙|身份证"),
+                ("family interactions and celebrations", r"grandmother|grandfather|granddaughter|grandson|mother|father|birthday|family|姥姥|奶奶|外婆|外公|妈妈|爸爸|生日|家人"),
+                ("workplace and emotional-support events", r"termination|fired|company|emotional distress|elevator|被解雇|辞退|公司|情绪"),
+                ("travel and service interactions", r"airport|terminal|restaurant|hotel|traveler|travel|机场|餐厅|酒店|旅行"),
+            )
+            for label, pattern in theme_rules:
+                if re.search(pattern, final_event_text):
+                    retained_themes.append(label)
+            if retained_themes:
+                summary5 = "Long-term memories retained: " + "; ".join(retained_themes) + "."
+            else:
+                summary5 = "No durable event was supported strongly enough for long-term retention."
+            if not patterns:
+                summary5 += " No recurring cross-video pattern had enough evidence."
+            layer5_source_ids = list(dict.fromkeys(
+                [mid for item in validated_events for mid in item["source_moment_ids"]]
+                + pattern_source_ids))
+            layer6_source_ids = list(dict.fromkeys(
+                str(mid) for mid in (old_l6.get("source_moment_ids") or []) if str(mid) in valid_ids))
             data = {
                 "layer4": {
                     "summary": summary4,
-                    "current_tasks": output.get("current_tasks", l4.get("current_tasks", []))
-                        if isinstance(output.get("current_tasks", l4.get("current_tasks", [])), list) else [],
-                    "life_trajectory": str(output.get("life_trajectory") or l4.get("life_trajectory")
+                    "current_tasks": l4.get("current_tasks", [])
+                        if isinstance(l4.get("current_tasks", []), list) else [],
+                    "life_trajectory": str(l4.get("life_trajectory")
                                             or prior["life_trajectory"]),
                 },
                 "layer5": {
@@ -598,14 +1014,13 @@ resolutions from source-family evidence will be preserved with their citations.
                     if isinstance(output.get("highlight_moments"), list) else [],
                 "highlight_images": output.get("highlight_images")
                     if isinstance(output.get("highlight_images"), list) else [],
-                "_replace_key_events": (output.get("replace_key_events") is True and bool(events)),
+                "_replace_key_events": (
+                    output.get("replace_key_events") is True and has_global_event_selection),
                 "_replace_compact_snapshots": True,
-                "_retained_source_moment_ids": list(dict.fromkeys(
-                    [str(mid) for mid in (output.get("retained_source_moment_ids") or [])
-                     if str(mid) in valid_ids]
-                    + [mid for event in events
-                       for value in re.findall(r"\[moments:([^\]]+)\]", event)
-                       for mid in value.split(",") if mid in valid_ids])),
+                "_layer4_source_moment_ids": summary4_ids,
+                "_layer5_source_moment_ids": layer5_source_ids,
+                "_layer6_source_moment_ids": layer6_source_ids,
+                "_retained_source_moment_ids": layer5_source_ids,
             }
             if not data["layer4"]["summary"] or not data["layer5"]["summary"]:
                 raise ValueError("roll-up omitted required recent/long-term summary")
@@ -657,9 +1072,15 @@ resolutions from source-family evidence will be preserved with their citations.
                     refs = list(dict.fromkeys(
                         str(mid) for mid in event.get("source_moment_ids") or []
                         if str(mid) in valid_ids))
-                    summary = " ".join(str(event.get("summary") or "").split())[:360]
-                    if not refs or not summary:
+                    video_ids = {str((archive.get(mid) or {}).get("source_provenance", {}).get("source_video_id") or "")
+                                 for mid in refs}
+                    if len(video_ids - {""}) > 1:
                         continue
+                    family_label = " ".join(str(family_row.get("family") or "").split())[:70]
+                    summary = " ".join(str(event.get("summary") or "").split())[:300]
+                    if not refs or not summary or not event_has_source_support(summary, refs):
+                        continue
+                    summary = f"[{family_label}] {summary}" if family_label else summary
                     signature = re.sub(r"[\W_]+", " ", summary.casefold()).strip()
                     if not signature:
                         continue
@@ -677,7 +1098,7 @@ resolutions from source-family evidence will be preserved with their citations.
             ranked_events = sorted(event_rows, key=lambda row: (
                 0 if any(mid in priority_ids for mid in row["source_moment_ids"]) else 1,
                 row["order"]))
-            selected_events = sorted(ranked_events[:24], key=lambda row: row["order"])
+            selected_events = sorted(ranked_events[:8], key=lambda row: row["order"])
             key_events = [
                 "[moments:" + ",".join(row["source_moment_ids"]) + "] " + row["summary"]
                 for row in selected_events
@@ -692,15 +1113,39 @@ resolutions from source-family evidence will be preserved with their citations.
                     if refs and summary:
                         key_events.append("[moments:" + ",".join(refs) + "] " + summary)
                         retained_ids.extend(refs)
-                    if len(key_events) >= 24:
+                    if len(key_events) >= 8:
                         break
 
-            family_summaries = unique(
-                [row.get("summary") for row in family_rows if row.get("summary")], 16)
-            current_summary = words(" ".join(family_summaries), 100)
-            durable_summary = words(" ".join(family_summaries), 120)
-            patterns = unique([item for x in compact_summaries
-                               for item in x.get("patterns", [])], 6)
+            family_summaries = []
+            for row in family_rows:
+                family_label = " ".join(str(row.get("family") or "").split())[:60]
+                raw_summary = " ".join(str(row.get("summary") or "").split())
+                if not family_label or not raw_summary:
+                    continue
+                # Keep one complete sentence per source group; if the model
+                # omitted sentence punctuation, close the bounded clause.
+                sentences = re.split(r"(?<=[.!?])\s+", raw_summary)
+                sentence = next((part.strip() for part in sentences if part.strip()), "")
+                if not sentence:
+                    continue
+                if sentence[-1:] not in ".!?":
+                    sentence += "."
+                family_summaries.append(sentence)
+            current_summary = str(prior["layer4_summary"] or "").strip()
+            if not current_summary:
+                current_summary = " ".join(
+                    str(row.get("summary") or "").strip()
+                    for row in family_rows if row.get("summary")
+                )
+                if len(current_summary) > 1800:
+                    boundary = current_summary.rfind(". ", 0, 1800)
+                    current_summary = current_summary[:boundary + 1] if boundary >= 0 else ""
+            durable_summary = str(prior["layer5_summary"] or "").strip()
+            if not durable_summary:
+                durable_summary = "No new durable cross-video pattern was supported by the cited evidence."
+            # Legacy compact summaries have no per-pattern source IDs, so none
+            # can be safely carried forward through the fallback path.
+            patterns = []
             profile_evidence = words(" ".join(
                 [row.get("profile_evidence", "") for row in family_rows]
                 + [x.get("profile_evidence", "") for x in compact_summaries]), 180)
@@ -726,8 +1171,15 @@ resolutions from source-family evidence will be preserved with their citations.
                 "combine": {}, "identity_resolutions": group_identity,
                 "highlight_moments": fallback_highlights,
                 "highlight_images": fallback_images,
-                "_replace_key_events": bool(key_events),
-                "_replace_compact_snapshots": False,
+                "_replace_key_events": True,
+                "_replace_compact_snapshots": True,
+                "_layer4_source_moment_ids": list(dict.fromkeys(
+                    str(mid) for row in family_rows for mid in row.get("source_moment_ids") or []
+                    if str(mid) in valid_ids)),
+                "_layer5_source_moment_ids": retained_ids,
+                "_layer6_source_moment_ids": list(dict.fromkeys(
+                    str(mid) for mid in (self.memory.memory.get("layer6", {}).get("source_moment_ids") or [])
+                    if str(mid) in valid_ids)),
                 "_retained_source_moment_ids": retained_ids,
                 "_rollup_fallback": str(exc)[:240],
             }
@@ -739,6 +1191,12 @@ resolutions from source-family evidence will be preserved with their citations.
     def _compress_payload(data, source_moment_ids, coverage, moments=None):
         l4, l5 = data.get("layer4") or {}, data.get("layer5") or {}
         source_moment_ids = list(dict.fromkeys(str(x) for x in source_moment_ids if x))
+        l4_source_ids = list(dict.fromkeys(str(x) for x in
+            data.get("_layer4_source_moment_ids", source_moment_ids) if x))
+        l5_source_ids = list(dict.fromkeys(str(x) for x in
+            data.get("_layer5_source_moment_ids", []) if x))
+        l6_source_ids = list(dict.fromkeys(str(x) for x in
+            data.get("_layer6_source_moment_ids", []) if x))
         replace_fields = {}
         if data.get("_replace_compact_snapshots"):
             replace_fields = {
@@ -749,27 +1207,28 @@ resolutions from source-family evidence will be preserved with their citations.
             replace_fields.setdefault("layer5", []).append("key_events")
         return {
             "_replace_fields": replace_fields,
+            "_replace_source_moment_ids": True,
             "layer4": {
                 "summary": str(l4.get("summary") or ""),
                 "current_tasks": l4.get("current_tasks")
                     if isinstance(l4.get("current_tasks"), list) else [],
                 "stated_plans": NightlyProcessor._stated_plans(moments or []),
                 "life_trajectory": str(l4.get("life_trajectory") or ""),
-                "source_moment_ids": source_moment_ids,
-                "source_link_coverage": "complete",
+                "source_moment_ids": l4_source_ids,
+                "source_link_coverage": "complete" if l4_source_ids else "unknown",
             },
             "layer5": {
                 "summary": str(l5.get("summary") or ""),
                 "key_events": l5.get("key_events")
                     if isinstance(l5.get("key_events"), list) else [],
                 "long_term_patterns": str(l5.get("long_term_patterns") or ""),
-                "source_moment_ids": source_moment_ids,
-                "source_link_coverage": coverage["layer5"],
+                "source_moment_ids": l5_source_ids,
+                "source_link_coverage": "complete" if l5_source_ids else "unknown",
             },
             "layer6": {
                 "summary": str(data.get("layer6_summary") or ""),
-                "source_moment_ids": source_moment_ids,
-                "source_link_coverage": coverage["layer6"],
+                "source_moment_ids": l6_source_ids,
+                "source_link_coverage": "complete" if l6_source_ids else "unknown",
             },
         }
 
@@ -829,16 +1288,32 @@ resolutions from source-family evidence will be preserved with their citations.
                         "moment_count": 0, "chunk_count": 0, "profile_updated": False,
                         "cache_hits": 0, "model_calls": 0}
             source = [self._brief(item) for item in moments]
+            digest_payload = {
+                "processor_version": NIGHTLY_PROCESSOR_VERSION,
+                "source": source,
+            }
             digest = hashlib.sha256(json.dumps(
-                source, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+                digest_payload, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
             cache_path = Path(self.memory.memory_dir) / "nightly_cache" / f"{day}-{digest}.json"
-            if use_cache and cache_path.exists():
-                try:
-                    loaded = json.loads(cache_path.read_text(encoding="utf-8"))
-                    if loaded.get("source_digest") == digest and isinstance(loaded.get("responses"), dict):
-                        cache["responses"] = loaded["responses"]
-                except (OSError, ValueError, TypeError):
-                    pass
+            if use_cache:
+                # Prompt hashes bind every cached response to its exact prompt and
+                # evidence. Merge previous same-day caches so a processor-version
+                # bump invalidates the run digest without needlessly rerunning
+                # unchanged model calls. Changed prompts naturally miss.
+                cache_files = [cache_path]
+                cache_files.extend(path for path in sorted(
+                    cache_path.parent.glob(f"{day}-*.json"),
+                    key=lambda path: path.stat().st_mtime, reverse=True)
+                    if path != cache_path)
+                for candidate in cache_files[:32]:
+                    try:
+                        loaded = json.loads(candidate.read_text(encoding="utf-8"))
+                        responses = loaded.get("responses") if isinstance(loaded, dict) else None
+                        if isinstance(responses, dict):
+                            for prompt_hash, response in responses.items():
+                                cache["responses"].setdefault(prompt_hash, response)
+                    except (OSError, ValueError, TypeError):
+                        continue
             cache["source_digest"] = digest
             report("cache", "检查整理缓存", message=(
                 f"已缓存 {len(cache['responses'])} 项；" + ("启用缓存" if use_cache else "本次不读缓存")))
@@ -888,18 +1363,56 @@ resolutions from source-family evidence will be preserved with their citations.
                     if rollup.get("_rollup_fallback") else
                     ("完成（缓存命中）" if rollup_hit else "完成")))
 
-            evidence = str(rollup.get("profile_evidence") or "").strip()
-            if not evidence:
-                evidence = "\n".join(x["profile_evidence"] for x in summaries
-                                     if x.get("profile_evidence"))
+            # Never derive the user's Layer 6 profile from scene summaries or
+            # third-party person observations. Those inputs may describe relatives,
+            # customers, staff, or bystanders; only facts explicitly about `user`
+            # can support user-profile extraction.
+            user_evidence = self._user_profile_evidence(moments)
             profile_prompt = "TASK: NIGHTLY_PROFILE_EXTRACTION\n" + build_profile_extraction_prompt(
-                evidence or json.dumps(summaries, ensure_ascii=False))
+                json.dumps({"scope": "user_only", "evidence_records": user_evidence},
+                           ensure_ascii=False, separators=(",", ":")))
             report("profile", "抽取并校验长期画像", 0, 1, "合并当前批次的稳定事实证据")
             profile_raw, profile_hit = self._call(profile_prompt, cache, cache_path, use_cache)
             parsed = parse_profile_output(profile_raw)
             if parsed is None:
                 raise ValueError(f"Profile response is invalid: {profile_raw[:240]}")
-            profile, rejected = validate_profile(parsed)
+            # Nightly profile claims must clear a stronger evidence threshold than transient scene facts.
+            profile, rejected = validate_profile(parsed, min_confidence=0.75)
+            profile, stability_rejected = self._gate_profile_stability(
+                profile, user_evidence
+            )
+            rejected.extend(stability_rejected)
+
+            def profile_values(node):
+                values = []
+                if isinstance(node, dict):
+                    if isinstance(node.get("value"), (str, int, float)):
+                        values.append(str(node["value"]).strip())
+                    for key, value in node.items():
+                        if key != "value":
+                            values.extend(profile_values(value))
+                elif isinstance(node, list):
+                    for value in node:
+                        values.extend(profile_values(value))
+                return [value for value in values if value]
+
+            # Link Layer 6 only to user-scoped evidence that actually contains
+            # the retained attribute; never attach every clip in the day's batch.
+            from nightly_curation import NightlyCurator
+            current_profile = (profile if profile_values(profile) else
+                               (self.memory.memory.get("layer6", {}).get("profile") or {}))
+            value_tokens = [NightlyCurator._tokens(value) for value in profile_values(current_profile)]
+            layer6_source_ids = []
+            for evidence_row in user_evidence:
+                evidence_text = " ".join(str(evidence_row.get(key) or "") for key in
+                    ("predicate", "value", "evidence", "actor"))
+                evidence_tokens = NightlyCurator._tokens(evidence_text)
+                if any(tokens and tokens.issubset(evidence_tokens) for tokens in value_tokens):
+                    source_id = str(evidence_row.get("source_moment_id") or "")
+                    if source_id:
+                        layer6_source_ids.append(source_id)
+            layer6_source_ids = list(dict.fromkeys(layer6_source_ids))
+            rollup["_layer6_source_moment_ids"] = layer6_source_ids
             report("profile", "抽取并校验长期画像", 1, 1,
                    "校验通过（缓存命中）" if profile_hit else "模型生成并校验通过")
 
@@ -911,6 +1424,7 @@ resolutions from source-family evidence will be preserved with their citations.
             identity_rewrites = curator.apply_identity_resolutions(
                 curation["identity_resolutions"])
             curator.remove_old_index_memberships(identity_rewrites)
+            normalized_roles = curator.normalize_person_roles()
             # Identity labels have changed on the source moments; rebuild the
             # current six-way index from those canonicalized records.
             sort_data = self._sort_analysis(
@@ -968,10 +1482,12 @@ resolutions from source-family evidence will be preserved with their citations.
             if rollup.get("_replace_key_events"):
                 layer5 = self.memory.memory.get("layer5", {})
                 retained_ids = rollup.get("_retained_source_moment_ids") or []
-                if retained_ids:
-                    layer5["source_moment_ids"] = list(dict.fromkeys(retained_ids))
-                    layer5["source_moment_count"] = len(layer5["source_moment_ids"])
-                    layer5["source_link_coverage"] = "complete"
+                layer5["source_moment_ids"] = list(dict.fromkeys(
+                    str(mid) for mid in retained_ids
+                    if str(mid) in self.memory.memory.get("layer7", {}).get("moments", {})))
+                layer5["source_moment_count"] = len(layer5["source_moment_ids"])
+                layer5["source_link_coverage"] = (
+                    "complete" if layer5["source_moment_ids"] else "unknown")
                 self.memory._save()
             report("apply", "写入整理结果", 3, 6, "更新长期画像")
             self.memory.update_profile(
@@ -1013,6 +1529,7 @@ resolutions from source-family evidence will be preserved with their citations.
                 "indices_written": {k: len(v) for k, v in sort_data.items()},
                 "aliases_combined": sum(len(v) for v in combine.values()),
                 "identity_resolutions": len(identity_rewrites),
+                "identity_roles_normalized": normalized_roles,
                 "duplicate_events_merged": merged_duplicate_count,
                 "importance_marks_added": importance_marked,
                 "key_events_replaced": bool(rollup.get("_replace_key_events")),

@@ -196,7 +196,25 @@ def _clean_layer7_indices(layer7: Dict) -> Dict[str, List[str]]:
         idx = layer7.get(k, {})
         if not isinstance(idx, dict):
             continue
-        bad_keys = [tag for tag in list(idx.keys()) if not _is_valid_index_tag(k, tag)]
+        bad_keys = []
+        for tag in list(idx.keys()):
+            if not _is_valid_index_tag(k, tag):
+                bad_keys.append(tag)
+                continue
+            if k != "objects":
+                continue
+            refs = idx.get(tag)
+            refs = refs if isinstance(refs, list) else ([refs] if refs else [])
+            moments = layer7.get("moments") or {}
+            source_moments = [moments.get(str(mid)) for mid in refs
+                              if isinstance(moments, dict) and moments.get(str(mid))]
+            if source_moments:
+                keep = any(_should_index_object_tag(tag, moment)
+                           for moment in source_moments)
+            else:
+                keep = _should_index_object_tag(tag, {})
+            if not keep:
+                bad_keys.append(tag)
         for b in bad_keys:
             del idx[b]
             removed[k].append(b)
@@ -248,7 +266,7 @@ def _upgrade_legacy_person_labels(moment: Dict) -> bool:
             return {key: replace(item) for key, item in value.items()}
         return value
 
-    for field in ("scene", "user_action", "interaction_details", "location", "activity",
+    for field in ("scene", "user_action", "content_summary", "interaction_details", "location", "activity",
                   "environments", "objects", "people", "person_observations", "temporal_facts",
                   "multimodal"):
         if field in moment:
@@ -290,6 +308,79 @@ def _moment_time_tags(moment: Dict) -> list:
     return list(dict.fromkeys(tag for tag in tags if _is_valid_index_tag("time_nodes", tag)))
 
 
+_HIGH_VALUE_OBJECT_TAGS = (
+    "wallet", "purse", "key", "passport", "id card", "identity card",
+    "phone", "smartphone", "laptop", "tablet", "medicine", "medication",
+    "hearing aid", "prosthesis", "cane", "walker", "watch", "glasses",
+    "handbag", "backpack", "suitcase", "keepsake", "sentimental item",
+    "prescription", "medical record", "diagnosis document", "legal document",
+    "contract", "钱包", "钥匙", "护照", "身份证", "手机", "药物",
+    "助听器", "拐杖", "纪念品", "病历", "诊断报告", "合同",
+)
+_ROUTINE_OBJECT_TAGS = (
+    "jet bridge", "aircraft", "airplane", "escalator", "baggage carousel",
+    "luggage carousel", "bowl", "plate", "chopsticks", "cutlery", "fork",
+    "spoon", "cup", "napkin", "food tray", "serving dish", "sign", "signage",
+    "open sign", "hours sign", "menu", "price tag", "shelf tag", "sale tag",
+    "receipt", "sales slip", "ticket", "boarding pass", "restaurant bill",
+    "payment slip", "one dollar bill", "10 bill", "banknote", "cash",
+    "ordinary door", "ordinary gate", "elevator", "chair", "stool", "dining table",
+    "counter", "shelf", "bench", "drawer", "bottle", "toy", "chicken", "food",
+    "chips", "chip bag", "snack", "packaging", "wrapper", "white van", "manhole",
+    "价签", "收据", "小票", "菜单", "票据", "碗", "筷子", "标牌",
+)
+_OBJECT_KEEP_CUES = (
+    "save this", "keep this", "remember this", "find my", "retrieve my",
+    "lost my", "left my", "belongs to me", "my favorite", "gift from",
+    "keepsake", "sentimental", "please save", "track this expense",
+    "reimburse", "refund", "return this", "dispute this charge",
+    "帮我保存", "帮我记住", "帮我找", "我的最爱", "送给我的",
+    "有纪念意义", "纪念品", "遗失", "落下", "属于我", "报销", "退款", "退货",
+)
+
+
+def _object_tag_norm(value):
+    return " ".join(re.sub(r"[^\w]+", " ", str(value or "").casefold()).split())
+
+
+def _object_tag_matches(label, term):
+    label_norm, term_norm = _object_tag_norm(label), _object_tag_norm(term)
+    if not label_norm or not term_norm:
+        return False
+    return bool(re.search(r"(?<!\w)" + re.escape(term_norm) + r"(?!\w)", label_norm))
+
+
+def _should_index_object_tag(value, moment):
+    """Index only objects with likely future value for a first-person wearable."""
+    label = str(value or "").strip()
+    if not label:
+        return False
+    context = " ".join(str(moment.get(key) or "") for key in (
+        "scene", "content_summary", "user_action", "interaction_details",
+        "activity", "source_evidence"
+    ))
+    label_norm = _object_tag_norm(label)
+    # Retain explicit owner/task/emotional evidence only when it refers to this item.
+    for sentence in re.split(r"(?<=[.!?;])\s+|[\n\r]+", context):
+        sentence_norm = _object_tag_norm(sentence)
+        item_referenced = label_norm and re.search(
+            r"(?<!\w)" + re.escape(label_norm) + r"(?!\w)", sentence_norm)
+        if item_referenced and any(_object_tag_matches(sentence_norm, cue)
+                                   for cue in _OBJECT_KEEP_CUES):
+            return True
+    if any(_object_tag_matches(label, term) for term in _HIGH_VALUE_OBJECT_TAGS):
+        return True
+    if _object_tag_norm(label) in {"document", "paper"} and any(
+            term in _object_tag_norm(context) for term in
+            ("medical diagnosis", "diagnosis", "prescription", "patient", "hospital",
+             "doctor", "legal", "court", "病历", "诊断", "处方", "医院", "医生", "法律")):
+        return True
+    if any(_object_tag_matches(label, term) for term in _ROUTINE_OBJECT_TAGS):
+        return False
+    # Unknown incidental scene props default to scene context, not persistent memory.
+    return False
+
+
 def _moment_index_tags(moment: Dict) -> Dict[str, list]:
     """Derive retrieval keys from the stored source-linked moment, not only caller labels."""
     if not isinstance(moment, dict):
@@ -299,7 +390,9 @@ def _moment_index_tags(moment: Dict) -> Dict[str, list]:
     def add(index_key, value):
         if isinstance(value, str):
             value = value.strip()
-        if value and _is_valid_index_tag(index_key, value) and value not in tags[index_key]:
+        if (value and _is_valid_index_tag(index_key, value)
+                and (index_key != "objects" or _should_index_object_tag(value, moment))
+                and value not in tags[index_key]):
             tags[index_key].append(value)
 
     for person in moment.get("people") or []:
@@ -388,8 +481,33 @@ def _build_entity_visuals(moment: Dict) -> dict:
     def add_items(kind, name_key, description_key, observations, visual_group, visual_name_key):
         visual_group = visual_group if isinstance(visual_group, dict) else {}
         visual_items = visual_group.get("items") or []
-        by_name = {str(row.get(visual_name_key) or "").strip().casefold(): row
-                   for row in visual_items if isinstance(row, dict)}
+        by_name = {}
+        for row in visual_items:
+            if isinstance(row, dict):
+                visual_name = str(row.get(visual_name_key) or "").strip().casefold()
+                if visual_name:
+                    by_name.setdefault(visual_name, []).append(row)
+
+        def frame_anchors(row):
+            if not isinstance(row, dict):
+                return set()
+            values = [row.get("frame_index")]
+            values.extend(row.get("anchor_frame_indices") or [])
+            refs = [row.get("evidence_ref")]
+            refs.extend(row.get("evidence_refs") or [])
+            for ref in refs:
+                if isinstance(ref, dict) and ref.get("modality") == "visual":
+                    values.append(ref.get("frame_index"))
+            indices = set()
+            for value in values:
+                try:
+                    index = int(value)
+                except (TypeError, ValueError):
+                    continue
+                if index > 0:
+                    indices.add(index)
+            return indices
+
         for observation in observations or []:
             if not isinstance(observation, dict):
                 continue
@@ -401,7 +519,21 @@ def _build_entity_visuals(moment: Dict) -> dict:
                 if (pov_key in {"camera wearer", "the camera wearer", "user", "the user", "pov"}
                         or re.fullmatch(r"(?:(?:the )?(?:camera wearer's|camera wearer|wearer's|user's|first person|pov)\s+)?(?:left |right )?(?:hand|hands|arm|arms|leg|legs|foot|feet|body)", pov_key)):
                     continue
-            visual = by_name.get(name.casefold()) or {}
+            matches = list(by_name.get(name.casefold()) or [])
+            if kind == "person" and matches:
+                observation_anchors = frame_anchors(observation)
+                if observation_anchors:
+                    anchored = [row for row in matches
+                                if observation_anchors & frame_anchors(row)]
+                    if anchored:
+                        matches = anchored
+                # A repeated display label without a matching source-frame
+                # anchor is ambiguous. Do not attach another person's face.
+                visual = matches[0] if len(matches) == 1 else {}
+            else:
+                # Preserve the legacy last-observation behavior for objects;
+                # person images require an unambiguous identity binding.
+                visual = matches[-1] if matches else {}
             refs = visual.get("frame_refs") or []
             indices = []
             for ref in refs:
@@ -866,6 +998,7 @@ def _empty_moment() -> Dict:
         "timestamp": _now_iso(),
         # Part 1
         "scene": "",          # external environment description
+        "content_summary": "",  # concise situation-level gist
         "user_action": "",    # user's own behaviour / action
         "interaction_details": "",  # source-grounded who-did-what and event order
         "person_observations": [],   # source-linked appearance and explicitly stated age
@@ -891,7 +1024,7 @@ def _empty_moment() -> Dict:
 
 def _clean_source_fact_rows(rows, kind: str, limit: int) -> list:
     """Validate compact, source-linked facts; collapse repeated person-frame descriptions."""
-    allowed = ({"entity", "appearance", "face_features", "apparent_age_range", "apparent_age_basis", "age", "age_basis", "frame_index",
+    allowed = ({"entity", "appearance", "face_features", "apparent_age_range", "apparent_age_basis", "age", "age_basis", "date_of_birth", "frame_index",
                 "frame_time_s", "evidence", "confidence", "evidence_ref", "evidence_refs",
                 "spoken_aliases", "relationships", "roles", "profile_context",
                 "profile_confidence"}
@@ -915,8 +1048,12 @@ def _clean_source_fact_rows(rows, kind: str, limit: int) -> list:
         if isinstance(segment, str) and segment.strip():
             ref["source_segment_id"] = segment.strip()[:128]
         modality = source_ref.get("modality")
-        if modality in {"visual", "speech", "cross_modal", "user_review"}:
+        if modality in {"visual", "speech", "document", "multimodal", "cross_modal", "user_review"}:
             ref["modality"] = modality
+        for key, max_length in (("document", 100), ("quote", 300)):
+            value = source_ref.get(key)
+            if isinstance(value, str) and value.strip():
+                ref[key] = value.strip()[:max_length]
         frame_index = source_ref.get("frame_index")
         if isinstance(frame_index, int) and not isinstance(frame_index, bool) and frame_index > 0:
             ref["frame_index"] = min(frame_index, 999)
@@ -1056,7 +1193,8 @@ def _clean_source_fact_rows(rows, kind: str, limit: int) -> list:
                 row.pop("age_basis", None)
             if (row.get("apparent_age_basis") != "visual_estimate"
                     or row.get("apparent_age_range") not in {
-                        "child", "teenager", "18-29", "30-44", "45-59", "60-74", "75+"
+                        "baby", "toddler", "child", "teenager", "18-29", "30-44",
+                        "45-59", "60-74", "75+"
                     }):
                 row.pop("apparent_age_range", None)
                 row.pop("apparent_age_basis", None)
@@ -1118,7 +1256,7 @@ def normalize_user_facing_memory_copy(record):
     """Canonicalize narrative copy while preserving verbatim speech and internal actor labels."""
     if not isinstance(record, dict):
         return record
-    for key in ("scene", "user_action", "interaction_details", "activity", "location",
+    for key in ("scene", "user_action", "content_summary", "interaction_details", "activity", "location",
                 "environments", "notes"):
         value = record.get(key)
         if isinstance(value, str):
@@ -1164,15 +1302,39 @@ def normalize_object_transition_facts(moment: Dict) -> Dict:
     facts = moment.get("temporal_facts")
     if not isinstance(facts, list):
         return moment
-    people = {str(value).strip().casefold() for value in moment.get("people") or []
-              if str(value).strip()}
-    people.update(str(row.get("entity") or "").strip().casefold()
-                  for row in moment.get("person_observations") or []
-                  if isinstance(row, dict) and str(row.get("entity") or "").strip())
+    people = {"user", "the user", "camera wearer", "camera wearer (user)",
+              "wearer", "first-person user"}
+    people.update(str(value).strip().casefold() for value in moment.get("people") or []
+                  if str(value).strip())
+    for row in moment.get("person_observations") or []:
+        if not isinstance(row, dict):
+            continue
+        for field in ("entity", "readable_name", "name", "label"):
+            value = str(row.get(field) or "").strip().casefold()
+            if value:
+                people.add(value)
+        aliases = row.get("spoken_aliases") or []
+        if isinstance(aliases, list):
+            for alias in aliases:
+                value = (alias.get("alias") if isinstance(alias, dict) else alias)
+                if str(value or "").strip():
+                    people.add(str(value).strip().casefold())
+    for fact in facts:
+        if not isinstance(fact, dict) or str(fact.get("subject_type") or "").casefold() != "person":
+            continue
+        affected = fact.get("affected_people")
+        if not isinstance(affected, list):
+            affected = [affected] if affected else []
+        for value in [fact.get("subject"), fact.get("actor"), *affected]:
+            if str(value or "").strip():
+                people.add(str(value).strip().casefold())
     human_label_re = re.compile(
-        r"^(?:camera wearer|unidentified speaker|person(?:\s+\d+)?|woman(?:\s+\d+)?|"
-        r"man(?:\s+\d+)?|boy(?:\s+\d+)?|girl(?:\s+\d+)?|child(?:ren)?|"
-        r"male|female|he|she|they|人物\s*\d+|人)$", re.I)
+        r"^(?:user|the user|camera wearer|wearer|first-person user|unidentified speaker|"
+        r"person(?:\s+\d+)?|woman(?:\s+\d+)?|man(?:\s+\d+)?|boy(?:\s+\d+)?|"
+        r"girl(?:\s+\d+)?|baby|infant|newborn|toddler|child(?:ren)?|son|daughter|"
+        r"mom|mother|dad|father|grandma|grandmother|grandpa|grandfather|"
+        r"male|female|he|she|they|人物\s*\d+|人|用户|宝宝|婴儿|孩子|儿子|女儿|"
+        r"妈妈|母亲|爸爸|父亲|姥姥|奶奶|爷爷|外公|外婆)$", re.I)
     action_label_re = re.compile(r"^(?:moves?|walks?|runs?|approaches?|enters?|leaves?|"
                                  r"turns?|looks?|smiles?|speaks?|talks?)\b", re.I)
     actions = re.compile(
@@ -1183,6 +1345,15 @@ def normalize_object_transition_facts(moment: Dict) -> Dict:
     def is_person(label):
         folded = " ".join(str(label or "").split()).casefold()
         return not folded or folded in people or bool(human_label_re.fullmatch(folded))
+
+    # A malformed type must not create a second, contradictory object profile for a person.
+    if isinstance(moment.get("objects"), list):
+        moment["objects"] = [value for value in moment["objects"] if not is_person(value)]
+    if isinstance(moment.get("object_observations"), list):
+        moment["object_observations"] = [
+            row for row in moment["object_observations"]
+            if not isinstance(row, dict) or not is_person(row.get("object"))
+        ]
 
     def mention_spans(label, text):
         label = " ".join(str(label or "").split()).strip()
@@ -1224,6 +1395,9 @@ def normalize_object_transition_facts(moment: Dict) -> Dict:
         original_type = str(fact.get("subject_type") or "").casefold()
         actor = str(fact.get("actor") or "").strip()
         current_is_person = original_type == "person" or is_person(current_subject)
+        if original_type == "object" and is_person(current_subject):
+            fact["subject_type"] = "person"
+            continue
         action_match = actions.search(text)
         if current_is_person and action_match:
             before_action = []
@@ -1780,6 +1954,7 @@ def entity_graph_summary(layer7: Dict, limit: int = 8) -> Dict:
             "event": str(moment.get("scene") or moment.get("activity") or "")[:200],
             "action": str(moment.get("user_action") or "")[:240],
             "interaction_details": str(moment.get("interaction_details") or "")[:360],
+            "content_summary": str(moment.get("content_summary") or "")[:300],
             "people": [row["name"] for row in entities if row["type"] == "person"],
             "person_observations": list(moment.get("person_observations") or [])[:16],
             "temporal_facts": list(moment.get("temporal_facts") or [])[:32],
@@ -2154,6 +2329,7 @@ class PersonMemory(MemoryRetrievalMixin):
             timestamp: str = None,
             source_evidence: str = "",
             interaction_details: str = "",
+            content_summary: str = "",
             person_observations: List[Dict] = None,
             temporal_facts: List[Dict] = None,
             source_time: Dict = None,
@@ -2171,6 +2347,8 @@ class PersonMemory(MemoryRetrievalMixin):
         moment["timestamp"] = event_time.isoformat()
         moment["scene"] = scene
         moment["user_action"] = user_action
+        if content_summary:
+            moment["content_summary"] = str(content_summary)[:1200]
         if interaction_details:
             moment["interaction_details"] = str(interaction_details)[:4000]
         if isinstance(person_observations, list):
@@ -2225,7 +2403,7 @@ class PersonMemory(MemoryRetrievalMixin):
             for key in ("source_video_id", "source_segment_id", "clip_start_s",
                         "clip_end_s", "source_video_sha256", "source_clip_sha256",
                         "perception_prompt_version", "list_parser_version",
-                        "extraction_batch_id"):
+                        "extraction_batch_id", "content_summary_version", "multimodal_capture_version"):
                 value = source_provenance.get(key)
                 if value not in (None, ""):
                     provenance[key] = value
@@ -2268,6 +2446,7 @@ class PersonMemory(MemoryRetrievalMixin):
         if self.translate_fn:
             normalized = {}
             for field, raw in (("scene", scene), ("user_action", user_action),
+                               ("content_summary", content_summary),
                                ("interaction_details", interaction_details),
                                ("location", location), ("activity", activity),
                                ("notes", extra_notes), ("source_evidence", source_evidence)):
@@ -2498,7 +2677,7 @@ class PersonMemory(MemoryRetrievalMixin):
             source_records.append({
                 key: copy.deepcopy(source.get(key))
                 for key in ("id", "timestamp", "scene", "user_action",
-                            "interaction_details", "person_observations",
+                            "interaction_details", "content_summary", "person_observations",
                             "temporal_facts", "object_observations", "object_states", "source_time", "people",
                             "location", "activity", "objects", "environments",
                             "source_evidence", "multimodal", "highlighted")
@@ -2583,7 +2762,8 @@ class PersonMemory(MemoryRetrievalMixin):
                             str(mid) for mid in (v if isinstance(v, list) else [])
                             if str(mid) in available
                         ))
-                        if lkey == "layer4":
+                        if (lkey == "layer4"
+                                or llm_summary.get("_replace_source_moment_ids") is True):
                             layer[k] = valid_ids
                         else:
                             layer[k] = list(dict.fromkeys(list(layer.get(k) or []) + valid_ids))
@@ -2641,8 +2821,20 @@ class PersonMemory(MemoryRetrievalMixin):
         同键 moment_id 集合去重合并。
         """
         moments = self.memory["layer7"]["moments"]
+        # Rebuild object portraits from source-linked moments on each nightly sort.
+        # Merging sort output into the old map leaves stale routine props forever.
+        rebuilt_objects = {}
+        for moment_id, moment in moments.items():
+            if not isinstance(moment, dict) or moment.get("merged_into"):
+                continue
+            for tag in _moment_index_tags(moment).get("objects", []):
+                if _is_valid_index_tag("objects", tag):
+                    ids = rebuilt_objects.setdefault(tag, [])
+                    if moment_id not in ids:
+                        ids.append(moment_id)
+        self.memory["layer7"]["objects"] = rebuilt_objects
         for index_key in LAYER7_INDICES:
-            if index_key not in sort_analysis:
+            if index_key == "objects" or index_key not in sort_analysis:
                 continue
             for tag, ids in sort_analysis[index_key].items():
                 if not _is_valid_index_tag(index_key, tag):
@@ -3325,8 +3517,8 @@ class PersonMemory(MemoryRetrievalMixin):
             layers = matched_layers or [layer_no]
             layer_label = ",".join(str(value) for value in layers)
             fields = [
-                ("场景", moment.get("scene")), ("动作", moment.get("user_action")),
-                ("人物", moment.get("people")), ("地点", moment.get("location")),
+                ("场景", moment.get("scene")), ("情境总结", moment.get("content_summary")),
+                ("动作", moment.get("user_action")), ("人物", moment.get("people")), ("地点", moment.get("location")),
                 ("活动", moment.get("activity")), ("物品", moment.get("objects")),
                 ("环境", moment.get("environments")),
             ]
@@ -3420,7 +3612,7 @@ class PersonMemory(MemoryRetrievalMixin):
 
     UPDATE_FIELDS = ("scene", "user_action", "needs", "solutions",
                      "people", "location", "activity", "notes", "source_evidence",
-                     "interaction_details", "person_observations", "temporal_facts",
+                     "interaction_details", "content_summary", "person_observations", "temporal_facts",
                      "object_observations", "source_time", "environments", "objects", "multimodal")
 
     def _validated_updates(self, updates: Dict) -> Dict:
@@ -3428,7 +3620,7 @@ class PersonMemory(MemoryRetrievalMixin):
         if not isinstance(updates, dict):
             return {}
         string_fields = {"scene", "user_action", "location", "activity", "notes",
-                         "source_evidence", "interaction_details"}
+                         "source_evidence", "interaction_details", "content_summary"}
         list_fields = {"people", "environments", "objects", "needs", "solutions"}
         clean = {}
         for field, value in updates.items():
@@ -3545,7 +3737,7 @@ class PersonMemory(MemoryRetrievalMixin):
             moment["multimodal"]["entity_visuals"] = entity_visuals
 
         # 清除可能过期的英文缓存；改写中文时再生成对应 normalized 值。
-        searchable_fields = {"scene", "user_action", "interaction_details",
+        searchable_fields = {"scene", "user_action", "interaction_details", "content_summary",
                              "person_observations", "temporal_facts", "source_time",
                              "location", "activity", "notes", "source_evidence"}
         if searchable_fields.intersection(changed_fields):
@@ -3620,6 +3812,7 @@ class PersonMemory(MemoryRetrievalMixin):
             "source_video_id", "source_segment_id", "clip_start_s", "clip_end_s",
             "source_video_sha256", "source_clip_sha256", "perception_prompt_version",
             "list_parser_version", "extraction_batch_id", "content_summary_version",
+            "person_profile_prompt_version",
         )
         new_provenance = {
             key: source_provenance[key] for key in provenance_keys
@@ -3643,7 +3836,7 @@ class PersonMemory(MemoryRetrievalMixin):
             if entity_visuals.get("items"):
                 moment["multimodal"]["entity_visuals"] = entity_visuals
 
-        searchable_fields = {"scene", "user_action", "interaction_details",
+        searchable_fields = {"scene", "user_action", "interaction_details", "content_summary",
                              "person_observations", "temporal_facts", "source_time",
                              "location", "activity", "notes", "source_evidence"}
         normalized = dict(moment.get("normalized") or {})

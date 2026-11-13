@@ -4,8 +4,88 @@ import json
 import threading
 import time
 import uuid
+from urllib.parse import quote
 
 from entity_records import EntityRecordIndex, memory_facts
+from memory_search import _retrieval_tokens
+
+
+_GENERIC_ANCHORS = {
+    "man", "woman", "person", "people", "user", "speaker", "viewer", "camera",
+    "unknown", "unidentified", "visible", "adult", "someone", "anyone", "one",
+    "thing", "item", "object", "stuff", "background", "scene", "setting",
+    "indoor", "indoors", "outdoor", "outdoors", "place", "area", "space",
+    "audio", "speech", "transcript", "video", "frame", "en", "zh",
+    "table", "door", "phone", "document", "paper", "box", "bag",
+    "clothing", "clothes", "shirt", "coat", "jacket", "camera",
+    "speaker", "customer", "client", "employee", "staff", "doctor",
+    "patient", "boss", "manager", "stranger", "neighbor", "neighbour",
+    "son", "daughter", "mother", "father", "mom", "dad",
+    # Common appearance and setting words are not identity evidence by themselves.
+    "expression", "light", "short", "wearing", "standing", "sitting", "seated",
+    "hair", "face", "eyes", "mouth", "smile", "smiling", "gray", "grey",
+    "dark", "black", "blue", "white", "green", "red", "pink", "brown",
+    "color", "coloured", "colored", "clothing", "body", "build", "adult",
+    "near", "behind", "front", "left", "right", "side", "inside",
+    "office", "room", "home", "house", "restaurant", "street", "city",
+    # Common home furnishings and size words are weak background context, not episode links.
+    "apartment", "living", "livingroom", "furniture", "sofa", "couch", "curtain", "curtains", "coffee", "large", "small", "big",
+    "desk", "chair", "table", "window", "door", "building", "floor",
+    "jacket", "coat", "shirt", "tie", "pants", "dress", "glasses",
+}
+
+
+def _anchor_terms(*values):
+    tokens = set()
+    for value in values:
+        if isinstance(value, (list, tuple, set)):
+            nested = value
+        else:
+            nested = [value]
+        for item in nested:
+            if not item:
+                continue
+            for token in _retrieval_tokens(str(item).casefold()):
+                if (len(token) > 1 and token.isalpha()
+                        and token not in _GENERIC_ANCHORS):
+                    tokens.add(token)
+    return tokens
+
+
+def _moment_anchor_sets(moment):
+    moment = moment if isinstance(moment, dict) else {}
+    people = list(moment.get("people") or [])
+    person_rows = [row for row in moment.get("person_observations") or []
+                   if isinstance(row, dict)]
+    person_features = []
+    for row in person_rows:
+        # Entity labels and source-linked spoken aliases can identify a recurring
+        # person. Episode roles (speaker, doctor, customer, etc.) describe function,
+        # not identity, so they must not act as person-match anchors.
+        people.append(row.get("entity"))
+        for alias in row.get("spoken_aliases") or []:
+            if isinstance(alias, dict) and alias.get("status") == "probable_visual_match":
+                people.append(alias.get("alias"))
+        people.extend(row.get("relationships") or [])
+        person_features.extend([row.get("appearance"), row.get("face_features")])
+    objects = list(moment.get("objects") or [])
+    objects.extend(row.get("object") for row in moment.get("object_observations") or []
+                   if isinstance(row, dict))
+    return {
+        "people": _anchor_terms(people),
+        "person_features": _anchor_terms(person_features),
+        "objects": _anchor_terms(objects),
+        # Keep static scene context separate from event/topic wording. This
+        # lets a recurring place/environment retrieve across different actions
+        # without turning generic same-day language into a match.
+        "context": _anchor_terms(moment.get("location"), moment.get("activity")),
+        "environment": _anchor_terms(moment.get("environments")),
+        "event": _anchor_terms(
+            moment.get("scene"), moment.get("content_summary"),
+            moment.get("user_action"), moment.get("interaction_details"),
+            moment.get("source_evidence"),
+        ),
+    }
 
 
 _IDENTITY_WARMUP_LOCK = threading.Lock()
@@ -52,8 +132,12 @@ def _schedule_identity_warmup(archive, asset_root, correction_path):
 
 
 _SPOKEN_ROLE_GROUPS = {
-    "grandma": ("姥姥", "外婆", "奶奶", "祖母", "grandma", "grandmother"),
-    "grandpa": ("爷爷", "外公", "祖父", "grandpa", "grandfather"),
+    "maternal_grandmother": ("姥姥", "外婆", "外祖母"),
+    "paternal_grandmother": ("奶奶", "祖母", "祖奶奶"),
+    "grandparent_unspecified": ("grandma", "grandmother", "grandparent"),
+    "maternal_grandfather": ("外公", "外祖父"),
+    "paternal_grandfather": ("爷爷", "祖父", "祖爷爷"),
+    "grandfather_unspecified": ("grandpa", "grandfather"),
     "mom": ("妈妈", "母亲", "妈", "mom", "mother", "mum"),
     "dad": ("爸爸", "父亲", "爸", "dad", "father"),
     "neighbor": ("邻居", "neighbor", "neighbour"),
@@ -95,7 +179,285 @@ def _spoken_role_evidence(moment):
 
 
 class PostWriteRetrievalMixin:
-    """Retrieve source-linked historical memories after a new moment is stored."""
+    """Retrieve historical memories before and after a new moment is stored."""
+
+    def _retrieve_before_write(self, source_segment_id, fields, dataset_id="", progress=None):
+        """Retrieve source-linked history from the observed scene before ingesting it."""
+        started = time.perf_counter()
+        fields = fields if isinstance(fields, dict) else {}
+        archive = self.mem.memory.get("layer7", {}).get("moments", {})
+        people = [row for row in fields.get("person_observations") or [] if isinstance(row, dict)]
+        people_text = [" ".join(str(row.get(key) or "") for key in
+                                 ("entity", "appearance", "face_features", "relationships")).strip()
+                       for row in people[:8]]
+        object_rows = [row for row in fields.get("object_observations") or [] if isinstance(row, dict)]
+        object_text = [" ".join(str(row.get(key) or "") for key in
+                                 ("object", "appearance", "evidence")).strip()
+                       for row in object_rows[:8]]
+        observed = [
+            "Scene: " + str(fields.get("scene") or ""),
+            "Content summary: " + str(fields.get("content_summary") or ""),
+            "Action: " + str(fields.get("user_action") or ""),
+            "People: " + "; ".join(value for value in people_text if value),
+            "Location: " + str(fields.get("location") or ""),
+            "Activity: " + str(fields.get("activity") or ""),
+            "Objects: " + ", ".join(str(value) for value in fields.get("objects") or []),
+            "Object observations: " + "; ".join(value for value in object_text if value),
+            "Environment: " + ", ".join(str(value) for value in fields.get("environments") or []),
+            "Speech: " + str(fields.get("source_evidence") or ""),
+        ]
+        situation = "Current observed video scene: " + " ".join(
+            item for item in observed if item.split(": ", 1)[-1].strip())
+        situation = situation[:1600].strip()
+        if not situation.strip(" :"):
+            return [], {"status": "skipped", "message": "当前片段没有可检索的场景信息"}
+        cache_context = {
+            "source_segment_id": str(source_segment_id or ""),
+            "retrieval_only": True,
+            "memory_modalities": "text",
+            "retrieval_policy_version": "scene-memory-prewrite-v7-specific-environment-anchors",
+            "observed_scene": situation,
+            "people_observations": people_text[:8],
+            "object_observations": object_text[:8],
+            "source_video_speech": str(fields.get("source_evidence") or "")[:1000],
+        }
+        def set_progress(stage, message, text):
+            if progress:
+                self._set_step_progress(**progress, stage=stage, message=message,
+                                        output={"id": dataset_id, "text": text})
+        set_progress("prewrite_retrieval", "正在写入前检索相关历史记忆",
+                     "用当前视频的人物、场景、物品和语音查询已有记忆")
+        try:
+            cache_key, stable_ids = self.retrieval_cache.key(
+                self.mem.memory, self.dataset_id, "scene_retrieval_before_write_v2",
+                situation, cache_context)
+            cached, lookup_ms = self.retrieval_cache.get(cache_key, stable_ids)
+        except Exception:
+            cache_key, stable_ids, cached, lookup_ms = None, {}, None, 0
+        cache_meta = {"status": "miss", "lookup_ms": lookup_ms}
+        if cached:
+            result, record = cached
+            cache_meta = {"status": "hit", "lookup_ms": lookup_ms,
+                          "duration_ms": record.get("duration_ms", record.get("inference_ms", 0)),
+                          "duration_kind": record.get("duration_kind", "legacy_unknown")}
+        else:
+            cancel_event = self._active_step_cancel
+            if cancel_event is not None and cancel_event.is_set():
+                return [], {"status": "cancelled", "message": "写入前检索已停止"}
+            request_id = f"prewrite-retrieval-{uuid.uuid4().hex}"
+            with self._cancel_lock:
+                self._active_reasoning_request_id = request_id
+            try:
+                set_progress("prewrite_retrieval", "正在写入前检索相关历史记忆",
+                             "先召回历史候选；当前片段尚未写入记忆")
+                # Use the already-built lexical/semantic memory index here. This is a
+                # retrieval step, not a second Qwen reasoning call; it keeps the write
+                # path responsive and gives profile enrichment source-grounded history.
+                # Retrieve a broad lexical pool, then apply corpus-wide rare-anchor
+                # checks. Ranking the top five before grounding was the source of
+                # unrelated matches when generic words dominated the query.
+                ranked = self.mem.query_hierarchical(situation, top_k=max(35, len(archive)))
+                candidates = []
+                candidate_details = []
+                # Old evaluation runs can leave several records for the same
+                # source clip. Count one source episode once so duplicates do
+                # not make its genuinely shared setting/topic appear common.
+                canonical = {}
+                for mid, moment in archive.items():
+                    if not isinstance(moment, dict) or moment.get("stale") or moment.get("merged_into"):
+                        continue
+                    provenance = moment.get("source_provenance") or {}
+                    source_time = moment.get("source_time") or {}
+                    source_id = str(provenance.get("source_segment_id")
+                                    or source_time.get("source_segment_id") or "").strip()
+                    source_key = source_id or "moment:" + str(mid)
+                    quality = (
+                        3 * len(moment.get("person_observations") or [])
+                        + 2 * len(moment.get("object_observations") or [])
+                        + len(str(moment.get("source_evidence") or ""))
+                        + len(str(moment.get("scene") or ""))
+                        + len(str(moment.get("content_summary") or "")),
+                        str(moment.get("timestamp") or ""), str(mid),
+                    )
+                    previous = canonical.get(source_key)
+                    if previous is None or quality > previous[0]:
+                        canonical[source_key] = (quality, str(mid), moment)
+                canonical_moments = {mid: moment for _, mid, moment in canonical.values()}
+                canonical_source_ids = {key: mid for key, (_, mid, _) in canonical.items()}
+                all_anchors = {mid: _moment_anchor_sets(moment)
+                               for mid, moment in canonical_moments.items()}
+                anchor_kinds = ("people", "person_features", "objects", "context",
+                                "environment", "event")
+                document_frequency = {kind: {} for kind in anchor_kinds}
+                for anchor_sets in all_anchors.values():
+                    for kind, terms in anchor_sets.items():
+                        for term in terms:
+                            document_frequency[kind][term] = document_frequency[kind].get(term, 0) + 1
+                # Terms appearing in more than four distinct source episodes
+                # are too generic to establish a cross-scene relation alone.
+                def rare(anchors, kind):
+                    return {term for term in anchors.get(kind, set())
+                            if document_frequency[kind].get(term, 0) <= 4}
+                current_raw = _moment_anchor_sets(fields)
+                current_anchors = {kind: rare(current_raw, kind) for kind in document_frequency}
+                scored = []
+                seen_canonical_hits = set()
+                for hit in ranked:
+                    hit_moment = hit.get("moment") or {}
+                    hit_mid = str(hit_moment.get("id") or "")
+                    hit_provenance = hit_moment.get("source_provenance") or {}
+                    hit_source_time = hit_moment.get("source_time") or {}
+                    hit_source_id = str(hit_provenance.get("source_segment_id")
+                                        or hit_source_time.get("source_segment_id") or "").strip()
+                    mid = canonical_source_ids.get(hit_source_id, hit_mid)
+                    # Ignore noncanonical duplicate copies of a source clip.
+                    if mid not in canonical_moments or mid in seen_canonical_hits:
+                        continue
+                    seen_canonical_hits.add(mid)
+                    moment = canonical_moments[mid]
+                    provenance = moment.get("source_provenance") or {}
+                    stored_segment = str(provenance.get("source_segment_id") or "")
+                    if (not mid or mid == str(source_segment_id or "")
+                            or (source_segment_id and stored_segment == str(source_segment_id))):
+                        continue
+                    historical_raw = all_anchors.get(mid) or _moment_anchor_sets(moment)
+                    historical_anchors = {kind: rare(historical_raw, kind)
+                                          for kind in document_frequency}
+                    shared_people = sorted(current_anchors["people"] & historical_anchors["people"])
+                    shared_features = sorted(current_anchors["person_features"] & historical_anchors["person_features"])
+                    shared_objects = sorted(current_anchors["objects"] & historical_anchors["objects"])
+                    shared_context = sorted(current_anchors["context"] & historical_anchors["context"])
+                    shared_environment = sorted(current_anchors["environment"] & historical_anchors["environment"])
+                    shared_event = sorted(current_anchors["event"] & historical_anchors["event"])
+                    reasons = []
+                    if shared_people:
+                        reasons.append("共享具名人物 / 关系线索：" + "、".join(shared_people[:6]))
+                    if len(shared_features) >= 2:
+                        reasons.append("共享低频人物外观线索：" + "、".join(shared_features[:6]))
+                    if shared_objects:
+                        reasons.append("共享低频物品线索：" + "、".join(shared_objects[:6]))
+                    if len(shared_context) >= 2:
+                        reasons.append("共享低频地点 / 活动线索：" + "、".join(shared_context[:6]))
+                    if len(shared_environment) >= 2:
+                        reasons.append("共享场景环境线索：" + "、".join(shared_environment[:6]))
+                    if len(shared_event) >= 3:
+                        reasons.append("共享事件主题线索：" + "、".join(shared_event[:6]))
+                    # A single highly-specific object or direct person anchor is
+                    # sufficient. Context-only matches need two rare terms; clothing
+                    # resemblance needs two rare features to avoid false identity links.
+                    lexical_score = float(hit.get("score", 0) or 0)
+                    strong_match = bool(shared_people or shared_objects)
+                    visually_supported_match = (
+                        lexical_score >= 55 and
+                        (len(shared_features) >= 2 or len(shared_context) >= 2))
+                    # A setting can recur across adjacent clips even when the
+                    # action and wording differ. Three rare environment anchors
+                    # are sufficient without requiring lexical-rank inflation.
+                    environment_match = len(shared_environment) >= 3
+                    event_topic_match = lexical_score >= 60 and len(shared_event) >= 3
+                    blended_context_match = (
+                        lexical_score >= 60
+                        and len(set(shared_context + shared_environment + shared_event)) >= 3
+                        and bool(shared_context or shared_environment)
+                    )
+                    if not (strong_match or visually_supported_match or environment_match
+                            or event_topic_match or blended_context_match):
+                        continue
+                    anchor_score = (5.0 * bool(shared_people) + 4.0 * bool(shared_objects)
+                                    + 1.5 * min(len(shared_features), 4)
+                                    + 1.0 * min(len(shared_context), 4)
+                                    + 1.1 * min(len(shared_environment), 4)
+                                    + 0.65 * min(len(shared_event), 5)
+                                    + float(hit.get("score", 0) or 0))
+                    candidate = {
+                        "id": mid, "time": moment.get("timestamp", ""),
+                        "scene": moment.get("scene", ""),
+                        "action": moment.get("user_action", ""),
+                        "people": moment.get("people") or [],
+                        "location": moment.get("location", ""),
+                        "activity": moment.get("activity", ""),
+                        "objects": moment.get("objects") or [],
+                        "score": hit.get("score", 0),
+                    }
+                    detail = {
+                        "id": mid, "text_relevance": hit.get("score", 0),
+                        "anchor_score": round(anchor_score, 3),
+                        "matched_terms": sorted(set(
+                            shared_people + shared_features + shared_objects + shared_context
+                            + shared_environment + shared_event))[:16],
+                        # Retrieval method is diagnostic metadata, not a semantic match reason.
+                        "reasons": reasons,
+                        "retrieval_method": hit.get("retrieval_method"),
+                    }
+                    scored.append((anchor_score, candidate, detail))
+                scored.sort(key=lambda item: item[0], reverse=True)
+                for _, candidate, detail in scored[:5]:
+                    candidates.append(candidate)
+                    candidate_details.append(detail)
+                result = {"mode": "memory_retrieval", "candidates": candidates,
+                          "retrieval_rounds": [{"candidate_details": candidate_details}],
+                          "retrieval_method": "indexed_prewrite_retrieval"}
+                elapsed = round((time.perf_counter() - started) * 1000)
+                stored = bool(cache_key) and self.retrieval_cache.put_retrieval(
+                    cache_key, result, stable_ids, elapsed)
+                cache_meta = {"status": "stored" if stored else "uncached",
+                              "lookup_ms": lookup_ms, "duration_ms": elapsed,
+                              "duration_kind": "prewrite_retrieval"}
+            except Exception as exc:
+                cancelled = bool(cancel_event is not None and cancel_event.is_set())
+                return [], {"status": "cancelled" if cancelled else "error",
+                            "message": "写入前检索已停止" if cancelled else str(exc)[:350],
+                            "duration_ms": round((time.perf_counter() - started) * 1000)}
+            finally:
+                with self._cancel_lock:
+                    if self._active_reasoning_request_id == request_id:
+                        self._active_reasoning_request_id = None
+        details = {}
+        for round_result in result.get("retrieval_rounds") or []:
+            for detail in round_result.get("candidate_details") or []:
+                if isinstance(detail, dict) and detail.get("id"):
+                    details[str(detail["id"])] = detail
+        output = []
+        for candidate in result.get("candidates") or []:
+            mid = str(candidate.get("id") or "")
+            if not mid:
+                continue
+            moment = archive.get(mid) or {}
+            if not moment:
+                continue
+            detail = details.get(mid) or {}
+            mm = moment.get("multimodal") or {}
+            output.append({
+                "id": mid, "layer": 7, "matched_layers": [7], **memory_facts(moment),
+                "score": detail.get("text_relevance"),
+                "match_reasons": detail.get("reasons") or [],
+                "matched_terms": detail.get("matched_terms") or [],
+                "entity_matches": detail.get("entity_matches") or [],
+                "multimodal_link": detail.get("multimodal_link") or {},
+                "timestamp": moment.get("timestamp") or candidate.get("time", ""),
+                "scene": moment.get("scene") or candidate.get("scene", ""),
+                "action": moment.get("user_action") or candidate.get("action", ""),
+                "people": moment.get("people") or candidate.get("people") or [],
+                "person_observations": moment.get("person_observations") or [],
+                "object_observations": moment.get("object_observations") or [],
+                "location": moment.get("location") or candidate.get("location", ""),
+                "activity": moment.get("activity") or candidate.get("activity", ""),
+                "objects": moment.get("objects") or candidate.get("objects") or [],
+                "environments": moment.get("environments") or [],
+                "summary": moment.get("content_summary") or moment.get("summary", ""),
+                "source_evidence": moment.get("source_evidence") or "",
+                "source_provenance": moment.get("source_provenance") or {},
+                "multimodal": mm,
+            })
+            if len(output) >= 5:
+                break
+        total_ms = round((time.perf_counter() - started) * 1000)
+        cache_meta["wrapper_elapsed_ms"] = total_ms
+        return output, {"status": "hit" if cached else cache_meta.get("status"),
+                        "duration_ms": cache_meta.get("duration_ms", 0),
+                        "cache": cache_meta, "wrapper_elapsed_ms": total_ms,
+                        "retrieval_method": result.get("retrieval_method", "cached_indexed_retrieval"),
+                        "used_for_current_memory": bool(output)}
 
     def _retrieve_after_write(self, current_moment_id, fields, dataset_id="", progress=None):
         """Understand the just-observed scene and retrieve source-linked history only."""
@@ -469,6 +831,37 @@ class PostWriteRetrievalMixin:
                 "source_moment_ids": summary.get("source_moment_ids") or [],
                 "source_link_coverage": summary.get("source_link_coverage", "unknown"),
             })
+        # Return only the stored portrait/object references for retrieved moments.
+        # The current moment is excluded above, so these are historical profiles.
+        for row in output:
+            prior = archive.get(str(row.get("id") or ""))
+            if not isinstance(prior, dict):
+                continue
+            row["person_observations"] = prior.get("person_observations") or []
+            row["object_observations"] = prior.get("object_observations") or []
+            media = prior.get("multimodal") or {}
+            profile_media = {}
+            for key in ("entity_visuals", "person_visuals", "object_visuals"):
+                group = media.get(key) or {}
+                items = []
+                for item in group.get("items") or []:
+                    if not isinstance(item, dict):
+                        continue
+                    entry = dict(item)
+                    refs = []
+                    for ref in item.get("frame_refs") or []:
+                        if not isinstance(ref, dict):
+                            continue
+                        image = dict(ref)
+                        if image.get("asset") and not image.get("url"):
+                            image["url"] = "/api/memory_asset?p=" + quote(str(image["asset"]), safe="/")
+                        refs.append(image)
+                    entry["frame_refs"] = refs
+                    items.append(entry)
+                if items:
+                    profile_media[key] = {"items": items}
+            row["multimodal"] = profile_media
+
         searches = ((result.get("search_plan") or {}).get("searches") or [])
         metadata = {
             "status": cache_status["status"], "cache": cache_status,

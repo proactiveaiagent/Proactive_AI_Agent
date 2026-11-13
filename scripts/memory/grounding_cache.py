@@ -9,7 +9,8 @@ from pathlib import Path
 # Stable fingerprint of the object-grounding implementation used by the
 # existing cache rows. Perception prompt edits must not invalidate grounding.
 # Bump this when ground_objects' prompt or result schema changes.
-GROUNDING_IMPLEMENTATION_FINGERPRINT = "torch-cuda-hog-clip-vit-l14-grid-v3-no-score-threshold-20261019"
+GROUNDING_IMPLEMENTATION_FINGERPRINT = "clip-vlm-qwen-explicit-box-evidence-context-per-frame-v3-20261105"
+PERSON_GROUNDING_IMPLEMENTATION_FINGERPRINT = "torch-cuda-hog-clip-vit-l14-grid-v18-dominant-qwen-anchor-face-20261105"
 
 def _json(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -41,7 +42,7 @@ class PersistentObjectGroundingCache:
         self.path=Path(path)
         self.project_root=Path(project_root)
 
-    def key(self, segment_id, objects, frames):
+    def key(self, segment_id, objects, frames, evidence=None, implementation=None):
         frame_rows=[]
         for frame in frames or []:
             raw=frame.get("bytes") or b""
@@ -50,12 +51,14 @@ class PersistentObjectGroundingCache:
             frame_rows.append({"sha256":hashlib.sha256(raw).hexdigest(),"at_s":frame.get("at_s")})
         value={"schema":1,"segment":str(segment_id or ""),
                "objects":[str(x) for x in (objects or [])],"frames":frame_rows,
-               "perceiver_source":GROUNDING_IMPLEMENTATION_FINGERPRINT,
+               "perceiver_source":str(implementation or GROUNDING_IMPLEMENTATION_FINGERPRINT),
+               "evidence": evidence or [],
                "model_path":os.environ.get("QWEN_MODEL_PATH",""),
                "model_revision":os.environ.get("QWEN_MODEL_REVISION","")}
         return hashlib.sha256(_json(value).encode("utf-8")).hexdigest()
 
-    def source_key(self, segment_id, video_path, start_s, end_s, objects):
+    def source_key(self, segment_id, video_path, start_s, end_s, objects, evidence=None,
+                   source_frame_times=()):
         """Fast stable lookup key; invalidates when the clip, objects or grounder change."""
         try:
             stat = Path(video_path).stat()
@@ -69,10 +72,13 @@ class PersistentObjectGroundingCache:
             "clip": [round(float(start_s or 0), 3),
                      round(float(end_s), 3) if end_s is not None else None],
             "objects": [str(x) for x in (objects or [])],
+            "evidence": evidence or [],
             "perceiver_source": GROUNDING_IMPLEMENTATION_FINGERPRINT,
             "model_path": os.environ.get("QWEN_MODEL_PATH", ""),
             "model_revision": os.environ.get("QWEN_MODEL_REVISION", ""),
             "sample_count": 7,
+            "source_frame_times": [round(float(value), 3)
+                                   for value in (source_frame_times or [])],
         }
         return hashlib.sha256(_json(value).encode("utf-8")).hexdigest()
 

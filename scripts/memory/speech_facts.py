@@ -145,7 +145,7 @@ _EXPLICIT_CHINESE_RELATION_RE = re.compile(
     r"(?:我|我们)(?:的)?(?:妈妈|母亲|妈|爸爸|父亲|爸|奶奶|爷爷|女儿|儿子|妻子|丈夫|"
     r"姐妹|兄弟|朋友|同事|伴侣|男朋友|女朋友|室友|医生)")
 _SPOKEN_VOCATIVE_NAME_RE = re.compile(
-    r"^\s*(?i:hi|hello|hey|welcome|good\s+(?:morning|afternoon|evening))"
+    r"(?<!\w)(?i:hi|hello|hey|welcome|good\s+(?:morning|afternoon|evening))"
     r"\b[,!\s]+(?P<name>[A-Z][a-zA-Z'’-]*(?:\s+[A-Z][a-zA-Z'’-]*){0,2})\b")
 _EXPLICIT_SELF_NEIGHBOR_RE = re.compile(
     r"\b(?:I(?:'m| am)|we(?:'re| are))\s+your\s+neighbou?r\b", re.I)
@@ -158,14 +158,24 @@ _EXPLICIT_CHINESE_SELF_ROLE_RE = re.compile(
     r"(?:我是|我就是|我们是|我们就是)(?:你|你们)的?"
     r"(?P<role>奶奶|外婆|爷爷|外公|妈妈|母亲|爸爸|父亲|朋友|邻居|同事|姐妹|兄弟)")
 _EXPLICIT_SPOKEN_GREETING_RE = re.compile(
-    r"^\s*(?:hi|hello|hey|good\s+(?:morning|afternoon|evening))\b|"
+    r"\b(?:hi|hello|hey|welcome(?:d|s|ing)?|good\s+(?:morning|afternoon|evening))\b|"
     r"(?:姥姥|老老|外婆|奶奶|爷爷|外公|妈妈|母亲|爸爸|父亲|您好|你好)"
     r"(?:过年|新年|春节)?好|给您拜年(?:了)?|拜年好",
     re.I)
+_EXPLICIT_CHECKIN_REQUEST_RE = re.compile(
+    r"\b(?:check\s*in|checking\s*in)\b|(?:办理|登记)入住", re.I)
+_EXPLICIT_STAY_WISH_RE = re.compile(
+    r"\b(?:wish|hope)\s+(?:you(?:'ll| will)?\s+)?(?:have|had|enjoy)\s+"
+    r"(?:a\s+)?(?:good|great|pleasant|comfortable)\s+stay\b|"
+    r"\b(?:enjoy|have)\s+(?:a\s+)?(?:good|great|pleasant)\s+stay\b|"
+    r"祝您?(?:入住|旅途)(?:愉快|舒适)", re.I)
 _EXPLICIT_SPOKEN_THANKS_RE = re.compile(
     r"\b(?:thank\s+you|thanks(?:\s+to)?|many\s+thanks)\b|"
     r"(?:谢谢|感谢)(?:您|你|[\u4e00-\u9fff]{1,4})?",
     re.I)
+_EXPLICIT_THANKS_VOCATIVE_NAME_RE = re.compile(
+    r"\b(?:thank\s+you|thanks)(?:\s+so\s+much)?[,，]\s*"
+    r"(?P<name>[A-Z][A-Za-z'’.-]*(?:\s+[A-Z][A-Za-z'’.-]*){0,2})\b", re.I)
 _HESITATION_ONLY_RE = re.compile(
     r"^\s*(?:(?:uh|um|er|erm|hmm|ah|oh|呃|嗯|啊)[,，、\s]*){2,}[.!?！？。]*\s*$",
     re.I,
@@ -184,7 +194,7 @@ _EXPLICIT_FIRST_VISIT_RE = re.compile(
     r"\b(?:I|we)(?:'ve| have)?\s+never\s+(?:been here before|been to|visited)\b", re.I)
 _EXPLICIT_FIRED_RE = re.compile(
     r"\b(?:you(?:'re| are)\s+fired|leave our company from today)\b", re.I)
-_EXPLICIT_BIRTHDAY_RE = re.compile(r"\bhappy birthday\b", re.I)
+_EXPLICIT_BIRTHDAY_RE = re.compile(r"\bhappy birthday\b|生日快乐", re.I)
 _EXPLICIT_AIRPORT_INSTRUCTION_RE = re.compile(
     r"\b(?:please\s+(?:proceed|follow|continue|go|head)|passengers?\s+(?:arriving|should|please))\b", re.I)
 _EXPLICIT_TRANSACTION_RE = re.compile(
@@ -318,6 +328,17 @@ def _extract_explicit_speech_facts(transcript, source_segment_id):
     )
     last_addressed_name = ""
     last_addressed_end = None
+    role_aliases = {
+        "grandmother": "grandma", "grandma": "grandma",
+        "grandfather": "grandpa", "grandpa": "grandpa",
+        "mother": "mom", "mom": "mom", "mum": "mom",
+        "father": "dad", "dad": "dad", "neighbour": "neighbor",
+        "neighbor": "neighbor", "colleague": "coworker", "coworker": "coworker",
+        "奶奶": "grandma", "外婆": "grandma", "爷爷": "grandpa", "外公": "grandpa",
+        "妈妈": "mom", "母亲": "mom", "爸爸": "dad", "父亲": "dad",
+        "朋友": "friend", "邻居": "neighbor", "同事": "coworker",
+        "姐妹": "sister", "兄弟": "brother",
+    }
     for line in str(transcript or "").splitlines():
         match = _AUDIO_EVIDENCE_LINE_RE.match(line.strip())
         if not match:
@@ -330,6 +351,11 @@ def _extract_explicit_speech_facts(transcript, source_segment_id):
             continue
         if not quote or audio_end < audio_start:
             continue
+        self_role_match = (_EXPLICIT_SELF_ROLE_RE.search(quote)
+                           or _EXPLICIT_CHINESE_SELF_ROLE_RE.search(quote))
+        self_role = (role_aliases.get(self_role_match.group("role").casefold())
+                     if self_role_match else None)
+        speaker_alias = f"{self_role} 1" if self_role else "unidentified speaker"
         if _HESITATION_ONLY_RE.fullmatch(quote):
             facts.append({
                 "subject_type": "event", "subject": "speech interaction",
@@ -381,29 +407,13 @@ def _extract_explicit_speech_facts(transcript, source_segment_id):
                 "time_order": len(facts) + 1,
             })
 
-        self_role_match = (_EXPLICIT_SELF_ROLE_RE.search(quote)
-                           or _EXPLICIT_CHINESE_SELF_ROLE_RE.search(quote))
         neighbor_self_identified = bool(_EXPLICIT_SELF_NEIGHBOR_RE.search(quote))
-        role_aliases = {
-            "grandmother": "grandma", "grandma": "grandma",
-            "grandfather": "grandpa", "grandpa": "grandpa",
-            "mother": "mom", "mom": "mom", "mum": "mom",
-            "father": "dad", "dad": "dad", "neighbour": "neighbor",
-            "neighbor": "neighbor", "colleague": "coworker", "coworker": "coworker",
-            "奶奶": "grandma", "外婆": "grandma", "爷爷": "grandpa", "外公": "grandpa",
-            "妈妈": "mom", "母亲": "mom", "爸爸": "dad", "父亲": "dad",
-            "朋友": "friend", "邻居": "neighbor", "同事": "coworker",
-            "姐妹": "sister", "兄弟": "brother",
-        }
-        self_role = (role_aliases.get(self_role_match.group("role").casefold())
-                     if self_role_match else None)
-        speaker_alias = f"{self_role} 1" if self_role else "unidentified speaker"
 
-        def add_spoken_claim(predicate, value, subject=None,
+        def add_spoken_claim(predicate, value, subject=None, subject_type="person",
                              status="stated", actor=None,
                              affected_people=None):
             fact = {
-                "subject_type": "person", "subject": subject or speaker_alias,
+                "subject_type": subject_type, "subject": subject or speaker_alias,
                 "predicate": predicate, "value": str(value or "")[:500],
                 "modality": "speech", "status": status,
                 "confidence": "medium", "evidence": quote[:500],
@@ -426,6 +436,10 @@ def _extract_explicit_speech_facts(transcript, source_segment_id):
         addressed_name = (directed_health.group("name").strip()
                           if directed_health else
                           vocative.group("name").strip() if vocative else "")
+        if addressed_name.casefold().strip(" .,!?") in {
+                "i", "me", "we", "you", "he", "she", "they", "it", "everyone",
+                "someone", "anyone", "myself", "ourselves", "also", "well", "oh", "and", "but", "to"}:
+            addressed_name = ""
         if last_addressed_end is not None and audio_start - last_addressed_end > 3.0:
             last_addressed_name = ""
         if addressed_name:
@@ -461,6 +475,17 @@ def _extract_explicit_speech_facts(transcript, source_segment_id):
                 "greeted", f"{speaker_alias} greeted {greeting_target_label}.",
                 subject=speaker_alias, status="spoken_event", actor=speaker_alias,
                 affected_people=[greeting_target])
+        if _EXPLICIT_CHECKIN_REQUEST_RE.search(quote):
+            add_spoken_claim(
+                "requested_check_in", "A speaker asks to check in.",
+                subject="check-in request", subject_type="event",
+                status="spoken_event", actor=speaker_alias,
+                affected_people=[greeting_target])
+        if _EXPLICIT_STAY_WISH_RE.search(quote):
+            add_spoken_claim(
+                "wished_good_stay", f"A speaker wishes {greeting_target_label} a pleasant stay.",
+                subject=speaker_alias, status="spoken_event", actor=speaker_alias,
+                affected_people=[greeting_target])
         if _EXPLICIT_WELLBEING_QUESTION_RE.search(quote):
             add_spoken_claim(
                 "asked_about_wellbeing",
@@ -468,11 +493,14 @@ def _extract_explicit_speech_facts(transcript, source_segment_id):
                 subject=speaker_alias, status="spoken_event", actor=speaker_alias,
                 affected_people=[greeting_target])
         if _EXPLICIT_SPOKEN_THANKS_RE.search(quote) and not airport_announcement:
-            thanks_name = ""
+            thanks_vocative = _EXPLICIT_THANKS_VOCATIVE_NAME_RE.search(quote)
+            thanks_name = (thanks_vocative.group("name").strip(" ,.!?，。！？")
+                           if thanks_vocative else "")
             for term in terms_in_text(quote):
                 position = quote.find(term)
                 prefix = quote[max(0, position - 12):position] if position >= 0 else ""
-                if position >= 0 and re.search(r"(?:谢谢|感谢)(?:您|你)?\s*$", prefix):
+                if (not thanks_name and position >= 0
+                        and re.search(r"(?:谢谢|感谢)(?:您|你)?\s*$", prefix)):
                     thanks_name = term
                     break
             thanks_name = thanks_name or addressed_name
@@ -499,8 +527,32 @@ def _extract_explicit_speech_facts(transcript, source_segment_id):
                 subject="unidentified addressee",
                 affected_people=["unidentified addressee"])
         if _EXPLICIT_BIRTHDAY_RE.search(quote):
-            birthday_person = (_speech_fact_subject(addressed_name) if addressed_name
-                               else "unidentified addressee")
+            birthday_match = re.search(r"\bhappy birthday\b|生日快乐", quote, re.I)
+            birthday_name = ""
+            if birthday_match and "happy" in birthday_match.group(0).casefold():
+                tail = quote[birthday_match.end():].lstrip(" ,，:：!！")
+                after = re.match(
+                    r"(?:(?:to)\s+)?(?P<name>[A-Z][A-Za-z'’.-]*(?:\s+[A-Z][A-Za-z'’.-]*){0,2})\b",
+                    tail, re.I)
+                if after:
+                    candidate = after.group("name").strip()
+                    if candidate.casefold() not in {"you", "everyone", "all", "yourself", "and", "but", "to"}:
+                        birthday_name = candidate
+            if not birthday_name and birthday_match:
+                prefix = quote[:birthday_match.start()]
+                chinese = re.search(r"([\u4e00-\u9fff]{2,4})[,，\s]*$", prefix)
+                if chinese:
+                    birthday_name = chinese.group(1)
+                else:
+                    prefix = re.sub(r"\b(?:hi|hello|hey|also|well|oh|and|but|so)\b", " ",
+                                    prefix, flags=re.I)
+                    words = re.findall(r"[A-Za-z][A-Za-z'’.-]*", prefix)
+                    words = [word for word in words if word.casefold() not in {
+                        "happy", "birthday", "to", "you", "everyone", "all"}]
+                    if words:
+                        birthday_name = " ".join(words[-3:])
+            birthday_person = (_speech_fact_subject(birthday_name or addressed_name)
+                               if birthday_name or addressed_name else "unidentified addressee")
             add_spoken_claim(
                 "stated_birthday_event", quote,
                 subject=birthday_person, affected_people=[birthday_person])
@@ -745,8 +797,6 @@ def _extract_explicit_speech_facts(transcript, source_segment_id):
                 health_fact["affected_people"] = [health_subject]
             facts.append(health_fact)
 
-        if len(facts) >= 16:
-            break
     for instruction in instruction_rows:
         instruction_fact = {
             "subject_type": "event", "subject": "speech interaction",
@@ -789,7 +839,7 @@ def _extract_explicit_speech_facts(transcript, source_segment_id):
 
 
 def _summarize_explicit_speech_facts(facts, identity_links=None):
-    """Summarize observable speech acts without assigning undiarized turns."""
+    """Summarize grounded speech acts without assigning undiarized turns."""
     rows = [row for row in facts or [] if isinstance(row, dict)]
     links = (identity_links or {}).get("linked") or []
     visible_speaker = next((
@@ -801,7 +851,7 @@ def _summarize_explicit_speech_facts(facts, identity_links=None):
         speaker = "The neighbor" if visible_speaker.casefold() in {"neighbor", "neighbour"} else (
             f"The person identified as {visible_speaker}")
     else:
-        speaker = "The audio"
+        speaker = "An unidentified speaker"
     events = []
     for row in rows:
         predicate = str(row.get("predicate") or "")
@@ -814,14 +864,16 @@ def _summarize_explicit_speech_facts(facts, identity_links=None):
                    if str(value).strip() and not str(value).startswith("unidentified")]
         target = targets[0] if targets else ""
         if predicate == "greeted":
+            quote = str(row.get("evidence") or row.get("value") or "")
+            greeting_verb = "welcomes" if re.search(r"\bwelcome(?:d|s|ing)?\b", quote, re.I) else "greets"
             if target and visible_speaker:
-                events.append((start, f"{speaker} greets {target}."))
+                events.append((start, f"{speaker} {greeting_verb} {target}."))
             elif target:
-                events.append((start, f"The audio records a greeting directed to {target}."))
+                events.append((start, f"A speaker {greeting_verb} {target}."))
             elif visible_speaker:
-                events.append((start, f"{speaker} greets the listener."))
+                events.append((start, f"{speaker} {greeting_verb} the listener."))
             else:
-                events.append((start, "The audio records a greeting to the listener."))
+                events.append((start, f"A speaker {greeting_verb} the listener."))
         elif predicate == "asked_about_wellbeing":
             if target and visible_speaker:
                 events.append((start, f"{speaker} asks {target} how they are."))
@@ -833,15 +885,97 @@ def _summarize_explicit_speech_facts(facts, identity_links=None):
                 events.append((start, "The speaker asks the listener how they are."))
         elif predicate == "thanked":
             if target:
-                events.append((start, f"The audio records a speaker thanking {target}."))
+                events.append((start, f"A speaker thanks {target}."))
             else:
-                events.append((start, "The audio records a speaker giving thanks."))
+                events.append((start, "A speaker gives thanks."))
+        elif predicate == "requested_check_in":
+            events.append((start, "A speaker asks to check in."))
+        elif predicate == "welcomed":
+            value = str(row.get("value") or "").strip()
+            events.append((start, value or "A speaker welcomes the listener."))
+        elif predicate == "wished_good_stay":
+            value = str(row.get("value") or "").strip()
+            events.append((start, value or "A speaker wishes the listener a pleasant stay."))
+        elif predicate == "stated_relationship":
+            value = str(row.get("value") or row.get("evidence") or "").strip()
+            if re.search(r"\bself-identifies? as .*neighbou?r|\bI am your neighbou?r\b", value, re.I):
+                events.append((start, "A speaker introduces themselves as the listener's neighbor."))
+            elif value:
+                events.append((start, f"A speaker states a relationship: {value}"))
         elif predicate == "invited_to_try_food":
-            events.append((start, "A speaker invites the user to try the food."))
+            value = str(row.get("value") or "").strip()
+            value = re.sub(r"^The speaker\b", "A speaker", value, flags=re.I)
+            events.append((start, value or "A speaker invites the user to try the food."))
+        elif predicate == "payment_requested":
+            value = str(row.get("value") or "").strip()
+            value = re.sub(r"^The speaker\b", "A speaker", value, flags=re.I)
+            events.append((start, value or "A speaker requests payment from the user."))
+        elif predicate == "spoken_total":
+            quote = str(row.get("value") or row.get("evidence") or "")
+            amount = re.search(r"\$\s*\d+(?:\.\d{1,2})?|\b\d+(?:\.\d{1,2})?\s*(?:dollars?|bucks?)\b|"
+                               r"(?:十|十一|十二|二十|\d+)\s*(?:美元|美金|元|块钱)", quote, re.I)
+            detail = f" The stated amount is {amount.group(0)}." if amount else ""
+            events.append((start, "A speaker states the bill total." + detail))
+        elif predicate == "spoken_transaction_detail":
+            quote = str(row.get("evidence") or row.get("value") or "")
+            mentions = []
+            if re.search(r"\b(?:bill|receipt|check|total)\b|账单|收据|小票|结账", quote, re.I):
+                mentions.append("the bill")
+            if re.search(r"\b(?:tip|tips|gratuity)\b|小费", quote, re.I):
+                mentions.append("a tip")
+            if re.search(r"\b(?:cash|money|dollar|payment|paid)\b|现金|付款|支付", quote, re.I):
+                mentions.append("payment")
+            if mentions:
+                detail = " and ".join(dict.fromkeys(mentions))
+                events.append((start, f"A speaker refers to {detail}."))
+            else:
+                events.append((start, "A speaker discusses a purchase or transaction."))
+        elif predicate == "self_reported_current_health_event":
+            quote = str(row.get("evidence") or row.get("value") or "")
+            condition = "a heart attack" if re.search(r"\bheart attack\b|心脏病发作|心梗", quote, re.I) else (
+                "a stroke" if re.search(r"\bstroke\b|中风", quote, re.I) else "a medical emergency")
+            asks_help = bool(re.search(r"\bhelp\b|救命|帮帮我", quote, re.I))
+            events.append((start, f"A speaker reports {condition}"
+                           + (" and asks for help." if asks_help else ".")))
+        elif predicate == "stated_birthday_event":
+            if target:
+                events.append((start, f"A speaker wishes {target} a happy birthday."))
+            else:
+                events.append((start, "A speaker wishes the listener a happy birthday."))
+        elif predicate == "quoted_product_claim":
+            events.append((start, "A speaker makes an unverified health-product claim."))
+        elif predicate == "spoken_travel_instruction":
+            if "airport" in str(row.get("subject") or "").casefold():
+                events.append((start, "An airport announcement gives travel instructions."))
+            else:
+                events.append((start, "A public announcement gives travel instructions."))
+        elif predicate == "stated_experience":
+            quote = str(row.get("evidence") or row.get("value") or "")
+            if re.search(r"\bnever\s+(?:been here before|been to|visited)\b", quote, re.I):
+                events.append((start, "A speaker says this is their first visit."))
+        elif predicate == "reported_employment_event":
+            quote = str(row.get("evidence") or row.get("value") or "")
+            if re.search(r"\byou(?:'re| are)\s+fired\b|\bleave our company\b", quote, re.I):
+                events.append((start, "A speaker tells the listener they are fired and must leave the company."))
+            else:
+                events.append((start, "A speaker reports an employment-related event."))
+        elif predicate == "stated_preference":
+            quote = str(row.get("evidence") or row.get("value") or "")
+            if re.search(r"\b(?:like|love|enjoy|prefer)\b", quote, re.I):
+                target_phrase = re.search(
+                    r"\b(?:like|love|enjoy|prefer)\s+([^.!?;]{2,90})", quote, re.I)
+                if target_phrase:
+                    events.append((start, f"A speaker says they like {target_phrase.group(1).strip(' ,')}."))
+        elif predicate == "stated_plan":
+            quote = str(row.get("evidence") or row.get("value") or "").strip()
+            if quote:
+                events.append((start, f"A speaker describes a plan: {quote}"))
         elif predicate == "spoken_disfluency":
-            events.append((start, "A following utterance contains repeated hesitation fillers; its speaker is not diarized."))
+            continue
         elif predicate == "gave_spoken_instruction":
-            events.append((start, "The audio contains an explicit instruction; the speaker and listener are not diarized."))
+            value = str(row.get("value") or "").strip()
+            events.append((start, f"A speaker gives an instruction: {value}" if value
+                           else "A speaker gives an instruction."))
         elif predicate == "instruction_then_targeted_greeting":
             events.append((start, str(row.get("value") or "A later utterance follows an explicit greeting instruction.")))
     if not events:

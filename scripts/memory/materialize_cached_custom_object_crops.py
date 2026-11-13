@@ -98,7 +98,27 @@ def main():
         for index, (object_label, grounded) in enumerate(zip(objects, payload["items"])):
             old_item = previous_items[index] if index < len(previous_items) and isinstance(previous_items[index], dict) else {}
             refs = [dict(ref) for ref in old_item.get("frame_refs") or [] if isinstance(ref, dict)]
+            best_score = float(grounded.get("score") or 0)
             has_exact_crop = any(ref.get("visual_role") == "object_crop" for ref in refs)
+            if has_exact_crop and best_score < 0.28:
+                context_refs = []
+                for ref in refs:
+                    if ref.get("visual_role") != "object_crop":
+                        context_refs.append(ref)
+                        continue
+                    source_asset = str(ref.get("source_asset") or "")
+                    if source_asset:
+                        context_refs.append({
+                            "asset": source_asset,
+                            "bytes": 0,
+                            "at_s": ref.get("at_s"),
+                            "source_id": ref.get("source_id") or segment_id,
+                            "quality_tier": ref.get("quality_tier") or "recent",
+                            "visual_role": "source_frame",
+                            "localization_status": "low_confidence_context",
+                        })
+                refs = context_refs
+                has_exact_crop = False
             boxes = grounded.get("frame_boxes") or []
             if not has_exact_crop and grounded.get("status") in {"grounded", "visible_unlabeled"}:
                 for box in boxes:
@@ -109,6 +129,27 @@ def main():
                         continue
                     if not (1 <= frame_index <= len(frames) and len(bbox) == 4):
                         continue
+                    try:
+                        score = float(box.get("score", best_score))
+                    except (AttributeError, TypeError, ValueError):
+                        score = best_score
+                    if score < 0.28 or (bbox[0] <= 0.005 and bbox[1] <= 0.005
+                                        and bbox[2] >= 0.995 and bbox[3] >= 0.995):
+                        if not refs:
+                            source = store.fit_visual_candidate(
+                                frames[frame_index - 1].get("bytes"), 6_000)
+                            source_ref = store._put("visual", source, "webp", 6_000) if source else None
+                            if source_ref:
+                                refs = [{
+                                    "asset": source_ref["asset"],
+                                    "bytes": int(source_ref.get("bytes") or 0),
+                                    "at_s": frames[frame_index - 1].get("at_s"),
+                                    "source_id": segment_id,
+                                    "quality_tier": "recent",
+                                    "visual_role": "source_frame",
+                                    "localization_status": "low_confidence_context",
+                                }]
+                        break
                     frame = frames[frame_index - 1]
                     crop = store.crop_visual_candidate(frame.get("bytes"), bbox, 12_000)
                     crop_ref = store._put("visual", crop, "webp", 12_000)
@@ -155,8 +196,8 @@ def main():
                 "status": payload.get("status", "completed"),
                 "model": payload.get("model", previous.get("model", "Qwen3-VL")),
                 "items": new_items,
-                "crop_schema": 1,
-                "crop_method": "reused exact-frame cached Qwen3-VL boxes; padded WebP crops",
+                "crop_schema": 4,
+                "crop_method": "confidence-gated cached localizations; weak regions remain source-frame context",
             }
             media["entity_visuals"] = _build_entity_visuals(moment)
             report["clips_updated"] += 1

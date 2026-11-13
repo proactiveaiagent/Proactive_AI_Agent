@@ -98,18 +98,25 @@ def ground_clinical_visit(fields, observations, transcript, source_segment_id):
     clinician = rows[0]
     old_label = " ".join(str(clinician.get("entity") or "").split()).strip()
     aliases = {}
-    if old_label and _GENERIC_PERSON_RE.fullmatch(old_label):
-        if old_label.casefold() != "doctor":
-            aliases[old_label] = "doctor"
-        clinician["entity"] = "doctor"
-    roles = [str(value).strip() for value in clinician.get("roles") or [] if str(value).strip()]
+    if old_label and old_label.casefold() != "doctor":
+        aliases[old_label] = "doctor"
+    # A medical record names its patient, not the person holding it. When the
+    # visible candidate is the uniquely grounded clinician, never retain a
+    # patient name/role that was copied from the presented record.
+    clinician["entity"] = "doctor"
+    roles = [str(value).strip() for value in clinician.get("roles") or []
+             if str(value).strip() and str(value).strip().casefold() not in {"patient", "user"}]
     if "doctor" not in {value.casefold() for value in roles}:
         roles.append("doctor")
     clinician["roles"] = roles[:6]
     clinician["profile_confidence"] = "high"
+    profile_context = " ".join(str(clinician.get("profile_context") or "").split()).strip()
+    profile_context = re.sub(
+        r"\bPresented document shows\b.*?(?:independently verified\.|$)",
+        "", profile_context, flags=re.I).strip()
     clinician["profile_context"] = (
-        (str(clinician.get("profile_context") or "").strip() + " " if clinician.get("profile_context") else "")
-        + "Identified as the doctor from the hospital consultation, presented medical record, and direct condition-specific advice."
+        (profile_context + " " if profile_context else "")
+        + "Identified as the doctor from the hospital consultation, presented medical record, and direct condition-specific advice. The patient named in the record is distinct from the visible clinician."
     )[:700]
 
     visual_refs = []
@@ -183,6 +190,39 @@ def ground_clinical_visit(fields, observations, transcript, source_segment_id):
     facts = [dict(row) if isinstance(row, dict) else row
              for row in fields.get("temporal_facts") or []]
     fields["temporal_facts"] = facts
+    patient_keys = {_norm(value) for value in (patient_name, address_name) if value}
+    if patient_linked_to_user and patient_keys:
+        for fact in facts:
+            if not isinstance(fact, dict):
+                continue
+            subject = _norm(fact.get("subject"))
+            if subject not in patient_keys:
+                continue
+            predicate = str(fact.get("predicate") or "").casefold()
+            value = str(fact.get("value") or "")
+            modality = str(fact.get("modality") or "").casefold()
+            evidence = str(fact.get("evidence") or "")
+            # Visual handling/presentation belongs to the clinician, while
+            # patient attributes from the record or direct address belong to
+            # the camera wearer/addressee.
+            if modality == "visual" and predicate in {"held", "holding", "presented", "presents", "showed", "shows"}:
+                fact.update({"subject_type": "person", "subject": "doctor", "actor": "doctor"})
+            elif re.search(r"\b(?:at|in)\s+(?:queen\s+mary\s+)?hospital\b", value, re.I):
+                facility = " ".join(value.split())
+                fact.update({"subject_type": "document", "subject": "medical record",
+                             "predicate": "identifies_facility", "value": facility,
+                             "actor": "doctor", "status": "documented_in_medical_record",
+                             "modality": "visual"})
+            elif (_HEALTH_RE.search(value + " " + evidence)
+                  or re.search(r"\b\d{1,3}\s+years?\s+old\b|\b(?:age|aged)\b", value + " " + evidence, re.I)
+                  or predicate in {"addressed_person", "user_name", "age_listed_in_medical_record"}):
+                fact["subject_type"] = "person"
+                fact["subject"] = "user"
+                if predicate == "addressed_person":
+                    fact.update({"value": f"The doctor addresses the user as {address_name or 'David'}.",
+                                 "actor": "doctor", "status": "stated", "confidence": "high"})
+                elif str(fact.get("actor") or "").casefold() in {"", "unknown", "unidentified speaker"}:
+                    fact["actor"] = "doctor"
 
     def append_fact(fact):
         ref = fact.get("evidence_ref") if isinstance(fact.get("evidence_ref"), dict) else {}
@@ -263,6 +303,28 @@ def ground_clinical_visit(fields, observations, transcript, source_segment_id):
                          "evidence_ref": ref,
                          "evidence_refs": _refs_unique([ref] + visual_refs)})
 
+    if patient_linked_to_user and patient_name and names_match:
+        name_doc = next((doc for doc in docs if patient_name.casefold() in str(doc.get("text") or "").casefold()), {})
+        address_line = next(((quote, start, end) for quote, start, end in lines
+                             if address_name and re.search(r"(?<![A-Za-z])" + re.escape(address_name) + r"(?![A-Za-z])", quote, re.I)), None)
+        speech_ref = ({"source_segment_id": str(source_segment_id or "")[:128],
+                       "modality": "speech", "audio_start_s": round(address_line[1], 3),
+                       "audio_end_s": round(address_line[2], 3)} if address_line else {})
+        name_frame = name_doc.get("frame_index")
+        name_doc_ref = {"source_segment_id": str(source_segment_id or "")[:128],
+                        "modality": "document", "document": str(name_doc.get("document") or "medical record")[:100]}
+        if isinstance(name_frame, int) and name_frame > 0:
+            name_doc_ref["frame_index"] = name_frame
+        name_evidence_refs = _refs_unique([name_doc_ref, speech_ref])
+        append_fact({"subject_type": "person", "subject": "user",
+                     "predicate": "user_name",
+                     "value": f"The user is identified as {patient_name}; the doctor addresses the listener as {address_name or patient_name.split()[0]}.",
+                     "actor": "doctor", "affected_people": ["user"],
+                     "modality": "speech+document", "status": "inferred",
+                     "confidence": "high",
+                     "evidence": (str(address_line[0]) if address_line else "") + "; " + str(name_doc.get("text") or "")[:300],
+                     "evidence_ref": speech_ref or name_doc_ref,
+                     "evidence_refs": name_evidence_refs})
     if patient_linked_to_user and patient_age and names_match:
         age_doc = next((doc for doc in docs if patient_name.casefold() in str(doc.get("text") or "").casefold()), {})
         frame = age_doc.get("frame_index")
@@ -293,11 +355,12 @@ def ground_clinical_visit(fields, observations, transcript, source_segment_id):
             f"A doctor at {location} shows the user a medical record, states that the heart disease is very severe, "
             "and advises avoiding strenuous exercise and staying alert."
         )[:700]
-    for key in ("scene", "activity", "interaction_details"):
+    for key in ("scene", "activity", "interaction_details", "user_action", "content_summary"):
         text = str(fields.get(key) or "")
         if text:
+            fields[key] = re.sub(r"\bman(?:\s+\d+)\b", "doctor", text, flags=re.I)
             fields[key] = re.sub(r"\b(a|the)\s+man\b",
-                                 lambda match: match.group(1) + " doctor", text, flags=re.I)
+                                 lambda match: match.group(1) + " doctor", fields[key], flags=re.I)
     fields["person_observations"] = rows
     fields["people"] = list(dict.fromkeys(
         str(row.get("entity") or "").strip() for row in rows if row.get("entity")))

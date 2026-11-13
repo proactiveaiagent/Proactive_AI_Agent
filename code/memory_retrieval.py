@@ -60,7 +60,7 @@ class MemoryRetrievalMixin:
                     + 100 * len(moment.get("object_observations") or [])
                     + 80 * bool(moment.get("source_evidence"))
                     + sum(len(str(moment.get(key) or "")) for key in
-                          ("scene", "user_action", "interaction_details", "activity", "location"))
+                          ("scene", "content_summary", "user_action", "interaction_details", "activity", "location"))
                 )
                 rank = (quality, str(moment.get("timestamp") or ""), str(moment_id))
                 previous = best_by_source.get(source_id)
@@ -327,6 +327,7 @@ class MemoryRetrievalMixin:
             fields = [
                 ("场景", moment.get("scene")),
                 ("动作", moment.get("user_action")),
+                ("情境总结", moment.get("content_summary")),
                 ("人物交互与事件顺序", moment.get("interaction_details")),
                 ("人物", values(moment.get("people"))),
                 ("地点", moment.get("location")),

@@ -18,7 +18,7 @@ def memory_facts(moment):
     object_rows = object_visual_observations(view)
     object_states = derive_object_states(view)
     return {key: deepcopy(view.get(key) or default) for key, default in (
-        ('scene', ''), ('user_action', ''), ('interaction_details', ''),
+        ('scene', ''), ('user_action', ''), ('content_summary', ''), ('interaction_details', ''),
         ('people', []), ('location', ''), ('activity', ''),
         ('objects', []), ('environments', []), ('person_observations', []),
         ('temporal_facts', []), ('object_observations', object_rows),
@@ -249,6 +249,7 @@ class EntityRecordIndex:
             base_event = {
                 'moment_id': mid, 'scene': moment.get('scene') or '',
                 'interaction_details': moment.get('interaction_details') or '',
+                'content_summary': moment.get('content_summary') or '',
                 'source_evidence': str(moment.get('source_evidence') or '')[:4000],
                 'source_time': deepcopy(moment.get('source_time') or {}),
                 'source_provenance': deepcopy(provenance),

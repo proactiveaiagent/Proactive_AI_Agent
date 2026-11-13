@@ -10,29 +10,37 @@ MODEL_NAME = "YOLOv8n-Face (lindevs, WIDERFace)"
 def expanded_face_sample_times(start_s: float, end_s: float,
                                anchor_times: list[float] | None,
                                max_samples: int = 12) -> list[float]:
-    """Sample face evidence between Qwen anchors so brief close-up faces are not skipped."""
+    """Keep Qwen anchors and fill the clip with evenly spaced face samples.
+
+    Midpoint-only sampling leaves large gaps whenever Qwen's scene frames are
+    sparse. Uniform fill is deterministic, bounded, and catches brief faces
+    between those anchors without changing semantic frame selection.
+    """
     start = max(0.0, float(start_s or 0.0))
     last = max(start, float(end_s if end_s is not None else start + 30.0) - 0.1)
     anchors = sorted({round(float(x), 3) for x in (anchor_times or [])
                       if start <= float(x) <= last})
-    if len(anchors) < 2:
-        count = min(max(2, int(max_samples)), 7)
-        anchors = [round(start + (last - start) * i / (count - 1), 3)
-                   for i in range(count)]
-    mids = [round((left + right) / 2, 3)
-            for left, right in zip(anchors, anchors[1:]) if right - left > 0.25]
-    extras = sorted(set(mids + [round(start, 3), round(last, 3)]) - set(anchors))
     limit = max(1, int(max_samples))
     if len(anchors) >= limit:
-        if len(anchors) <= limit:
+        if len(anchors) == limit:
             return anchors
         indices = [round(i * (len(anchors) - 1) / (limit - 1))
-                   for i in range(limit)] if limit > 1 else [len(anchors) - 1]
+                   for i in range(limit)] if limit > 1 else [0]
         return sorted({anchors[index] for index in indices})
     slots = limit - len(anchors)
+    if last <= start:
+        return sorted(set(anchors + [round(start, 3)]))[:limit]
+    # Generate a dense deterministic grid, then retain points far enough from
+    # semantic anchors. If anchors collide with grid locations, evenly select
+    # from the remaining points to keep the configured upper bound.
+    grid_count = max(limit * 3, 2)
+    grid = [round(start + (last - start) * i / (grid_count - 1), 3)
+            for i in range(grid_count)]
+    extras = [at for at in grid
+              if all(abs(at - anchor) > 0.20 for anchor in anchors)]
     if len(extras) > slots:
         indices = [round(i * (len(extras) - 1) / (slots - 1))
-                   for i in range(slots)] if slots > 1 else [len(extras) - 1]
+                   for i in range(slots)] if slots > 1 else [len(extras) // 2]
         extras = [extras[index] for index in indices]
     return sorted(set(anchors + extras))
 def _model():
@@ -67,7 +75,10 @@ def detect_faces(frames: list[dict], device: str | None = None) -> list[list[dic
             raw = frame.get("bytes") or b""
             image = Image.open(io.BytesIO(raw)).convert("RGB")
             width, height = image.size
-            result = model.predict(source=np.asarray(image), imgsz=1280, conf=0.08, iou=0.55, device=device, max_det=40, verbose=False)[0]
+            # Small or shadowed faces are common in hands-free footage. Keep
+            # detector output conservative, but inspect full-resolution frames
+            # at a larger inference size before the geometry verifier decides.
+            result = model.predict(source=np.asarray(image), imgsz=1920, conf=0.05, iou=0.55, device=device, max_det=40, verbose=False)[0]
             faces = []
             if result.boxes is not None:
                 for box in result.boxes:
@@ -125,7 +136,12 @@ def assign_faces_to_people(person_rows: list[dict], faces: list[dict],
             # Keep the face close to the head area of the proposed person.
             if cx < x1 - 0.08 * width or cx > x2 + 0.08 * width:
                 continue
-            if cy < y1 - 0.18 * height or cy > y1 + 0.42 * height:
+            # Person proposals are often torso-heavy; keep a generous upper-body
+            # band so a valid face slightly below the proposal's ideal head point
+            # remains eligible. Mutual-best matching below still rejects ambiguity.
+            # VLM person boxes are often torso-biased; allow a face slightly
+            # above the proposal while retaining horizontal and mutual-best checks.
+            if cy < y1 - 0.50 * height or cy > y1 + 0.58 * height:
                 continue
             distance = ((cx - center_x) / width) ** 2 + 0.7 * ((cy - expected_y) / height) ** 2
             score = distance - 0.015 * confidence

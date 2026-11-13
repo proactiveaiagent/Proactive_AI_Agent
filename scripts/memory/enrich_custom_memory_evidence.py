@@ -20,7 +20,7 @@ import sys
 sys.path.insert(0, str(ROOT / "scripts" / "memory"))
 sys.path.insert(0, str(ROOT / "code"))
 
-from interactive_runner import feishu_test_moments
+from interactive_runner import feishu_test_moments, _person_anchor_cache_suffix
 from qwen_perceive import (
     _post_with_inference_cancel,
     PROMPT_VERSION, QwenPerceiver, _apply_temporal_fact_repair,
@@ -29,7 +29,8 @@ from qwen_perceive import (
     _repair_person_references_from_video, _structured_fact_quality_error,
     _parse_json_array, clip_range, extract_frames, video_path_of,
 )
-from grounding_cache import PersistentObjectGroundingCache
+from grounding_cache import (PersistentObjectGroundingCache,
+                             PERSON_GROUNDING_IMPLEMENTATION_FINGERPRINT)
 from multimodal_memory import MultimodalAssetStore
 
 RUNS = ROOT / "data" / "egolife" / "runs"
@@ -343,12 +344,15 @@ def main() -> int:
             )
             if person_frames:
                 labels = [
-                    "person-crop-v3-multiframe-yolo: " + str(row.get("entity") or "").strip()
+                    "person-crop-v17-face-count-residual-gallery: " + str(row.get("entity") or "").strip()
                     + " | " + str(row.get("appearance") or "").strip()
+                    + " | anchors=" + _person_anchor_cache_suffix(row)
                     for row in person_rows[:8]
                 ]
                 try:
-                    key = grounding_cache.key(mid, labels, person_frames)
+                    key = grounding_cache.key(
+                        mid, labels, person_frames,
+                        implementation=PERSON_GROUNDING_IMPLEMENTATION_FINGERPRINT)
                     with endpoint_locks[api_index]:
                         cached, lookup_ms = grounding_cache.get(key)
                         if cached is None:

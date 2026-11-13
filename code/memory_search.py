@@ -62,6 +62,7 @@ def _retrieval_tokens(text: str) -> list:
 def _memory_search_field_weights():
     return {
         "scene": 1.0,
+        "content_summary": 1.25,
         "user_action": 1.0,
         "interaction_details": 1.2,
         "person_observations": 1.1,

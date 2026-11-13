@@ -302,6 +302,34 @@ def _attach_speaker_role(row, role, info):
     row["profile_confidence"] = "medium"
 
 
+def _visual_evidence_ref(candidate, info):
+    """Return a frame-level visual reference, never reuse a speech citation."""
+    for field in ("visual_evidence_ref", "evidence_ref"):
+        ref = candidate.get(field)
+        if isinstance(ref, dict) and ref.get("modality") == "visual":
+            return dict(ref)
+    for ref in candidate.get("evidence_refs") or []:
+        if isinstance(ref, dict) and ref.get("modality") == "visual":
+            return dict(ref)
+    speech_ref = info.get("evidence_ref") if isinstance(info.get("evidence_ref"), dict) else {}
+    visual_ref = {
+        "source_segment_id": speech_ref.get("source_segment_id"),
+        "modality": "visual",
+    }
+    frame_index = candidate.get("frame_index")
+    if frame_index is None:
+        indices = candidate.get("frame_indices") or []
+        frame_index = indices[0] if indices else speech_ref.get("frame_index")
+    if frame_index is not None:
+        visual_ref["frame_index"] = frame_index
+    frame_time = candidate.get("frame_time_s")
+    if frame_time is not None:
+        visual_ref["frame_time_s"] = frame_time
+    for key in ("clip_start_s", "clip_end_s"):
+        if speech_ref.get(key) is not None:
+            visual_ref[key] = speech_ref[key]
+    return {key: value for key, value in visual_ref.items() if value is not None}
+
 def attach_spoken_identity(observations, speech_facts, visual_facts=None):
     """Annotate visible people with evidence-backed spoken terms.
 
@@ -399,9 +427,9 @@ def attach_spoken_identity(observations, speech_facts, visual_facts=None):
                 "confidence": match_confidence,
                 "basis": _basis(term, info["usage"], info["quote"], why),
                 "evidence_ref": dict(info["evidence_ref"]),
-                "visual_evidence_ref": dict(candidate.get("evidence_ref") or {}),
+                "visual_evidence_ref": _visual_evidence_ref(candidate, info),
                 "evidence_refs": [dict(ref) for ref in
-                                  (info.get("evidence_ref"), candidate.get("evidence_ref"))
+                                  (info.get("evidence_ref"), _visual_evidence_ref(candidate, info))
                                   if isinstance(ref, dict)],
             })
             candidate["spoken_aliases"] = aliases[-MAX_ALIASES_PER_PERSON:]

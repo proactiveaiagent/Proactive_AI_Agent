@@ -116,6 +116,7 @@ class DaytimeProcessor:
                timestamp: str = None,
                source_evidence: str = "",
                interaction_details: str = "",
+               content_summary: str = "",
                person_observations: List[Dict] = None,
                temporal_facts: List[Dict] = None,
                source_time: Dict = None,
@@ -143,6 +144,7 @@ class DaytimeProcessor:
                 timestamp=timestamp,
                 source_evidence=source_evidence,
                 interaction_details=interaction_details,
+                content_summary=content_summary,
                 person_observations=person_observations,
                 temporal_facts=temporal_facts,
                 source_time=source_time,
@@ -156,6 +158,7 @@ class DaytimeProcessor:
             payload = {}
             for field, raw in (("scene", scene), ("user_action", user_action),
                                ("interaction_details", interaction_details),
+                               ("content_summary", content_summary),
                                ("location", location), ("activity", activity),
                                ("notes", extra_notes),
                                ("source_evidence", source_evidence)):

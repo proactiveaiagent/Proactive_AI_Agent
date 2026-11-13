@@ -21,6 +21,7 @@ DOCUMENT_VERSION = "3"
 FIELD_LABELS = {
     "scene": "Scene",
     "user_action": "Action",
+    "content_summary": "Situation summary",
     "interaction_details": "People and event sequence",
     "people": "People",
     "location": "Location",

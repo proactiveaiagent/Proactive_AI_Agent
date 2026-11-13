@@ -22,6 +22,91 @@ class NightlyCurator:
         rows = (moment or {}).get("person_observations") or []
         return [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
 
+    @staticmethod
+    def _role_from_identity_label(value):
+        text = str(value or "").strip().casefold()
+        aliases = {
+            "grandmother": {"姥姥", "外婆", "奶奶", "祖母", "grandma", "grandmother"},
+            "grandfather": {"外公", "爷爷", "祖父", "grandpa", "grandfather"},
+            "mother": {"妈妈", "母亲", "妈", "mom", "mother", "mum"},
+            "father": {"爸爸", "父亲", "爸", "dad", "father"},
+            "son": {"儿子", "son"},
+            "daughter": {"女儿", "daughter"},
+            "doctor": {"医生", "doctor", "physician"},
+            "patient": {"病人", "患者", "patient"},
+            "service staff": {"waiter", "waitress", "server", "cashier", "服务员"},
+            "baby / infant": {"baby", "infant", "婴儿", "宝宝"},
+        }
+        for role, names in aliases.items():
+            if text in {name.casefold() for name in names}:
+                return role
+            if any(re.fullmatch(re.escape(name.casefold()) + r"\s+\d+", text)
+                   for name in names if name.isascii()):
+                return role
+        return ""
+
+    def normalize_person_roles(self):
+        """Align generic roles with identities already grounded by cross-clip evidence."""
+        changed = 0
+        archive = self.memory.memory.get("layer7", {}).get("moments", {})
+        if not isinstance(archive, dict):
+            return changed
+        generic = {"", "person", "man", "woman", "speaker", "unknown",
+                   "unidentified person", "unidentified person (role / relationship unknown in this clip)"}
+        for moment in archive.values():
+            if not isinstance(moment, dict):
+                continue
+            moment_changed = False
+            for row in self._rows(moment):
+                roles = row.get("roles") or []
+                if isinstance(roles, str):
+                    roles = [roles]
+                role = self._role_from_identity_label(row.get("entity"))
+                if not role:
+                    continue
+                generic_roles = (not roles or all(
+                    str(value or "").strip().casefold() in generic
+                    or "unidentified" in str(value or "").casefold()
+                    or "unknown" in str(value or "").casefold()
+                    for value in roles))
+                resolution = row.get("identity_resolution") or {}
+                canonical = str(resolution.get("canonical_entity") or "").strip().casefold()
+                entity = str(row.get("entity") or "").strip().casefold()
+                try:
+                    resolution_confidence = float(resolution.get("confidence") or 0)
+                except (TypeError, ValueError):
+                    resolution_confidence = 0.0
+                evidence_ids = [str(mid) for mid in resolution.get("evidence_moment_ids") or []
+                                if str(mid).strip()]
+                stranger_roles = any(
+                    "stranger" in str(value or "").casefold()
+                    or "relationship not established" in str(value or "").casefold()
+                    or "陌生人" in str(value or "")
+                    or "关系未建立" in str(value or "")
+                    for value in roles)
+                resolved_role_conflict = bool(
+                    stranger_roles and canonical and canonical == entity
+                    and resolution_confidence >= 0.80 and evidence_ids)
+                if not generic_roles and not resolved_role_conflict:
+                    continue
+                previous_roles = [str(value) for value in roles if str(value or "").strip()]
+                row["roles"] = [role]
+                row["role_evidence"] = {
+                    "source": ("cited_cross_clip_identity_resolution"
+                               if resolved_role_conflict else
+                               "canonical_entity_label_after_evidence_reconciliation"),
+                    "entity": row.get("entity"),
+                    "confidence": (resolution_confidence if resolved_role_conflict else "high"),
+                    "evidence_moment_ids": evidence_ids if resolved_role_conflict else [],
+                    "replaced_roles": previous_roles if resolved_role_conflict else [],
+                }
+                row["profile_confidence"] = row.get("profile_confidence") or "medium"
+                changed += 1
+                moment_changed = True
+            if moment_changed:
+                self.memory._sync_window_moment(str(moment.get("id") or ""))
+        return changed
+
     @classmethod
     def _names(cls, moment):
         raw = (moment or {}).get("people") or []
@@ -74,9 +159,13 @@ class NightlyCurator:
                             " ".join(str(right.get(k) or "") for k in fields))
 
     @staticmethod
-    def _family(moment):
-        video = NightlyCurator._video(moment)
-        return video.rsplit("/", 1)[0] if "/" in video else ""
+    def _identity_scope(moment):
+        """Namespace identity evidence by real account/participant, never by dataset path."""
+        row = moment if isinstance(moment, dict) else {}
+        provenance = row.get("source_provenance") or {}
+        participant = (row.get("participant_id") or row.get("user_id")
+                       or provenance.get("participant_id") or provenance.get("user_id"))
+        return f"participant:{str(participant).strip()}" if participant else "memory_owner"
 
     @staticmethod
     def _is_clip_local_person(value):
@@ -113,10 +202,10 @@ class NightlyCurator:
     @classmethod
     def _automatic_identity_links(cls, moments):
         """Build auditable identity clusters from repeated speech-grounded anchors."""
-        by_family_alias = {}
+        by_scope_alias = {}
         for moment in moments:
-            family = cls._family(moment)
-            if not family:
+            scope = cls._identity_scope(moment)
+            if not scope:
                 continue
             by_moment = {}
             for entity, canonical, row in cls._speech_anchor_rows(moment):
@@ -125,19 +214,19 @@ class NightlyCurator:
                 if len({row[0].casefold() for row in rows}) != 1:
                     continue
                 entity, canonical, observation = rows[0]
-                by_family_alias.setdefault((family, alias_key), {
+                by_scope_alias.setdefault((scope, alias_key), {
                     "canonical": canonical, "anchors": []
                 })["anchors"].append((moment, entity, observation))
 
         links = []
-        moments_by_family = {}
+        moments_by_scope = {}
         for moment in moments:
-            family = cls._family(moment)
-            if family:
-                moments_by_family.setdefault(family, []).append(moment)
+            scope = cls._identity_scope(moment)
+            if scope:
+                moments_by_scope.setdefault(scope, []).append(moment)
 
         candidate_options = {}
-        for (family, _alias_key), cluster in sorted(by_family_alias.items()):
+        for (scope, _alias_key), cluster in sorted(by_scope_alias.items()):
             anchors = cluster["anchors"]
             videos = {}
             for moment, entity, observation in anchors:
@@ -165,7 +254,7 @@ class NightlyCurator:
                     })
 
             candidates = candidate_options
-            for moment in moments_by_family.get(family, []):
+            for moment in moments_by_scope.get(scope, []):
                 rows = cls._rows(moment)
                 if len(rows) != 1:
                     continue
@@ -324,6 +413,7 @@ class NightlyCurator:
                 "source_time": moment.get("source_time") or {},
                 "scene": str(moment.get("scene") or moment.get("user_action") or "")[:500],
                 "interaction_details": str(moment.get("interaction_details") or "")[:500],
+                "content_summary": str(moment.get("content_summary") or "")[:300],
                 "location": moment.get("location") or "", "activity": moment.get("activity") or "",
                 "people": moment.get("people") or [], "person_observations": observations,
                 "speech_and_person_facts": speech[:12],
@@ -382,8 +472,8 @@ class NightlyCurator:
             if not direct:
                 if len(anchors) < 2:
                     continue
-                group = self._video(target).rsplit("/",1)[0]
-                anchors = [a for a in anchors if group and self._video(a).rsplit("/",1)[0] == group]
+                scope = self._identity_scope(target)
+                anchors = [a for a in anchors if self._identity_scope(a) == scope]
                 if len(anchors) < 2:
                     continue
                 if self._overlap(self._description(target, old),
@@ -522,9 +612,9 @@ class NightlyCurator:
             segment=str(provenance.get("source_segment_id") or "")
             if not video or not segment: continue
             facts={key:moment.get(key) for key in (
-                "scene","user_action","interaction_details","source_evidence","people",
+                "scene","user_action","interaction_details","content_summary","source_evidence","people",
                 "person_observations","location","activity","objects","object_states","temporal_facts")}
-            if not any(facts.get(k) for k in ("scene","user_action","interaction_details","source_evidence","temporal_facts")):
+            if not any(facts.get(k) for k in ("scene","user_action","interaction_details","content_summary","source_evidence","temporal_facts")):
                 continue
             sig=hashlib.sha256(json.dumps(facts,ensure_ascii=False,sort_keys=True,
                 separators=(",",":")).encode()).hexdigest()

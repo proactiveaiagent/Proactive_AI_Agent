@@ -33,7 +33,8 @@ from qwen_perceive import (
     _normalize_camera_wearer_actor_aliases, _temporal_fact_coverage_error, clip_range,
     extract_frames, parse_analysis, source_video_input_fingerprint, video_path_of,
 )
-from grounding_cache import PersistentObjectGroundingCache  # noqa: E402
+from grounding_cache import (PersistentObjectGroundingCache,
+                             PERSON_GROUNDING_IMPLEMENTATION_FINGERPRINT)  # noqa: E402
 from multimodal_memory import MultimodalAssetStore, _run_ffmpeg  # noqa: E402
 from audio_transcript_cache import PersistentTranscriptCache  # noqa: E402
 from face_detection import detect_faces, expanded_face_sample_times  # noqa: E402
@@ -556,9 +557,11 @@ def _cache_text_needs_full_reperception(entry: dict) -> bool:
 
 
 def resolve_cached_perception(perceiver: QwenPerceiver, moment: dict, entry: dict,
-                              refresh_quality_gap: bool = False) -> dict:
-    """Refresh scenes as a whole; use focused repairs only for person coverage."""
-    result = perceiver.perceive(moment, force=False, persist_cache=False, allow_quality_warning=True)
+                              refresh_quality_gap: bool = False,
+                              force_full_reperception: bool = False) -> dict:
+    """Refresh scenes as a whole; optionally force fresh inference for every clip."""
+    result = perceiver.perceive(moment, force=force_full_reperception,
+                                persist_cache=False, allow_quality_warning=True)
     if result.get("source") == "error" or not result.get("fields"):
         return result
 
@@ -607,8 +610,9 @@ def resolve_cached_perception(perceiver: QwenPerceiver, moment: dict, entry: dic
 def run(limit: int | None = None, dry_run: bool = False,
         all_profiles: bool = False, short_half: bool = False,
         custom_all: bool = False, long_participants: list[str] | None = None,
+        force_refresh: bool = False,
         short_first: int | None = None, short_all: bool = False,
-        crop_only: bool = False) -> dict:
+        crop_only: bool = False, clip_id: str | None = None) -> dict:
     scoped = short_half or short_first is not None or short_all or custom_all or bool(long_participants)
     if all_profiles and scoped:
         raise ValueError("--all-profiles cannot be combined with focused profile selections")
@@ -618,6 +622,12 @@ def run(limit: int | None = None, dry_run: bool = False,
     else:
         moments = load_moments(all_profiles)
         scope = "all selectable profiles" if all_profiles else "custom test set"
+    if clip_id:
+        moments = [moment for moment in moments
+                   if str(moment.get("id") or "") == str(clip_id)]
+        if not moments:
+            raise ValueError(f"clip id not found in selected profile: {clip_id}")
+        scope = f"{scope} ({clip_id})"
     if limit:
         moments = moments[:max(1, int(limit))]
     perceiver = QwenPerceiver(api_urls=API_URLS, cache_file=QWEN_CACHE)
@@ -626,9 +636,38 @@ def run(limit: int | None = None, dry_run: bool = False,
     media = object.__new__(MultimodalAssetStore)
     speech_cache = PersistentTranscriptCache(SPEECH_CACHE)
 
-    def warm_face_cache(source_id, video, start, end, frame_times):
-        face_times = expanded_face_sample_times(
-            start, end, frame_times, max_samples=12)
+    def cached_source_audio_text(moment):
+        """Match runtime's source-audio text using only already cached ASR rows."""
+        rows = []
+        for offset, duration, audio_data in video_audio_chunks(moment):
+            key = "whisper-source-audio-v2:" + hashlib.sha256(audio_data).hexdigest()
+            decoded = speech_cache.get(key)
+            if not isinstance(decoded, dict):
+                continue
+            language = str(decoded.get("language") or "unknown")[:24]
+            segments = decoded.get("segments") or []
+            if segments:
+                for segment in segments:
+                    if not isinstance(segment, dict):
+                        continue
+                    text = str(segment.get("text") or "").strip()
+                    if not text:
+                        continue
+                    start_s = offset + max(0.0, float(segment.get("start") or 0))
+                    end_s = offset + max(float(segment.get("start") or 0),
+                                          float(segment.get("end") or 0))
+                    rows.append(f"[audio {start_s:.2f}–{end_s:.2f}s; {language}] {text[:1000]}")
+            else:
+                text = str(decoded.get("full_text") or "").strip()
+                if text:
+                    rows.append(f"[audio {offset:.2f}–{offset + duration:.2f}s; {language}] {text[:1000]}")
+        return "\n".join(rows)[:4000]
+
+    def warm_face_cache(source_id, video, start, end, person_frames):
+        # Use the exact expanded gallery frames that runtime uses. Otherwise a
+        # prewarmed YOLO result cannot hit the interactive cache key.
+        face_times = [float(frame.get("at_s")) for frame in (person_frames or [])
+                      if isinstance(frame, dict) and frame.get("at_s") is not None]
         highres = media.sample_visual_candidates(
             video, start, end, source_id=source_id,
             count=len(face_times) or 7, full_resolution=True,
@@ -636,16 +675,16 @@ def run(limit: int | None = None, dry_run: bool = False,
         if not highres:
             return {"face_cache_failed": 1}
         key = grounding_cache.key(
-            source_id, ["yolov8n-face-detections-v2-dense"], highres)
+            source_id, ["yolov8n-face-detections-v3-hires-dense"], highres)
         cached, _ = grounding_cache.get_faces(key)
         if isinstance(cached, dict) and cached.get("model") == "YOLOv8n-Face":
-            return {"face_cache_hit": 1}
+            return {"face_cache_hit": 1, "faces": cached.get("faces") or []}
         faces = detect_faces(highres)
         if grounding_cache.put_faces(key, {"schema": 1, "status": "completed",
                                            "model": "YOLOv8n-Face", "frame_count": len(highres),
                                            "faces": faces}):
-            return {"face_cache_new": 1}
-        return {"face_cache_failed": 1}
+            return {"face_cache_new": 1, "faces": faces}
+        return {"face_cache_failed": 1, "faces": []}
 
     totals = {
         "clips": len(moments), "perception_cache_hits": 0, "perception_refreshed": 0,
@@ -680,20 +719,55 @@ def run(limit: int | None = None, dry_run: bool = False,
             start, end = clip_range(moment)
             frames = media.sample_visual_candidates(video, start, end,
                                                     source_id=mid, count=7)
+            # Match the runtime object-crop frame set exactly: its base samples
+            # are supplemented by full-resolution Qwen input timestamps, with
+            # those precise frames replacing any same-time low-resolution sample.
+            qwen_times = [float(value) for value in entry.get("frame_times_s") or []]
+            if qwen_times:
+                precise_frames = media.sample_visual_candidates(
+                    video, start, end, source_id=mid, count=len(qwen_times),
+                    sample_times=qwen_times, full_resolution=True)
+                by_time = {round(float(frame.get("at_s") or 0), 3): frame
+                           for frame in (frames or []) if isinstance(frame, dict)}
+                for frame in precise_frames or []:
+                    if isinstance(frame, dict):
+                        by_time[round(float(frame.get("at_s") or 0), 3)] = frame
+                frames = sorted(by_time.values(), key=lambda frame: float(frame.get("at_s") or 0))
             if not frames:
                 return {"object_failed": 1, "person_failed": 1, "id": mid,
                         "error": "no sampled visual frames"}
             result = {}
             # Match InteractiveSession exactly; normalizing labels creates a different cache key.
-            labels = fields.get("objects") or []
+            clean_objects, _person_object_labels = ir.filter_person_entities_from_objects(
+                fields.get("objects") or [], fields.get("person_observations") or [])
+            source_audio_text = cached_source_audio_text(moment)
+            object_decisions = ir.evaluate_object_image_policy(
+                clean_objects, fields.get("temporal_facts") or [],
+                document_evidence=fields.get("document_evidence") or [],
+                source_evidence=source_audio_text or fields.get("source_evidence") or "",
+                scene_context="\n".join(str(fields.get(field) or "") for field in
+                                        ("scene", "content_summary", "activity", "interaction_details")),
+                person_observations=fields.get("person_observations") or [])
+            labels = [row["object"] for row in object_decisions if row.get("keep_image")]
+            temporal_facts = fields.get("temporal_facts") or []
+            object_observations = fields.get("object_observations") or []
+            object_cache_evidence = dict(temporal_facts=temporal_facts,
+                                     document_evidence=fields.get("document_evidence") or [],
+                                     object_observations=object_observations)
             if labels:
-                source_key = grounding_cache.source_key(mid, video, start, end, labels)
+                source_key = grounding_cache.source_key(
+                    mid, video, start, end, labels, evidence=object_cache_evidence,
+                    source_frame_times=entry.get("frame_times_s") or [])
                 cached = grounding_cache.get_source(source_key)[0]
-                key = grounding_cache.key(mid, labels, frames)
+                key = grounding_cache.key(mid, labels, frames, object_cache_evidence)
                 if cached is None:
                     cached = grounding_cache.get(key)[0]
                 if cached is None:
-                    cached = perceiver.ground_objects(labels, frames)
+                    cached = perceiver.ground_objects(labels, frames,
+                                                       temporal_facts=temporal_facts,
+                                                       source_frame_times=entry.get("frame_times_s") or [],
+                                                       document_evidence=fields.get("document_evidence") or [],
+                                                       object_observations=object_observations)
                     if grounding_cache.put(key, cached):
                         grounding_cache.put_source(source_key, cached)
                         result["object_new"] = 1
@@ -709,19 +783,29 @@ def run(limit: int | None = None, dry_run: bool = False,
                       if isinstance(row, dict) and str(row.get("entity") or "").strip()][:8]
             if people:
                 frame_times = entry.get("frame_times_s") or []
-                person_frames = media.sample_visual_candidates(
+                for row in people:
+                    anchor = ir._person_evidence_anchor_index(row, len(frame_times))
+                    if anchor is not None:
+                        row["frame_index"] = anchor
+                qwen_person_frames = media.sample_visual_candidates(
                     video, start, end, source_id=mid, count=len(frame_times) or 7,
                     sample_times=frame_times or None)
-                person_labels = ["person-crop-v8-qwen-anchor-cache-key-mutual-face-identity: " + str(row.get("entity") or "").strip()
-                                 + " | " + str(row.get("appearance") or "").strip() + " | anchors=" + ir._person_anchor_cache_suffix(row)
+                person_frames = ir._sample_person_gallery_inputs(
+                    media, video, start, end, mid, qwen_person_frames, max_samples=36)
+                person_labels = ["person-crop-v18-dense-face-count-residual-gallery: " + str(row.get("entity") or "").strip()
+                                 + " | " + str(row.get("appearance") or "").strip()
+                    + " | face=" + str(row.get("face_features") or "").strip() + " | anchors=" + ir._person_anchor_cache_suffix(row)
                                  for row in people]
-                face_result = warm_face_cache(mid, video, start, end, frame_times)
+                face_result = warm_face_cache(mid, video, start, end, person_frames)
                 for stat in ("face_cache_hit", "face_cache_new", "face_cache_failed"):
                     crop_totals[stat] += int(face_result.get(stat, 0) or 0)
-                key = grounding_cache.key(mid, person_labels, person_frames)
+                key = grounding_cache.key(
+                    mid, person_labels, person_frames, (),
+                    implementation=PERSON_GROUNDING_IMPLEMENTATION_FINGERPRINT)
                 cached = grounding_cache.get(key)[0]
                 if cached is None:
-                    cached = perceiver.ground_people(people, person_frames)
+                    cached = perceiver.ground_people(
+                        people, person_frames, face_detections=face_result.get("faces") or [])
                     if grounding_cache.put(key, cached):
                         result["person_new"] = 1
                     else:
@@ -815,12 +899,15 @@ def run(limit: int | None = None, dry_run: bool = False,
                     video, start, end, source_id=mid, count=len(frame_times) or 7,
                     sample_times=frame_times or None)
                 person_labels = [
-                    "person-crop-v8-qwen-anchor-cache-key-mutual-face-identity: " + str(row.get("entity") or "").strip()
-                    + " | " + str(row.get("appearance") or "").strip() + " | anchors=" + ir._person_anchor_cache_suffix(row)
+                    "person-crop-v18-dense-face-count-residual-gallery: " + str(row.get("entity") or "").strip()
+                    + " | " + str(row.get("appearance") or "").strip()
+                    + " | face=" + str(row.get("face_features") or "").strip() + " | anchors=" + ir._person_anchor_cache_suffix(row)
                     for row in person_rows[:8] if isinstance(row, dict)
                 ]
                 if person_frames and person_labels:
-                    person_key = grounding_cache.key(mid, person_labels, person_frames)
+                    person_key = grounding_cache.key(
+                        mid, person_labels, person_frames,
+                        implementation=PERSON_GROUNDING_IMPLEMENTATION_FINGERPRINT)
                     person_cached, _ = grounding_cache.get(person_key)
                     totals["person_grounding_hit" if person_cached is not None
                            else "person_grounding_new"] += 1
@@ -865,7 +952,7 @@ def run(limit: int | None = None, dry_run: bool = False,
             or needs_person_observation_review(fields, entry)
         )
         had_current_prompt = bool(entry and entry.get("prompt_version") == PROMPT_VERSION)
-        if (entry and fields and had_current_prompt
+        if (not force_refresh and entry and fields and had_current_prompt
                 and _source_fingerprint_matches(entry, moment) and not had_quality_gap):
             result = dict(entry)
             result["fields"] = dict(fields)
@@ -875,7 +962,8 @@ def run(limit: int | None = None, dry_run: bool = False,
             # current content checks. During explicit prewarm, regenerate rows
             # with known gaps instead of reporting a hit with a permanent warning.
             result = resolve_cached_perception(
-                perceiver, moment, entry, refresh_quality_gap=had_quality_gap)
+                perceiver, moment, entry, refresh_quality_gap=had_quality_gap,
+                force_full_reperception=force_refresh)
         return index, mid, had_quality_gap, bool(entry), had_current_prompt, result
 
     with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="perception-warm") as pool:
@@ -935,21 +1023,42 @@ def run(limit: int | None = None, dry_run: bool = False,
         mid = str(moment.get("id") or "")
         entry = perceiver.cache.get(mid) or {}
         fields = entry.get("fields") or {}
-        labels = fields.get("objects") or []
-        video = video_path_of(moment)
-        if not labels or not _source_fingerprint_matches(entry, moment):
+        if not _source_fingerprint_matches(entry, moment):
             return {"grounding_not_needed": 1}
+        video = video_path_of(moment)
         if not video:
             return {"grounding_failed": 1, "id": mid, "error": "video asset unavailable"}
         start, end = clip_range(moment)
-        source_key = grounding_cache.source_key(mid, video, start, end, labels)
+        clean_objects, _person_object_labels = ir.filter_person_entities_from_objects(
+            fields.get("objects") or [], fields.get("person_observations") or [])
+        source_audio_text = cached_source_audio_text(moment)
+        decisions = ir.evaluate_object_image_policy(
+            clean_objects, fields.get("temporal_facts") or [],
+            document_evidence=fields.get("document_evidence") or [],
+            source_evidence=source_audio_text or fields.get("source_evidence") or "",
+            scene_context="\n".join(str(fields.get(field) or "") for field in
+                                    ("scene", "content_summary", "activity", "interaction_details")),
+            person_observations=fields.get("person_observations") or [])
+        labels = [row["object"] for row in decisions if row.get("keep_image")]
+        if not labels:
+            return {"grounding_not_needed": 1}
+        temporal_facts = fields.get("temporal_facts") or []
+        document_evidence = fields.get("document_evidence") or []
+        object_observations = fields.get("object_observations") or []
+        cache_evidence = {"temporal_facts": temporal_facts,
+                          "document_evidence": document_evidence,
+                          "object_observations": object_observations}
+        source_key = grounding_cache.source_key(
+            mid, video, start, end, labels, evidence=cache_evidence,
+            source_frame_times=entry.get("frame_times_s") or [])
         source_cached, _ = grounding_cache.get_source(source_key)
         if source_cached is not None:
             return {"grounding_hit": 1, "grounding_source_hit": 1}
         frames = media.sample_visual_candidates(video, start, end, source_id=mid, count=7)
         if not frames:
             return {"grounding_failed": 1, "id": mid, "error": "object-frame sample unavailable"}
-        key = grounding_cache.key(mid, labels, frames)
+        key = grounding_cache.key(mid, labels, frames, cache_evidence,
+                                  implementation=GROUNDING_IMPLEMENTATION_FINGERPRINT)
         cached, _ = grounding_cache.get(key)
         if cached is not None:
             if source_key:
@@ -958,7 +1067,11 @@ def run(limit: int | None = None, dry_run: bool = False,
         last_result = {}
         for attempt in range(3):
             try:
-                last_result = perceiver.ground_objects(labels, frames)
+                last_result = perceiver.ground_objects(
+                    labels, frames, temporal_facts=temporal_facts,
+                    source_frame_times=entry.get("frame_times_s") or [],
+                    document_evidence=document_evidence,
+                    object_observations=object_observations)
                 if grounding_cache.put(key, last_result):
                     if source_key:
                         grounding_cache.put_source(source_key, last_result)
@@ -1006,15 +1119,24 @@ def run(limit: int | None = None, dry_run: bool = False,
             return {"person_grounding_failed": 1, "id": mid, "error": "video asset unavailable"}
         start, end = clip_range(moment)
         frame_times = entry.get("frame_times_s") or []
-        frames = media.sample_visual_candidates(
+        for row in rows:
+            anchor = ir._person_evidence_anchor_index(row, len(frame_times))
+            if anchor is not None:
+                row["frame_index"] = anchor
+        qwen_person_frames = media.sample_visual_candidates(
             video, start, end, source_id=mid, count=len(frame_times) or 7,
             sample_times=frame_times or None)
-        labels = ["person-crop-v8-qwen-anchor-cache-key-mutual-face-identity: " + str(row.get("entity") or "").strip()
-                  + " | " + str(row.get("appearance") or "").strip() + " | anchors=" + ir._person_anchor_cache_suffix(row) for row in rows[:8]]
+        frames = ir._sample_person_gallery_inputs(
+            media, video, start, end, mid, qwen_person_frames, max_samples=36)
+        labels = ["person-crop-v18-dense-face-count-residual-gallery: " + str(row.get("entity") or "").strip()
+                  + " | " + str(row.get("appearance") or "").strip()
+                    + " | face=" + str(row.get("face_features") or "").strip() + " | anchors=" + ir._person_anchor_cache_suffix(row) for row in rows[:8]]
         if not frames or not labels:
             return {"person_grounding_failed": 1, "id": mid, "error": "person-frame sample unavailable"}
-        face_result = warm_face_cache(mid, video, start, end, frame_times)
-        key = grounding_cache.key(mid, labels, frames)
+        face_result = warm_face_cache(mid, video, start, end, frames)
+        key = grounding_cache.key(
+            mid, labels, frames, (),
+            implementation=PERSON_GROUNDING_IMPLEMENTATION_FINGERPRINT)
         cached, _ = grounding_cache.get(key)
         if cached is not None:
             return {"person_grounding_hit": 1, **face_result}
@@ -1113,6 +1235,15 @@ def run(limit: int | None = None, dry_run: bool = False,
     profile_cache = PersistentTranscriptCache(
         RUNS / "interactive_person_profile_cache.json")
     profile_runner = object.__new__(ir.InteractiveSession)
+    # The shared speech-profile method also reads earlier source-ordered moments,
+    # saved L7 profiles, and verified face references. Supply the same read-only
+    # context as an interactive session so cross-clip identity reconciliation
+    # works during prewarming instead of failing on a partially initialized object.
+    profile_runner.moments = moments
+    profile_runner.mem = ir.PersonMemory(
+        memory_dir=str(RUNS / "interactive_mem" / "current"))
+    profile_runner.media_store = MultimodalAssetStore(
+        RUNS / "interactive_mem" / "current")
     profile_runner.perceiver = perceiver
     profile_runner.person_profile_cache = profile_cache
     profile_totals = {"hit": 0, "new": 0, "failed": 0, "skipped": 0}
@@ -1166,20 +1297,34 @@ def run(limit: int | None = None, dry_run: bool = False,
             return {"failed": 1, "id": mid, "error": "video asset unavailable"}
         start, end = clip_range(moment)
         frame_times = entry.get("frame_times_s") or []
-        frames = media.sample_visual_candidates(
+        qwen_frames = media.sample_visual_candidates(
             video, start, end, source_id=mid, count=len(frame_times) or 7,
             sample_times=frame_times or None)
-        if not frames:
+        if not qwen_frames:
             return {"failed": 1, "id": mid, "error": "profile frame sampling failed"}
+        # Match runtime frame order and expand Qwen anchors with gallery frames.
+        # The profile cache uses the first seven frames; warming only Qwen anchors
+        # caused a systematic cache miss during runtime enrichment.
+        frames = ir._sample_person_gallery_inputs(
+            media, video, start, end, mid, qwen_frames, max_samples=18)[:7]
+        visual_facts = fields.get("temporal_facts") or []
+        document_evidence = fields.get("document_evidence") or []
+        visual_context = {key: fields.get(key) for key in
+                          ("scene", "content_summary", "activity",
+                           "interaction_details", "location", "environments")}
+        historical_people = profile_runner._historical_people_mentioned_in_speech(
+            speech, mid)
         cache_key = ir.person_profile_cache_key(
-            mid, speech, people, frames, fields.get("temporal_facts") or [])
+            mid, speech, people, frames, visual_facts,
+            ir._collect_document_evidence(document_evidence, visual_facts),
+            historical_people=historical_people, visual_context=visual_context)
         if profile_cache.get(cache_key) is not None:
             return {"hit": 1}
         # Retry against the round-robin pool if a busy API rejects one request.
         for attempt in range(3):
             profile_runner._enrich_person_profiles_from_speech(
-                people, speech, frames, mid,
-                visual_facts=fields.get("temporal_facts") or [])
+                people, speech, frames, mid, visual_facts=visual_facts,
+                document_evidence=document_evidence, visual_context=visual_context)
             if profile_cache.get(cache_key) is not None:
                 return {"new": 1}
             if attempt < 2:
@@ -1212,6 +1357,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--limit", type=int)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--force-refresh", action="store_true",
+                        help="re-run Qwen inference for every selected clip in the parallel endpoint pool")
     parser.add_argument("--crop-only", action="store_true",
                         help="warm local HOG/CLIP person/object grounding caches only; never call Qwen or Whisper")
     parser.add_argument("--all-profiles", action="store_true")
@@ -1224,6 +1371,8 @@ if __name__ == "__main__":
                              help="warm the first N clips in each short-term set")
     parser.add_argument("--custom-all", action="store_true",
                         help="include every custom test-set clip")
+    parser.add_argument("--clip-id", default="",
+                        help="restrict cache warming to one exact clip ID")
     parser.add_argument("--long-participants", default="",
                         help="comma-separated long-term participant IDs or names")
     args = parser.parse_args()
@@ -1233,4 +1382,5 @@ if __name__ == "__main__":
     run(limit=args.limit, dry_run=args.dry_run, all_profiles=args.all_profiles,
         short_half=args.short_half, custom_all=args.custom_all,
         long_participants=long_participants, short_first=args.short_first,
-        short_all=args.short_all, crop_only=args.crop_only)
+        short_all=args.short_all, crop_only=args.crop_only,
+        clip_id=args.clip_id or None, force_refresh=args.force_refresh)

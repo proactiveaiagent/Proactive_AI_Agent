@@ -74,7 +74,7 @@ def make_translator(qwen_api_url: str = "http://127.0.0.1:8001",
 
 
 _CJK = re.compile(r"[\u3400-\u9fff]")
-_FIELD_KEYS = ("scene", "user_action", "interaction_details", "location",
+_FIELD_KEYS = ("scene", "user_action", "content_summary", "interaction_details", "location",
                "activity", "time_occasion")
 
 

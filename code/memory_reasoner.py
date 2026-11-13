@@ -96,6 +96,10 @@ _GENERIC_RECALL_TOKENS = {
     "camera", "scene", "video", "frame", "residential", "look", "looking", "appear", "appears",
     "wear", "wearing", "background", "walk", "walking", "stand", "standing",
     "sit", "sitting", "move", "moving", "toward", "action",
+    "place", "time", "state", "states", "stat", "activity", "activities",
+    "object", "objects", "environment", "environments", "observ", "observation",
+    "blue", "gray", "grey", "dark", "light", "jacket", "coat", "shirt",
+    "approach", "approaches", "greet", "greeting", "warm", "joyful",
     # Occupational/relationship roles are useful facts, but too generic to act
     # as cross-episode identity or retrieval anchors on their own.
     "neighbor", "neighbour", "server", "waiter", "waitress", "employee",
@@ -144,7 +148,7 @@ def _moment_retrieval_quality(moment: dict) -> tuple:
         + 100 * len(moment.get("object_observations") or [])
         + 80 * bool(moment.get("source_evidence"))
         + sum(len(str(moment.get(key) or "")) for key in
-              ("scene", "user_action", "interaction_details", "activity", "location")),
+              ("scene", "content_summary", "user_action", "interaction_details", "activity", "location")),
         str(moment.get("timestamp") or ""),
         str(moment.get("id") or ""),
     )
@@ -160,7 +164,7 @@ def _numeric_units(text: str) -> set[str]:
 
 
 class MemoryReasoner:
-    def __init__(self, memory, api_url: str = "http://127.0.0.1:8000", timeout: int = 120):
+    def __init__(self, memory, api_url: str = "http://127.0.0.1:8001", timeout: int = 120):
         self.memory = memory
         self.api_url = api_url.rstrip("/")
         self.timeout = timeout
@@ -346,7 +350,7 @@ class MemoryReasoner:
                 row["entity_matches"].append(match)
 
         search_fields = (
-            "scene", "user_action", "interaction_details", "people", "location",
+            "scene", "content_summary", "user_action", "interaction_details", "people", "location",
             "activity", "objects", "object_observations", "environments",
             "person_observations", "temporal_facts", "source_evidence", "normalized",
             "_merged_search_text",
@@ -1272,9 +1276,14 @@ class MemoryReasoner:
         without a second model call for query planning.
         """
         moment = moment if isinstance(moment, dict) else {}
+        context = context if isinstance(context, dict) else {}
+        observations_context = context.get("current_scene_observations")
+        observations_context = observations_context if isinstance(observations_context, dict) else {}
+        source_fields = observations_context.get("scene_fields")
+        source_fields = source_fields if isinstance(source_fields, dict) else {}
         facts = memory_facts(moment)
-        temporal = [row for row in facts.get("temporal_facts") or [] if isinstance(row, dict)]
-        observations = [row for row in facts.get("person_observations") or [] if isinstance(row, dict)]
+        temporal = [row for row in (facts.get("temporal_facts") or source_fields.get("temporal_facts") or []) if isinstance(row, dict)]
+        observations = [row for row in (facts.get("person_observations") or source_fields.get("person_observations") or observations_context.get("person_observations") or []) if isinstance(row, dict)]
 
         def items(value):
             if isinstance(value, (list, tuple, set)):
@@ -1293,14 +1302,14 @@ class MemoryReasoner:
                     break
             return result
 
-        people = items(moment.get("people"))
+        people = items(moment.get("people") or source_fields.get("people"))
         people += [str(row.get("entity") or "").strip() for row in observations]
-        locations = items(moment.get("location"))
-        activities = items(moment.get("activity"))
-        objects = items(moment.get("objects"))
-        environments = items(moment.get("environments"))
+        locations = items(moment.get("location") or source_fields.get("location"))
+        activities = items(moment.get("activity") or source_fields.get("activity"))
+        objects = items(moment.get("objects") or source_fields.get("objects"))
+        environments = items(moment.get("environments") or source_fields.get("environments"))
         states, fact_search_parts, speech_search_parts, times = [], [], [], []
-        source_time = moment.get("source_time") if isinstance(moment.get("source_time"), dict) else {}
+        source_time = moment.get("source_time") if isinstance(moment.get("source_time"), dict) else (source_fields.get("source_time") if isinstance(source_fields.get("source_time"), dict) else {})
         for key in ("timestamp", "clip_start_s", "clip_end_s", "time_scope", "recorded_at"):
             value = source_time.get(key)
             if value not in (None, ""):
@@ -1389,20 +1398,18 @@ class MemoryReasoner:
             key=lambda item: (0 if item[0] in {"moved", "state", "located_at"}
                               else 1 if item[0] in {"occurred_at", "participated_in"}
                               else 2))
-        fact_query = "Historical event facts: " + "; ".join(
-            value[:88] for _, value in ranked_fact_parts[:2])
+        fact_query = ("Historical event facts: " + "; ".join(
+            value[:88] for _, value in ranked_fact_parts[:2])) if ranked_fact_parts else ""
         speech_parts = speech_search_parts[:3] + observation_search_parts[:2]
-        speech_query = "Person statements and appearance: " + "; ".join(
-            value[:72] for value in speech_parts[:3])
-        dimension_query = " ".join([
-            "People " + ", ".join(people[:3]),
-            "Place " + ", ".join(locations[:2]),
-            "Time " + ", ".join(times[:3]),
-            "Activity " + ", ".join(activities[:2]),
-            "Objects " + ", ".join(objects[:4]),
-            "States " + ", ".join(states[:3]),
-            "Environment " + ", ".join(environments[:2]),
-        ]).strip()
+        speech_query = ("Person statements and appearance: " + "; ".join(
+            value[:72] for value in speech_parts[:3])) if speech_parts else ""
+        dimension_parts = []
+        for label, values in (("People", people[:3]), ("Place", locations[:2]),
+                              ("Activity", activities[:2]), ("Objects", objects[:4]),
+                              ("Environment", environments[:2])):
+            if values:
+                dimension_parts.append(label + " " + ", ".join(values))
+        dimension_query = " ".join(dimension_parts)
         proposed_searches = []
         for query in (scene_query, fact_query, speech_query, dimension_query):
             query = " ".join(str(query or "").split()).strip()
@@ -1436,6 +1443,10 @@ class MemoryReasoner:
         current_moment_id = str(context.pop("source_moment_id", "") or "")
         proactive = bool(context.pop("proactive", False))
         retrieval_only = bool(context.pop("retrieval_only", False))
+        excluded_source_segments = context.pop("exclude_source_segment_ids", [])
+        if isinstance(excluded_source_segments, str):
+            excluded_source_segments = [excluded_source_segments]
+        excluded_source_segments = {str(value).strip() for value in excluded_source_segments if str(value or "").strip()}
         cached_scene_plan = context.pop("cached_scene_plan", None)
         request_id = str(context.pop("reasoning_request_id", "") or "")
         cancel_event = context.pop("cancellation_event", None)
@@ -1537,6 +1548,8 @@ class MemoryReasoner:
         recall_started = time.perf_counter()
         recalled = self._recall(searches, entities, seen, limit=9,
                                 priority_details=first_details)
+        if retrieval_only and excluded_source_segments:
+            recalled = [row for row in recalled if _source_segment(row) not in excluded_source_segments]
         recall_elapsed_ms = round((time.perf_counter() - recall_started) * 1000)
         first.extend(recalled)
         first = first[:9]
@@ -1546,6 +1559,77 @@ class MemoryReasoner:
         media_link_elapsed_ms = round((time.perf_counter() - media_started) * 1000)
         for row in first:
             seen.add(row["id"])
+        candidate_rerank = {"method": "llm_candidate_rerank", "status": "not_needed",
+                            "accepted_ids": [], "rejected": []}
+        rerank_model_calls = 0
+        rerank_started = time.perf_counter()
+        if retrieval_only and first:
+            pool = [row for row in first if str(row.get("id") or "") != current_moment_id]
+            payload = []
+            for row in pool[:12]:
+                rid = str(row.get("id") or "")
+                info = first_details.get(rid) or {}
+                payload.append({
+                    "id": rid, "scene": str(row.get("scene") or "")[:420],
+                    "summary": str(row.get("content_summary") or "")[:260],
+                    "action": str(row.get("user_action") or row.get("action") or "")[:260],
+                    "people": row.get("people") or [], "location": str(row.get("location") or "")[:120],
+                    "activity": str(row.get("activity") or "")[:180], "objects": row.get("objects") or [],
+                    "environment": row.get("environments") or [],
+                    "initial_score": info.get("text_relevance"), "matched_terms": info.get("matched_terms") or [],
+                })
+            prompt = (
+                "You are a strict reranker for a personal smart-glasses memory search. Compare the complete current scene with each candidate episode. "
+                "Keep a candidate only when it is meaningfully useful for this scene: the same continuing event, a well-supported same person/relationship, "
+                "or a distinctive shared place/event that materially links the episodes. Reject mere overlap in generic clothing colors, common verbs, "
+                "generic people labels, broad indoor/outdoor settings, or schema labels such as time/state/place. A visually similar person is not the same person without identity evidence. "
+                "Do not keep a candidate just because the lexical retriever returned it. Return JSON only: "
+                + '{"ranked":[{"id":"string","relevant":true,"score":0.0,"basis":"string","evidence":"string"}]}. '
+                + "For relevant=true, score must be at least 0.70 and evidence must name a concrete shared fact from both records. Use only IDs provided.\n"
+                + "Current scene: " + situation[:1200] + "\nCandidate episodes: " + json.dumps(payload, ensure_ascii=False)
+            )
+            try:
+                judged = self._infer(prompt, request_id=request_id, cancel_event=cancel_event)
+                rerank_model_calls = 1
+                rows = judged.get("ranked") if isinstance(judged, dict) else None
+                rows = rows if isinstance(rows, list) else []
+                by_id = {str(row.get("id") or ""): row for row in rows if isinstance(row, dict)}
+                allowed, rejected = set(), []
+                for candidate in payload:
+                    rid = candidate["id"]
+                    decision = by_id.get(rid) or {}
+                    try:
+                        score = float(decision.get("score") or 0)
+                    except (TypeError, ValueError):
+                        score = 0.0
+                    relevant = bool(decision.get("relevant")) and score >= 0.70 and bool(str(decision.get("evidence") or "").strip())
+                    if relevant:
+                        allowed.add(rid)
+                        info = first_details.setdefault(rid, {"id": rid, "reasons": []})
+                        info["llm_relevance"] = round(score, 3)
+                        info["llm_basis"] = str(decision.get("basis") or "")[:120]
+                        info["llm_evidence"] = str(decision.get("evidence") or "")[:240]
+                        info["reasons"] = list(info.get("reasons") or []) + ["大模型复核通过"]
+                    else:
+                        rejected.append({"id": rid, "score": round(score, 3),
+                                         "basis": str(decision.get("basis") or "")[:120],
+                                         "evidence": str(decision.get("evidence") or "")[:240]})
+                current_rows = [row for row in first if str(row.get("id") or "") == current_moment_id]
+                first = current_rows + [row for row in first if str(row.get("id") or "") in allowed]
+                candidate_rerank = {"method": "llm_candidate_rerank", "status": "completed",
+                                    "model_calls": 1,
+                                    "accepted_ids": [str(row.get("id") or "") for row in first if str(row.get("id") or "") != current_moment_id],
+                                    "rejected": rejected}
+            except Exception as exc:
+                allowed = {c["id"] for c in payload
+                           if float((first_details.get(c["id"]) or {}).get("text_relevance") or 0) >= 0.70
+                           or bool((first_details.get(c["id"]) or {}).get("identity_anchor"))}
+                first = [row for row in first if str(row.get("id") or "") == current_moment_id
+                         or str(row.get("id") or "") in allowed]
+                candidate_rerank = {"method": "strict_score_fallback", "status": "model_unavailable",
+                                    "model_calls": 0, "message": str(exc)[:180],
+                                    "accepted_ids": [str(row.get("id") or "") for row in first if str(row.get("id") or "") != current_moment_id]}
+        rerank_elapsed_ms = round((time.perf_counter() - rerank_started) * 1000)
         evidence = first[:]
         raw_actionable_cues = planner.get("actionable_cues")
         if not isinstance(raw_actionable_cues, list):
@@ -1591,7 +1675,8 @@ class MemoryReasoner:
         context["verified_action_cues"] = verified_action_cues
         rounds = [{"queries": searches, "candidate_ids": [m["id"] for m in first],
                    "media_links": links_first,
-                   "candidate_details": self._priority_rows(first, first_details, links_first)}]
+                   "candidate_details": self._priority_rows(first, first_details, links_first),
+                   "candidate_rerank": candidate_rerank}]
         if retrieval_only:
             retrieved = [moment for moment in first
                          if str(moment.get("id") or "") != current_moment_id]
@@ -1618,9 +1703,11 @@ class MemoryReasoner:
                     "scene_plan": planner_elapsed_ms,
                     "memory_recall": recall_elapsed_ms,
                     "multimodal_linking": media_link_elapsed_ms,
+                    "candidate_rerank": rerank_elapsed_ms,
                     "summary_search": summary_search_elapsed_ms,
                 },
-                "model_calls": 0,
+                "candidate_rerank": candidate_rerank,
+                "model_calls": rerank_model_calls,
                 "elapsed_ms": round((time.perf_counter() - t0) * 1000),
             }
         summaries = {
