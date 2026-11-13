@@ -1798,10 +1798,13 @@ class Handler(BaseHTTPRequestHandler):
 
         if url.path == "/api/interactive/prewarm_status":
             external_status = multimodal_prewarm_status(ROOT)
-            if external_status and (
-                    external_status.get("running") or not PREWARM["running"]):
+            if external_status and external_status.get("running"):
                 return self._send(200, external_status)
-            return self._send(200, dict(PREWARM))
+            # Keep local terminal state authoritative; stale completed multimodal
+            # status must not masquerade as completion for another dataset.
+            if PREWARM.get("scenario") is not None or not external_status:
+                return self._send(200, dict(PREWARM))
+            return self._send(200, external_status)
 
         return self._send(404, {"error": "not found"})
 
