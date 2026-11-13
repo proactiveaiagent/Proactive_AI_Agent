@@ -95,6 +95,17 @@ _GENERIC_RECALL_TOKENS = {
     "adult", "visible", "human", "face", "facial", "expression", "smile", "smiling",
     "camera", "scene", "video", "frame", "residential", "look", "looking", "appear", "appears",
     "wear", "wearing", "background", "walk", "walking", "stand", "standing",
+    "memory", "index", "memory_index", "metadata", "schema", "candidate", "score",
+    "age", "apparent", "appearance", "basis", "basi", "confidence", "entity", "evidence",
+    "feishu", "feature", "features", "featur", "frame", "high", "low", "medium", "modality",
+    "profile", "ref", "role", "segment", "source", "visual", "detected", "unknown",
+    "person", "participant", "observation", "observations", "identity", "verified",
+    "range", "estimate", "estimated", "clip", "start", "end", "all", "audio",
+    "continuity", "continu", "sunny", "tree", "building", "stack", "step",
+    "indoor", "indoors", "outdoor", "outdoors", "room", "living", "apartment", "house",
+    "home", "door", "window", "table", "coffee", "sofa", "couch", "curtain", "curtains",
+    "chair", "desk", "television", "tv", "furniture", "large", "small", "big", "wooden",
+    "red", "blue", "black", "white", "gray", "grey", "green", "pink", "brown", "dark", "light",
     "sit", "sitting", "move", "moving", "toward", "action",
     "place", "time", "state", "states", "stat", "activity", "activities",
     "object", "objects", "environment", "environments", "observ", "observation",
@@ -117,13 +128,19 @@ _GENERIC_PERSON_ALIAS = re.compile(
 _GENERIC_PERSON_ROLES = {
     "server", "waiter", "waitress", "employee", "customer", "cashier",
     "doctor", "nurse", "neighbor", "neighbour", "stranger", "police officer",
+    "user", "viewer", "camera wearer", "wearer", "speaker", "listener", "observer",
     "服务员", "收银员", "医生", "护士", "邻居", "陌生人",
 }
 
 
 def _is_generic_person_alias(value: str) -> bool:
-    normalized = " ".join(str(value or "").casefold().split()).strip(" .,:;-_")
-    return bool(_GENERIC_PERSON_ALIAS.fullmatch(normalized)
+    normalized = " ".join(str(value or "").casefold().replace("_", " ").replace("-", " ").split()).strip(" .,:;-_")
+    descriptive_person = re.fullmatch(
+        r"(?:(?:elderly|young|older|old|middle aged|adult|little|small)\s+)?"
+        r"(?:woman|man|person|people|individual|child|adult|male|female)(?:\s+\d+)?",
+        normalized,
+    )
+    return bool(descriptive_person or _GENERIC_PERSON_ALIAS.fullmatch(normalized)
                 or normalized in _GENERIC_PERSON_ROLES)
 
 
@@ -1569,24 +1586,47 @@ class MemoryReasoner:
             for row in pool[:12]:
                 rid = str(row.get("id") or "")
                 info = first_details.get(rid) or {}
-                payload.append({
-                    "id": rid, "scene": str(row.get("scene") or "")[:420],
-                    "summary": str(row.get("content_summary") or "")[:260],
-                    "action": str(row.get("user_action") or row.get("action") or "")[:260],
-                    "people": row.get("people") or [], "location": str(row.get("location") or "")[:120],
-                    "activity": str(row.get("activity") or "")[:180], "objects": row.get("objects") or [],
+                person_rows = [person for person in row.get("person_observations") or []
+                               if isinstance(person, dict)]
+                candidate_evidence = {
+                    "scene": str(row.get("scene") or "")[:700],
+                    "summary": str(row.get("content_summary") or row.get("summary") or "")[:400],
+                    "action": str(row.get("user_action") or row.get("action") or "")[:350],
+                    "interaction": str(row.get("interaction_details") or "")[:350],
+                    "people": row.get("people") or [],
+                    "person_profiles": [{key: person.get(key) for key in
+                                          ("entity", "readable_name", "roles", "relationships", "profile_context")
+                                          if person.get(key)} for person in person_rows[:6]],
+                    "location": str(row.get("location") or "")[:180],
+                    "activity": str(row.get("activity") or "")[:240],
+                    "objects": row.get("objects") or [],
                     "environment": row.get("environments") or [],
-                    "initial_score": info.get("text_relevance"), "matched_terms": info.get("matched_terms") or [],
+                    "source_speech": str(row.get("source_evidence") or "")[:700],
+                }
+                payload.append({
+                    "id": rid, **candidate_evidence,
+                    "initial_score": info.get("text_relevance"),
+                    "matched_terms": info.get("matched_terms") or [],
                 })
             prompt = (
-                "You are a strict reranker for a personal smart-glasses memory search. Compare the complete current scene with each candidate episode. "
-                "Keep a candidate only when it is meaningfully useful for this scene: the same continuing event, a well-supported same person/relationship, "
-                "or a distinctive shared place/event that materially links the episodes. Reject mere overlap in generic clothing colors, common verbs, "
-                "generic people labels, broad indoor/outdoor settings, or schema labels such as time/state/place. A visually similar person is not the same person without identity evidence. "
-                "Do not keep a candidate just because the lexical retriever returned it. Return JSON only: "
-                + '{"ranked":[{"id":"string","relevant":true,"score":0.0,"basis":"string","evidence":"string"}]}. '
-                + "For relevant=true, score must be at least 0.70 and evidence must name a concrete shared fact from both records. Use only IDs provided.\n"
-                + "Current scene: " + situation[:1200] + "\nCandidate episodes: " + json.dumps(payload, ensure_ascii=False)
+                "You are a careful reranker for a personal smart-glasses memory search. Compare the whole current episode "
+                "against EVERY supplied candidate independently. Search for all materially related history, not just the single closest result. "
+                "Return exactly one ranked row for every candidate ID, including relevant=false rows; never omit an ID. "
+                "A candidate is relevant when evidence supports the same continuing event, a well-supported recurring person/relationship, "
+                "or a distinctive repeated place/occasion that connects separate clips in one episode (the action may differ between clips). "
+                "When identity is unclear, you may still retrieve a historical scene as event context without claiming the people are the same. "
+                "A recurring setting/occasion is sufficient when at least three concrete details match together, including a distinctive landmark or layout and its associated props or state; "
+                "individual details may be common, but their same combination and arrangement is discriminative. Mark this as scene/occasion continuity, not a person match. "
+                "Do not rely on same date, sequence, or a broad setting alone; require source-grounded details on both sides. "
+                "Do not require exact action or wording when multiple independent distinctive facts connect the episodes. "
+                "Reject candidates supported only by generic clothing/color, common verbs, generic roles or people labels, broad indoor/outdoor setting, "
+                "or ordinary objects. A similar-looking person alone is not an identity match. Do not accept a lexical score or matched keyword by itself. "
+                "For every relevant=true row, quote one exact contiguous phrase from the CURRENT scene and one exact contiguous phrase from that candidate's supplied fields; "
+                "the two quotes must demonstrate the specific link. Do not paraphrase either quote or make up evidence. If no specific link can be quoted from both sides, relevant=false. "
+                "Use a score from 0 to 1; relevant=true requires score >= 0.70. Return JSON only: "
+                + '{"ranked":[{"id":"string","relevant":false,"score":0.0,"basis":"string","current_evidence":"exact quote or empty","memory_evidence":"exact quote or empty"}]}. '
+                + "Use only supplied IDs.\nCurrent scene: " + situation[:1600]
+                + "\nCandidate episodes: " + json.dumps(payload, ensure_ascii=False)
             )
             try:
                 judged = self._infer(prompt, request_id=request_id, cancel_event=cancel_event)
@@ -1602,18 +1642,76 @@ class MemoryReasoner:
                         score = float(decision.get("score") or 0)
                     except (TypeError, ValueError):
                         score = 0.0
-                    relevant = bool(decision.get("relevant")) and score >= 0.70 and bool(str(decision.get("evidence") or "").strip())
+                    current_quote = str(decision.get("current_evidence") or "").strip()
+                    memory_quote = str(decision.get("memory_evidence") or "").strip()
+                    candidate_source = next((row for row in pool
+                                             if str(row.get("id") or "") == rid), {})
+                    candidate_text = " ".join(str(candidate_source.get(key) or "") for key in (
+                        "scene", "content_summary", "summary", "user_action", "action",
+                        "interaction_details", "people", "person_observations", "location",
+                        "activity", "objects", "environments", "source_evidence"))
+                    def grounded_span(quote, source):
+                        quote = " ".join(str(quote or "").split()).casefold()
+                        source = " ".join(str(source or "").split()).casefold()
+                        return len(quote) >= 8 and quote in source
+                    current_grounded = grounded_span(current_quote, situation)
+                    memory_grounded = grounded_span(memory_quote, candidate_text)
+                    evidence_grounded = current_grounded and memory_grounded
+                    evidence_method = "verbatim_quotes" if evidence_grounded else ""
+                    shared_anchors = []
+                    evidence_text = (f"当前片段：{current_quote}；历史记忆：{memory_quote}"
+                                     if evidence_grounded else "")
+                    if not evidence_grounded:
+                        # Some inference backends still emit the legacy `basis` field.
+                        # Accept it only when it names multiple non-generic terms that
+                        # independently occur in both records; never trust rationale alone.
+                        basis_text = str(decision.get("basis") or decision.get("evidence") or "")
+                        current_anchors = _recall_anchor_tokens(situation)
+                        memory_anchors = _recall_anchor_tokens(candidate_text)
+                        basis_anchors = _recall_anchor_tokens(basis_text)
+                        shared_anchors = sorted(current_anchors & memory_anchors & basis_anchors)
+                        family_terms = {"grandmother", "grandparent", "grandchild", "granddaughter",
+                                        "grandson", "mother", "father", "daughter", "son", "family"}
+                        same_person_and_context = (
+                            bool(set(shared_anchors) & family_terms)
+                            and bool(set(shared_anchors) - family_terms)
+                        )
+                        multiple_distinctive_context = len(shared_anchors) >= 3
+                        if same_person_and_context or multiple_distinctive_context:
+                            evidence_grounded = True
+                            evidence_method = "shared_source_anchors"
+                            evidence_text = "共享可核查线索：" + ", ".join(shared_anchors[:8])
+                        if not evidence_grounded and bool(decision.get("relevant")) and score >= 0.70:
+                            # The model can identify a valid connection but omit the required
+                            # quote fields. Accept only if three filtered, non-schema content
+                            # anchors independently occur in both source records.
+                            source_overlap = sorted(current_anchors & memory_anchors)
+                            if len(source_overlap) >= 3:
+                                evidence_grounded = True
+                                evidence_method = "shared_source_anchors"
+                                shared_anchors = source_overlap
+                                evidence_text = "共享可核查线索：" + ", ".join(source_overlap[:8])
+                    relevant = (bool(decision.get("relevant")) and score >= 0.70
+                                and evidence_grounded)
                     if relevant:
                         allowed.add(rid)
                         info = first_details.setdefault(rid, {"id": rid, "reasons": []})
                         info["llm_relevance"] = round(score, 3)
                         info["llm_basis"] = str(decision.get("basis") or "")[:120]
-                        info["llm_evidence"] = str(decision.get("evidence") or "")[:240]
-                        info["reasons"] = list(info.get("reasons") or []) + ["大模型复核通过"]
+                        info["llm_evidence"] = evidence_text[:360]
+                        info["llm_evidence_method"] = evidence_method
+                        info["reasons"] = list(info.get("reasons") or []) + [
+                            "大模型复核通过（双侧原文证据）" if evidence_method == "verbatim_quotes"
+                            else "大模型复核通过（双侧共享具体线索）"]
                     else:
                         rejected.append({"id": rid, "score": round(score, 3),
                                          "basis": str(decision.get("basis") or "")[:120],
-                                         "evidence": str(decision.get("evidence") or "")[:240]})
+                                         "evidence": evidence_text[:360],
+                                         "evidence_grounded": evidence_grounded,
+                                         "evidence_method": evidence_method,
+                                         "shared_source_anchors": shared_anchors if not current_grounded or not memory_grounded else [],
+                                         "current_evidence_grounded": current_grounded,
+                                         "memory_evidence_grounded": memory_grounded})
                 current_rows = [row for row in first if str(row.get("id") or "") == current_moment_id]
                 first = current_rows + [row for row in first if str(row.get("id") or "") in allowed]
                 candidate_rerank = {"method": "llm_candidate_rerank", "status": "completed",

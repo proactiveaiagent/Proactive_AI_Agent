@@ -512,7 +512,7 @@ class PostWriteRetrievalMixin:
             "source_moment_id": current_moment_id,
             "retrieval_only": True,
             "memory_modalities": "text",
-            "retrieval_policy_version": "scene-memory-retrieval-v8-identity-link-object-state",
+            "retrieval_policy_version": "scene-memory-retrieval-v10-no-generic-user-anchor",
             "observed_scene": situation,
             "visual_object_observations": visual_observations[:8],
             "source_video_speech": spoken_evidence[:700],

@@ -426,7 +426,7 @@ def _run_retrieval_test(job_id, moment, uploaded_path=None):
             situation, context={
                 "retrieval_only": True,
                 "memory_modalities": "text",
-                "retrieval_policy_version": "retrieval_test_ui_v1",
+                "retrieval_policy_version": "retrieval_test_ui_v5-grounded-shared-anchors-2026-11-13",
                 "exclude_source_segment_ids": source_ids,
                 "current_scene_observations": {
                     "person_observations": person_observations,
