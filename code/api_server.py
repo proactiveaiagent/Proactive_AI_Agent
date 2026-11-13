@@ -154,7 +154,7 @@ async def lifespan(app: FastAPI):
     print("🚀 Loading Whisper model...")
     from faster_whisper import WhisperModel
 
-    w_device = "cuda" if torch.cuda.is_available() else "cpu"
+    w_device = os.environ.get("WHISPER_DEVICE", "cuda" if torch.cuda.is_available() else "cpu").strip().lower()
     compute_type = "float16" if w_device == "cuda" else "float32"
 
     # 优先用本地模型目录（含 model.bin），不触发 HF 下载（避免临时目录清理失败）；
