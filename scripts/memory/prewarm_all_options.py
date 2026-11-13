@@ -20,9 +20,10 @@ from urllib.request import urlopen
 
 
 ROOT = Path(__file__).resolve().parents[2]
-BASE = "http://127.0.0.1:8768"
+BASE = "http://127.0.0.1:8765"
 STATUS = BASE + "/api/interactive/prewarm_status"
 START = BASE + "/api/interactive/prewarm?"
+API_HEALTH = [f"http://127.0.0.1:{port}/health" for port in (8001, 8002, 8003, 8004)]
 PROFILES = [
     # Put the user's active evaluation set first. Long-term full-day datasets
     # contain thousands of clips and can otherwise keep this queue occupied
@@ -50,20 +51,31 @@ def log(message: str) -> None:
 
 def wait_for_server() -> dict:
     while True:
-        try:
-            health = get_json("http://127.0.0.1:8000/health", timeout=5)
-            if health.get("model_loaded"):
-                return health
-            log("Qwen API 未就绪；60 秒后重试")
-        except (URLError, TimeoutError, OSError) as exc:
-            log(f"等待 Qwen API：{exc}")
-        time.sleep(60)
+        ready = []
+        errors = []
+        for url in API_HEALTH:
+            try:
+                health = get_json(url, timeout=5)
+                if health.get("model_loaded"):
+                    ready.append(health)
+                else:
+                    errors.append(f"{url.rsplit(':', 1)[-1]}: model not loaded")
+            except (URLError, TimeoutError, OSError) as exc:
+                errors.append(f"{url.rsplit(':', 1)[-1]}: {exc}")
+        if len(ready) == len(API_HEALTH):
+            return {
+                "model_loaded": True,
+                "healthy_api_nodes": len(ready),
+                "gpu_names": sorted({(row.get("gpu") or {}).get("name", "unknown") for row in ready}),
+                "free_gb_total": round(sum(float((row.get("gpu") or {}).get("free_gb") or 0) for row in ready), 1),
+            }
+        log(f"等待 Qwen 四卡服务全部就绪：{len(ready)}/{len(API_HEALTH)}；{'; '.join(errors)}；30 秒后重试")
+        time.sleep(30)
 
 
 def main() -> None:
     health = wait_for_server()
-    gpu = health.get("gpu") or {}
-    log(f"开始补齐感知缓存；模型已就绪，GPU={gpu.get('name')}，剩余显存={gpu.get('free_gb')} GB")
+    log(f"开始补齐感知缓存；{health['healthy_api_nodes']} 个模型节点已就绪，GPU={', '.join(health['gpu_names'])}，总剩余显存={health['free_gb_total']} GB")
     totals = {"cache_hits": 0, "inferred": 0, "failed": 0}
 
     for profile in PROFILES:
