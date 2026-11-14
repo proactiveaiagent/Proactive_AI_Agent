@@ -1,0 +1,90 @@
+# 自定义测试集 35 段记忆质量审阅
+
+范围：Qwen 多模态感知缓存中的全部 FEISHU 自定义测试片段。报告统计已保存的结构字段；当前 GPU 推理故障期间没有把旧缓存冒充成新模型复核结果。缓存文本核查不等于人工金标准。
+
+## 总览
+
+- 片段数：35；视频与片段 SHA 指纹齐全：35/35。
+- 当前详细提示词版本：21 段；待新版复核标记：14 段。
+- 多模态采集版本：temporal-v6-visual-evidence-text-transcript-2026-10-18=35；当前版本为 temporal-v7-context-entity-crops-2026-10-19。
+- 人物观察 42 条；物品 175 条；环境 35 条；视觉事件事实 105 条。
+- 人物观察平均 1.2 条/段；5 段没有人物观察；编号占位人物别名 0 条。无观察的片段需要复核画面，不能用“人物1/人物2”替代整理。
+- 可核验的画面文字姓名 1 条、画面文字年龄 0 条。记忆中另有语音转写事实 23 条，覆盖 16 段；类型：addressed_person=5, quoted_product_claim=1, reported_employment_event=1, self_reported_current_health_event=1, spoken_family_reference=5, spoken_health_claim=1, spoken_transaction_detail=3, spoken_travel_instruction=2, stated_birthday_event=1, stated_experience=1, stated_preference=1, stated_relationship=1。其中明确计划/年龄陈述为 0/0 条；空缺不能靠画面外观推测。
+- 地点、活动字段有值：35/35、35/35；明确可读的时间/场合：1/35。没有画面时间文字时留空是正确行为，视频时间另由来源元数据保存。
+- 语音事实来源与关联：片段和音频起止时间齐全 23/23；说话来源字段齐全 23/23，其中公共广播来源 2 条、人物说话者身份仍未知 21 条；明确受话人/文字指代关联 19/23。未做声音身份识别，未知说话者仍保持未知。
+- 事件事实分布：0条=2, 1条=5, 2条=6, 3条=7, 4条=9, 5条=5, 6条=1；13 段只有 0–2 条，2 段没有事件事实。
+- 当前质量门槛未通过：动作事实覆盖不足 24/35 段；人物观察覆盖不足 8/35 段。普通交互仍即时显示同源缓存并带质量提示；预热负责完整补强。
+
+## 逐片段检查
+
+| 片段 | 感知版本 | 人物观察 | 物品 | 环境 | 事实 | 地点 | 活动 | 审阅标记 | 场景摘要 | 前三条事实 |
+|---|---|---:|---:|---:|---:|---|---|---|---|---|
+| FEISHU_10_1_1d077083a6 | review-required-crosschecked-20261019 | 3 | 0 | 1 | 3 | Residential apartment complex | The person walks toward the camera, smiling. pe… | 动作事实覆盖不足; 待新版复核; 无物品记录 | A person with short gray hair and glasses walks toward the camera on a paved path in a residential area. She … | person wearing a blue…:moved:walked toward camera / people running away f…:moved:ran away from camera / people walking in bac…:moved:walked away from camera |
+| FEISHU_10_2_45d38a6018 | memory-v8.0-visible-text-atomic-evidence-2026-10-19 | 3 | 6 | 1 | 4 | A restaurant with red velvet seat… | The person is seated and smiling at the camera.… | 初看齐全 | A person with short dark hair and pearl earrings sits in a red velvet chair at a restaurant table. She smiles… | person with short dar…:expression:smiling broadly / person with short dar…:expression:gentle smile / waiter in a black vest:action:walking past |
+| FEISHU_10_3_2ca404576c | memory-v8.0-visible-text-atomic-evidence-2026-10-19 | 1 | 8 | 1 | 3 | A restaurant interior with a view… | The person is posing for the camera, changing h… | 动作事实覆盖不足 | A person with short dark hair and pink blush sits in a red velvet chair at a restaurant table. She looks at t… | person with short dar…:changed facia…:from neutral gaze to wide smile / person with short dar…:changed facia…:from wide smile to open-mouthed expre… / person with short dar…:changed facia…:from open-mouthed expression to wide … |
+| FEISHU_11_1_649c51e52b | memory-v8.0-visible-text-atomic-evidence-2026-10-19 | 1 | 9 | 1 | 2 | Office | The person in suit places a folder on his desk. | 动作事实覆盖不足; 事件事实偏少 | A person in suit in a suit stands in an office, initially holding a blue folder, then placing it on his desk.… | blue folder:held:by person in suit / blue folder:placed:on desk |
+| FEISHU_11_2_b9129b089f | review-required-crosschecked-20261019 | 1 | 1 | 1 | 3 | Inside an elevator with stainless… | The person is experiencing an emotional moment,… | 动作事实覆盖不足; 待新版复核 | A person in a gray coat stands inside an elevator. He initially looks down with a somber expression. He then … | person in gray coat:appeared:standing inside elevator / person in gray coat:changed:raised right hand to cover nose and m… / person in gray coat:changed:lowered hand slightly |
+| FEISHU_11_3_bd878e2a50 | memory-v8.0-visible-text-atomic-evidence-2026-10-19 | 1 | 3 | 1 | 5 | Inside an elevator | The person performs a sequence of actions with … | 动作事实覆盖不足; 2条完全重复事实 | A person in a gray coat stands inside an elevator. He holds a white tissue, looks forward, then raises it to … | person wearing a gray…:held:white tissue / person wearing a gray…:used:white tissue / person wearing a gray…:held:white tissue |
+| FEISHU_12_1_cb22256e78 | memory-v8.0-visible-text-atomic-evidence-2026-10-19 | 0 | 4 | 1 | 6 | An indoor studio setting with a g… | The video showcases a bag of Lay's chips, with … | 初看齐全 | A bag of Lay's chips is shown in motion blur against a green spiral background. Chips then fly through the ai… | Lay's chip bag:shown:A blurred Lay's chip bag is centered … / chips:falling:Chips are seen falling in mid-air aga… / spiced chips:shown:A close-up of spiced chips with red s… |
+| FEISHU_12_2_3ce4e03600 | memory-v8.0-visible-text-atomic-evidence-2026-10-19 | 1 | 3 | 1 | 2 | A supermarket aisle | Shopping for snacks in a supermarket | 动作事实覆盖不足; 事件事实偏少 | A camera wearer with a gray-gloved hand picks up a green Lay's Chilli bag from a supermarket shelf. The shelf… | Lay's Chilli bag:picked_up:from supermarket shelf / Lay's Chilli bag:placed:into shopping cart |
+| FEISHU_12_3_d781904f40 | memory-v8.0-visible-text-atomic-evidence-2026-10-19 | 1 | 2 | 1 | 2 | A supermarket aisle | The camera wearer selects a bag of "Eat Real" C… | 动作事实覆盖不足; 事件事实偏少 | A camera wearer with a gray-gloved hand reaches for and picks up a white bag of "Eat Real" Chilli & Lemon Chi… | Eat Real Chilli & Lem…:picked_up:from shelf / Eat Real Chilli & Lem…:held:in hand |
+| FEISHU_1_1_f3787bd26f | memory-v8.0-visible-text-atomic-evidence-2026-10-19 | 2 | 5 | 1 | 4 | A rural courtyard with brick wall… | The second person approaches the first person, … | 初看齐全 | A person wearing a blue padded jacket and gray headscarf stands smiling in a snowy courtyard gate. A second p… | person wearing a pink…:approached:person wearing a blue padded jacket a… / person wearing a pink…:placed hand on:person wearing a blue padded jacket a… / person wearing a blue…:smiled:at person wearing a pink beanie and b… |
+| FEISHU_1_2_2b48bd2642 | memory-v8.0-visible-text-atomic-evidence-2026-10-19 | 1 | 7 | 1 | 2 | A rural courtyard in a snowy regi… | The person walks out of the gate and approaches… | 动作事实覆盖不足; 事件事实偏少 | A person wearing a blue padded jacket and red scarf emerges from a snow-covered traditional gate. They walk f… | person wearing a blue…:emerged from:gate / person wearing a blue…:walked toward:camera |
+| FEISHU_1_3_ad0266d879 | memory-v8.0-visible-text-atomic-evidence-2026-10-19 | 1 | 10 | 1 | 3 | A residential courtyard with a br… | The person steps out of their home, turns to fa… | 初看齐全 | A person wearing a blue padded jacket and gray headscarf steps out of a warmly lit doorway into a snowy yard.… | person wearing a blue…:moved:stepped out of doorway / person wearing a blue…:changed postu…:turned to face camera / person wearing a blue…:changed postu…:extended arms outward |
+| FEISHU_2_1_b4d69d0493 | review-required-crosschecked-20261019 | 0 | 4 | 1 | 0 | International Airport | The camera wearer is moving through an airport … | 动作事实覆盖不足; 人物观察覆盖不足; 待新版复核; 无事件事实 | The camera moves through an airport jet bridge, passing a Delta airplane, then exits into a terminal. It asce… |  |
+| FEISHU_2_2_b51bbc5af5 | review-required-crosschecked-20261019 | 2 | 3 | 1 | 4 | Sun Noodle House, an urban street | Dining at a noodle house, receiving a bill, and… | 人物观察覆盖不足; 待新版复核; 1条完全重复事实 | The camera wearer sits at a table in a noodle house with an empty bowl and chopsticks. A server hands them a … | receipt:placed:on table / receipt:held:by camera wearer / receipt:placed:on table |
+| FEISHU_2_3_89a22e5397 | review-required-crosschecked-20261019 | 1 | 6 | 1 | 5 | Inside and outside a fast-food re… | The camera wearer makes a purchase at a fast-fo… | 人物观察覆盖不足; 待新版复核 | The camera wearer enters a fast-food restaurant, approaches the counter, and hands a five-dollar bill to an e… | five-dollar bill:held:by the camera wearer / five-dollar bill:handed_over:to the employee / employee:accepted:the five-dollar bill |
+| FEISHU_3_1_3adf23f5bb | review-required-crosschecked-20261019 | 1 | 6 | 1 | 1 | Bedroom | Storing a wallet in a bedside drawer. | 动作事实覆盖不足; 待新版复核; 事件事实偏少 | A first-person view shows a hand opening a drawer of a bedside table. A black wallet is placed inside the dra… | black wallet:placed:inside the open drawer |
+| FEISHU_3_2_bb13973a8b | review-required-crosschecked-20261019 | 2 | 8 | 1 | 2 | An apartment interior | The camera wearer is exploring the living room … | 动作事实覆盖不足; 待新版复核; 事件事实偏少 | A delivery person in a blue jacket and white helmet stands in a hallway holding a white bag. The camera weare… | brown leather sofa:touched:by camera wearer / wooden coffee table:touched:by camera wearer |
+| FEISHU_3_3_6f73e3eba3 | memory-v8.0-visible-text-atomic-evidence-2026-10-19 | 0 | 5 | 1 | 5 | A bedroom with a bed and a wooden… | The camera wearer is inspecting the contents of… | 动作事实覆盖不足; 人物观察覆盖不足; 场景提到人物但无外观观察 | The camera wearer approaches a wooden bedside table, opens a drawer, and retrieves a dark brown leather walle… | wallet:picked_up:from drawer / wallet:opened:to reveal contents / wallet:closed:after inspection |
+| FEISHU_4_1_5e14668ff4 | review-required-crosschecked-20261019 | 1 | 10 | 1 | 4 | Queen Mary Hospital office | The camera wearer presents a medical document t… | 动作事实覆盖不足; 人物观察覆盖不足; 待新版复核; 3条完全重复事实 | A person in a blue medical coat sits at a desk in a hospital office. He holds up a paper with text, then lowe… | white paper:held:by the camera wearer / white paper:held:by the camera wearer / white paper:held:by the camera wearer |
+| FEISHU_4_2_de990d0d39 | memory-v8.0-visible-text-atomic-evidence-2026-10-19 | 0 | 7 | 1 | 1 | A rural outdoor path | Walking along a path; tilting the camera upward… | 事件事实偏少; 场景提到人物但无外观观察 | The camera wearer walks forward along a paved path bordered by greenery and a field under a blue sky with whi… | sky and trees:viewed_through:red viscous substance dripping down |
+| FEISHU_4_3_ac00c2e857 | review-required-crosschecked-20261019 | 0 | 1 | 1 | 0 | Outdoors under a partly cloudy sky | The camera wearer observes two people interacti… | 动作事实覆盖不足; 人物观察覆盖不足; 待新版复核; 无事件事实; 场景提到人物但无外观观察 | The camera wearer looks up at a blue sky with scattered white clouds. A person in a dark hoodie appears as a … |  |
+| FEISHU_5_1_90383d197b | memory-v8.0-visible-text-atomic-evidence-2026-10-19 | 1 | 4 | 1 | 1 | Bathroom | Weighing oneself | 动作事实覆盖不足; 事件事实偏少 | A person stands barefoot on a digital bathroom scale displaying "80.0". The camera's perspective is first-per… | digital scale:displayed:80.0 |
+| FEISHU_5_3_570dc77996 | memory-v8.0-visible-text-atomic-evidence-2026-10-19 | 1 | 8 | 1 | 4 | Outdoor running track in a park o… | Running on a track; a person walks and then sit… | 人物观察覆盖不足 | A person runs on a red outdoor track with white lane lines. The camera wearer's hands are visible in the fore… | camera wearer:running:on a red track / person in light-color…:walking:toward a bench / person in light-color…:sitting:on a bench |
+| FEISHU_5_4_c21aee7538 | review-required-crosschecked-20261019 | 2 | 9 | 1 | 2 | Indoor gym | Weightlifting exercise involving a barbell; the… | 动作事实覆盖不足; 待新版复核; 事件事实偏少 | A person in a black tank top and gray shorts stands in a gym, holding a barbell at shoulder height. They lowe… | person in black tank …:performed:squat-like movement with barbell at s… / person in black tank …:lowered:head |
+| FEISHU_5_5_262e89d5ea | memory-v8.0-visible-text-atomic-evidence-2026-10-19 | 2 | 6 | 1 | 4 | Inside a fast-food restaurant wit… | The camera wearer is eating a meal at a fast-fo… | 动作事实覆盖不足 | A person in a gray hoodie and glasses sits at a yellow table in a fast-food restaurant, eating fried chicken,… | person wearing a gray…:held:a piece of fried chicken / person wearing a gray…:used:a straw to drink soda / person wearing a gray…:smiled: |
+| FEISHU_6_1_a7627bda61 | memory-v8.0-visible-text-atomic-evidence-2026-10-19 | 3 | 6 | 1 | 4 | Hotel lobby | A hotel staff member presents identification in… | 初看齐全 | A person in a gray suit and red tie and red tie stands in a luxurious hotel lobby, holding a card. He extends… | card:held:by a person in a gray suit and red tie / card:extended:toward the camera / card:displayed:text 'Name: Richard Andrew' and 'Date… |
+| FEISHU_6_2_075c148e27 | memory-v8.0-visible-text-atomic-evidence-2026-10-19 | 1 | 1 | 1 | 1 | Hotel corridor | The person walks down the hotel corridor toward… | 动作事实覆盖不足; 事件事实偏少 | A person in a dark suit and red tie walks down a hotel corridor with red carpeting. He moves steadily toward … | person in dark suit a…:moved:walked down corridor toward camera |
+| FEISHU_6_3_edeeb339e1 | review-required-crosschecked-20261019 | 1 | 0 | 1 | 5 | Hotel corridor | The person walks down a hotel corridor, pauses … | 动作事实覆盖不足; 待新版复核; 无物品记录 | A person in a dark suit and red tie walks down a hotel corridor. He pauses, smiles broadly, and places his ha… | person in dark suit a…:moved:walked down corridor / person in dark suit a…:changed expre…:smiled broadly / person in dark suit a…:changed expre…:placed hand over chest |
+| FEISHU_7_1_41aeb05dab | memory-v8.0-visible-text-atomic-evidence-2026-10-19 | 1 | 8 | 1 | 4 | Living room | The person transitions from laughing to observi… | 初看齐全 | A small person sits on a mat in a living room, holding a yellow rubber duck. The person laughs broadly at fir… | person wearing a ligh…:appeared:sitting on a white mat / person wearing a ligh…:changed expre…:from laughing to serious with furrowe… / black camera:moved:from coffee table to in front of pers… |
+| FEISHU_7_2_325c12353f | memory-v8.0-visible-text-atomic-evidence-2026-10-19 | 1 | 5 | 1 | 3 | Outdoor playground in a residenti… | The small person in a yellow onesie is playing … | 动作事实覆盖不足; 人物观察覆盖不足; 2条完全重复事实 | A small small person in a yellow onesie in a yellow onesie stands on artificial grass in a playground, holdin… | yellow rubber duck toy:held:by the small person in a yellow onesie / yellow rubber duck toy:held:by the small person in a yellow onesie / yellow rubber duck toy:held:by the small person in a yellow onesie |
+| FEISHU_8_1_8fb634514c | review-required-crosschecked-20261019 | 1 | 8 | 1 | 1 | Indoor residential entryway | The person is speaking or reacting to something… | 动作事实覆盖不足; 待新版复核; 事件事实偏少 | A person with glasses and gray hair stands in a home entryway, holding the handles of a black folding chair. … | person wearing a blue…:held:black folding chair |
+| FEISHU_8_2_24e6fb5d12 | review-required-crosschecked-20261019 | 2 | 1 | 1 | 3 | An indoor hallway with two elevat… | A person opens a door. A person presents a prod… | 待新版复核 | A person opens a dark door to reveal a hallway with elevators. A person in a dark polo shirt stands in the ha… | person wearing a whit…:opened:a dark door / person holding a prod…:held:a product box / product box:displayed:Youthlt Advanced Formula Total Vitami… |
+| FEISHU_8_3_89f0c13a11 | review-required-crosschecked-20261019 | 1 | 4 | 1 | 3 | An indoor hallway with elevators … | The camera wearer is walking through a hallway … | 动作事实覆盖不足; 待新版复核 | A person in a dark polo shirt stands in a hallway holding a box labeled "Youthlt". The camera then moves forw… | box labeled Youthlt:held:by a person / door:approached:by camera wearer / door:viewed:up close |
+| FEISHU_9_1_fabdd91b9a | memory-v8.0-visible-text-atomic-evidence-2026-10-19 | 1 | 3 | 1 | 5 | Urban sidewalk in a city with bri… | The camera wearer is walking along a sidewalk, … | 动作事实覆盖不足 | the camera wearer walks forward on a city sidewalk while holding and looking at a smartphone. As they advance… | camera wearer:moved:walked forward on sidewalk / smartphone:held:held in hands / warning sign:located_at:beside open manhole |
+| FEISHU_9_2_2eaf8ede27 | memory-v8.0-visible-text-atomic-evidence-2026-10-19 | 1 | 4 | 1 | 4 | Urban street corner with brick pa… | The camera wearer is observing a manhole and th… | 动作事实覆盖不足 | the camera wearer holds a smartphone while standing on a sidewalk next to an open manhole. A warning sign rea… | Warning sign:placed:in the open manhole / camera wearer:held:smartphone / camera wearer:moved:to the right |
+
+## 已确认的高优先级缺口
+
+1. FEISHU_2_1（机场）：0 条事件事实、0 条人物外观观察；空间迁移和人物活动没有分解成可检索事实。
+2. FEISHU_4_3（急救场景）：0 条事实、0 条人物观察；应记录可见的人物外观、靠近/跪下/接触等顺序，不输出诊断或行动建议。
+3. FEISHU_3_1（钱包放入抽屉）：仅 1 条事实，未表达开抽屉、放钱包、关抽屉和手机仍在桌面等可见状态。
+4. FEISHU_4_1（医生与纸张）：存在把持纸动作归给 camera wearer 的风险；需重核主体。可读姓名、日期、病名须逐字按画面记录，不能转成未经核实的诊断或错误关联人物。
+5. FEISHU_4_2（红色液体/转场）：仅 1 条事实；把画面转场与真实环境变化分开。
+6. FEISHU_5_4（健身）：2 条事实，动作阶段和背景人物活动不足。
+7. FEISHU_5_1、FEISHU_6_2、FEISHU_8_1：各 1 条事实；分别核对秤读数/身体部位、走廊和门牌、人物与折叠椅的关系。
+8. 冗余：FEISHU_7_2 描述重复 small/yellow onesie 且鸭子 held 事实重复；FEISHU_6_1 重复服饰短语；FEISHU_11_3 的 tissue 多次出现，应按时序区分状态回归和重复噪声。
+
+## 多模态附件与失败运行
+
+- 当前 35 段记忆文件已有 105 张片段级原始帧、379 个实体证据附件，关联 654 条人物/物品/场景/地点/环境/活动/事件记录；其中 scene/location/environment/activity 各 35/35/35/35 条，event 243 条。环境与活动多模态已经有代表帧/事件帧，不是零附件。
+- 人物已生成 57 个 crop，覆盖 33 段含人物视频；物品只生成 153 个 crop，且仅覆盖 23 段。其余物品虽匹配到源帧，仍不是物品局部 crop，这是当前多模态最明显的附件缺口。
+- 裁剪附件完整性：210/210 个裁剪引用都能从 assets 目录解码，损坏或缺失 0 个。
+- 2026-10-19 复用与源视频、物品清单、抽样帧内容完全匹配的旧检测缓存，为 22 段增加 153 张物品 crop，约 1.74 MB；另有 1 张原有 crop 保留。35 段中 12 段没有完全匹配的检测框，未猜测裁剪位置，需等可靠检测可用后补齐。
+- 最近一次 35 段缓存运行：感知命中 17、更新/新建 0、失败 18；物品画面对照新建 0、失败 21、无需对照 14；文字转写缓存命中 35。失败返回 CUDA unspecified launch failure，旧缓存未被覆盖。
+- 实体附件已带有来源片段和视频时间；下一步应优先补齐物品框与 crop，并核对人物 crop 是否与稳定描述 alias 对应。仅保留必要的文字转写，不存声音片段。
+
+## 已落实的提取逻辑改进
+
+- 事件事实覆盖门槛已从约一半动作线索提高到 75%（最多 8 条不同事实）；现在以 Scene、User Action、Interaction Details、Activity 中动作线索最完整的一栏检查，避免 Scene 简短时漏检，也避免跨字段重复计数；相同 subject/predicate/value 重复项不能抵数。
+- 普通交互步骤遇到同源旧提示词缓存时立即返回并标记“旧缓存临时回退 · 待复核”；当前提示词缓存若人物/事件覆盖不足，则立即返回并标记“质量待补强”。两种快速回退都要求源视频与片段 SHA 一致、内容可用且没有未经验证的物品移动；不会覆盖缓存或冒充实时推理。预热流程仍按完整质量门槛强制复核。
+- 同源旧记忆重跑时已加入多模态版本检查：使用当前缓存成功刷新文本后，会重新采集场景/地点/环境/活动/事件的来源帧；人物/物品 crop 仅在新旧实体标签精确匹配时复用，不猜测框。当前落盘记忆仍是旧采集版本，需逐段运行后刷新。
+- 网页服务已安全重启并返回 HTTP 200；语音关联代码已加载。2026-10-19 04:31 检查 8 张 RTX 4090 全部报告 GPU Recovery Action: Reset，因此未启动视觉推理，也未重置任何共享 GPU。
+- 07:00 CST 释放额外 GPU 的既有任务保留；释放后会启动最多 4 个既有 GPU 端点的恢复监视器，每 5 分钟检查，GPU 故障时不回退 CPU，重试窗口到 12:30 CST；只处理短期两套数据各前 10 段、自定义全部、长期 Jake。
+
+## 后续验收顺序
+
+1. GPU 驱动恢复后重跑短期前 10 个、自定义全部、长期 Jake；GPU 不可用时不回退 CPU 长跑。
+2. 优先复核 2_1、4_3、3_1、4_1、4_2、5_4、5_1、6_2、8_1，逐条确认人物归属、状态转移、地点环境和帧证据。
+3. 对 35 段逐条核对场景、人物、物品去向、活动时间顺序、环境和 crop 可打开性。AI 抽查作为质检辅助，不当成人工金标准。

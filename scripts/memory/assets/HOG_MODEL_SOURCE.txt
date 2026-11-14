@@ -1,0 +1,1 @@
+Default pedestrian HOG SVM coefficients extracted from OpenCV 4.x modules/objdetect/src/hog.cpp, HOGDescriptor::getDefaultPeopleDetector(). Source: https://github.com/opencv/opencv/blob/4.x/modules/objdetect/src/hog.cpp. OpenCV is Apache-2.0 licensed.

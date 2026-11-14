@@ -1,0 +1,2 @@
+# Installed in the project CUDA-enabled agent environment.
+ultralytics==8.3.253

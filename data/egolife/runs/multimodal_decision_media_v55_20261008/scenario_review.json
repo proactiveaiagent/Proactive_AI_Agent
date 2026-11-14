@@ -1,0 +1,4156 @@
+{
+  "title": "真实时序证据与文本消融复核",
+  "version": "v55-targeted",
+  "source_memory": "data/egolife/runs/multimodal_aligned_v8_20261007/memory.json",
+  "source_moments": 124,
+  "review_type": "paired_qualitative_review_not_action_accuracy_benchmark",
+  "annotation_note": "事件和语音标注来自 EgoLife；下一步建议没有官方标准答案。",
+  "implementation_sha256": {
+    "code/memory_reasoner.py": "095d36a6e26b2175cdd8d03a3524d01eb8c488d97056364badbcbfeff18ad9e8",
+    "code/memory_audio.py": "74300b0d2795bb70ab3530220a7fa4f1bf7b4e71d0aa09c8e4fe6b6de089ae5f",
+    "code/multimodal_memory.py": "5bc5d2ec1c98e21d237253e9fc284dd42d4f489e2a0004b059499fa159908e1c",
+    "code/memory.py": "13bb304831f12f5f85dd4596d65a29f6876bd08e933c9a048fce66f55c2bae0d",
+    "scripts/memory/evaluate_multimodal_decisions.py": "8cba41d78b676fb2832a6267fae3807d52b1f755e91804e59afafc3f3959f979"
+  },
+  "source_memory_sha256": "621cd243898096bf8d0a0d0e4af9ae88943d66707dee0f1520ae5f15296031dd",
+  "scenarios": {
+    "food_and_storage_plan": {
+      "title": "晚间食物处理计划",
+      "situation": "无额外问题，主动分析当前事件：Katrina and Jake decide to discard un-wrapped food and relocate alcohol.",
+      "case_type": "real_event_proactive_scan",
+      "source_id": "DAY1_A5_KATRINA_19120000_en",
+      "review_target": "来源记录了丢弃未覆盖食物、将酒移至楼上、把鸡蛋放进冰箱的讨论；需标成群体计划，不能说成佩戴者已执行或个人偏好。 判读规则：对建议中的动作区分讨论/计划/已完成；只复述来源支持的计划，不添加食品安全判断或虚构执行结果。",
+      "available_history_count": 14,
+      "cutoff_time": "2026-09-30T19:12:00",
+      "ablations": {
+        "all": {
+          "situation": "Proactively assess the latest observed event and suggest a useful, safe next step only when evidence supports one. If none is needed, say no reminder is needed. Scene: Katrina and Jake decide to discard un-wrapped food and relocate alcohol. Action: Camera wearer observes and records the interaction. Interaction details: Katrina says “Let’s throw it out,” Jake agrees, and Katrina plans to move alcohol upstairs. Lucia suggests eggs go in the fridge People: Katrina, Jake, Tasha, Lucia Location: Kitchen, near a red refrigerator. Activity: Food disposal and storage planning. Objects: Red refrigerator, packaged meat, bottle of alcohol Speech: Katrina: And it's not even covered with plastic wrap. ; Jake: True. ; Katrina: Let's throw it out. ; Jake: Yeah, toss it. ; Katrina: I'll put the alcohol on the second floor. ; Tasha: Okay. ; Katrina: I think we should cook on the first floor first. ; Lucia: The eggs should go in the fridge, right? ; Katrina: Perfect. ; Jake: Uh, okay.",
+          "search_plan": {
+            "situation": "Katrina and Jake are discarding unwrapped food and relocating alcohol; Lucia suggests eggs go in the fridge. The camera wearer observes and records the interaction near a red refrigerator in the kitchen.",
+            "entities": [
+              "Katrina",
+              "Jake",
+              "Tasha",
+              "Lucia"
+            ],
+            "searches": [
+              "Proactively assess the latest observed event and suggest a useful, safe next step only when evidence supports one. If none is needed, say no reminder is needed. Scene: Katrina and Jake decide to discard un-wrapped food and relocate alcohol. Action: Camera wearer observes and records the interaction. Interaction details: Katrina says “Let’s throw it out,” Jake agrees, and Katrina plans to move alcohol upstairs. Lucia suggests eggs go in the fridge People: Katrina, Jake, Tasha, Lucia Location: Kitchen, near a red refrigerator. Activity: Food disposal and storage planning. Objects: Red refrigerator, packaged meat, bottle of alcohol Speech: Katrina: And it's not even covered with plastic wrap. ; Jake: True. ; Katrina: Let's throw it out. ; Jake: Yeah, toss it. ; Katrina: I'll put the alcohol on the second floor. ; Tasha: Okay. ; Katrina: I think we should cook on the first floor first. ; Lucia: The eggs should go in the fridge, right? ; Katrina: Perfect. ; Jake: Uh, okay."
+            ],
+            "decision_question": "",
+            "current_country": null,
+            "actionable_cues": [],
+            "proposed_searches": [],
+            "filtered_general_knowledge_searches": [],
+            "used_situation_fallback": true,
+            "verified_action_cues": []
+          },
+          "retrieval_rounds": [
+            {
+              "queries": [
+                "Proactively assess the latest observed event and suggest a useful, safe next step only when evidence supports one. If none is needed, say no reminder is needed. Scene: Katrina and Jake decide to discard un-wrapped food and relocate alcohol. Action: Camera wearer observes and records the interaction. Interaction details: Katrina says “Let’s throw it out,” Jake agrees, and Katrina plans to move alcohol upstairs. Lucia suggests eggs go in the fridge People: Katrina, Jake, Tasha, Lucia Location: Kitchen, near a red refrigerator. Activity: Food disposal and storage planning. Objects: Red refrigerator, packaged meat, bottle of alcohol Speech: Katrina: And it's not even covered with plastic wrap. ; Jake: True. ; Katrina: Let's throw it out. ; Jake: Yeah, toss it. ; Katrina: I'll put the alcohol on the second floor. ; Tasha: Okay. ; Katrina: I think we should cook on the first floor first. ; Lucia: The eggs should go in the fridge, right? ; Katrina: Perfect. ; Jake: Uh, okay."
+              ],
+              "candidate_ids": [
+                "m_1791339357288_90",
+                "m_1791339345934_84",
+                "m_1791339305697_67",
+                "m_1791339239731_32",
+                "m_1791339344172_83",
+                "m_1791339300315_65",
+                "m_1791339320283_73",
+                "m_1791339253639_40",
+                "m_1791339195407_8"
+              ],
+              "media_links": [],
+              "candidate_details": [
+                {
+                  "id": "m_1791339357288_90",
+                  "reasons": []
+                },
+                {
+                  "id": "m_1791339345934_84",
+                  "text_relevance": 0.304,
+                  "entity_matches": [
+                    {
+                      "dimension": "people",
+                      "tag": "Katrina"
+                    },
+                    {
+                      "dimension": "people",
+                      "tag": "Jake"
+                    },
+                    {
+                      "dimension": "same_event_entities",
+                      "tag": "Katrina: person: Jake, person: Shure, person: Alice, location: Shopping mall, activity: Group discussion about direction and item tagging; camera wearer texts on phone, object: Smartphone, object: shopping cart, object: umbrella",
+                      "evidence_id": "m_1791339345934_84",
+                      "relation": "observed_in_same_source_event"
+                    }
+                  ],
+                  "highlighted": false,
+                  "timestamp": "2026-09-30T18:33:00",
+                  "reasons": [
+                    "文本相关度",
+                    "索引实体命中"
+                  ]
+                },
+                {
+                  "id": "m_1791339305697_67",
+                  "text_relevance": 0.253,
+                  "entity_matches": [
+                    {
+                      "dimension": "people",
+                      "tag": "Katrina"
+                    },
+                    {
+                      "dimension": "same_event_entities",
+                      "tag": "Katrina: person: Shure, location: Supermarket, activity: Shopping for beverages, specifically selecting a red-flavored option to replace a grapefruit-flavored one., object: Shopping cart, object: red beverage bottle, object: yellow beverage bottles, object: green cartons, object: wooden display crates",
+                      "evidence_id": "m_1791339305697_67",
+                      "relation": "observed_in_same_source_event"
+                    }
+                  ],
+                  "highlighted": false,
+                  "timestamp": "2026-09-30T17:35:30",
+                  "reasons": [
+                    "文本相关度",
+                    "索引实体命中"
+                  ]
+                },
+                {
+                  "id": "m_1791339239731_32",
+                  "text_relevance": 0.211,
+                  "entity_matches": [
+                    {
+                      "dimension": "people",
+                      "tag": "Katrina"
+                    },
+                    {
+                      "dimension": "people",
+                      "tag": "Jake"
+                    },
+                    {
+                      "dimension": "people",
+                      "tag": "Tasha"
+                    },
+                    {
+                      "dimension": "same_event_entities",
+                      "tag": "Katrina: person: Jake, person: Tasha, person: Shure, location: A home interior, activity: Collaborative tabletop game session with three players, object: Cardboard box, object: whiteboard, object: checkered board",
+                      "evidence_id": "m_1791339239731_32",
+                      "relation": "observed_in_same_source_event"
+                    }
+                  ],
+                  "highlighted": false,
+                  "timestamp": "2026-09-30T12:53:00",
+                  "reasons": [
+                    "文本相关度",
+                    "索引实体命中"
+                  ]
+                },
+                {
+                  "id": "m_1791339344172_83",
+                  "text_relevance": 0.2,
+                  "entity_matches": [
+                    {
+                      "dimension": "people",
+                      "tag": "Katrina"
+                    },
+                    {
+                      "dimension": "people",
+                      "tag": "Jake"
+                    },
+                    {
+                      "dimension": "people",
+                      "tag": "Lucia"
+                    },
+                    {
+                      "dimension": "same_event_entities",
+                      "tag": "Katrina: person: Shure, person: Lucia, person: Jake, location: Modern indoor mall corridor., activity: Group conversation about fridge contents and data tracking., object: Shopping bags, object: receipts, object: food items",
+                      "evidence_id": "m_1791339344172_83",
+                      "relation": "observed_in_same_source_event"
+                    }
+                  ],
+                  "highlighted": false,
+                  "timestamp": "2026-09-30T18:31:30",
+                  "reasons": [
+                    "文本相关度",
+                    "索引实体命中"
+                  ]
+                },
+                {
+                  "id": "m_1791339300315_65",
+                  "text_relevance": 0.182,
+                  "entity_matches": [
+                    {
+                      "dimension": "people",
+                      "tag": "Katrina"
+                    },
+                    {
+                      "dimension": "people",
+                      "tag": "Jake"
+                    },
+                    {
+                      "dimension": "people",
+                      "tag": "Tasha"
+                    },
+                    {
+                      "dimension": "people",
+                      "tag": "Lucia"
+                    },
+                    {
+                      "dimension": "same_event_entities",
+                      "tag": "Katrina: person: Lucia, person: Shure, person: Tasha, person: Jake, location: Supermarket, activity: Shopping for beverages and ready-to-eat food, then checking out, object: Shopping cart, object: refrigerated beverage display",
+                      "evidence_id": "m_1791339300315_65",
+                      "relation": "observed_in_same_source_event"
+                    }
+                  ],
+                  "highlighted": false,
+                  "timestamp": "2026-09-30T17:28:30",
+                  "reasons": [
+                    "文本相关度",
+                    "索引实体命中"
+                  ]
+                },
+                {
+                  "id": "m_1791339320283_73",
+                  "text_relevance": 0.182,
+                  "entity_matches": [
+                    {
+                      "dimension": "people",
+                      "tag": "Katrina"
+                    },
+                    {
+                      "dimension": "people",
+                      "tag": "Tasha"
+                    },
+                    {
+                      "dimension": "people",
+                      "tag": "Lucia"
+                    },
+                    {
+                      "dimension": "same_event_entities",
+                      "tag": "Katrina: person: Tasha, person: Lucia, person: Alice, location: Supermarket, activity: Collaborative grocery shopping for hotpot ingredients, object: Shopping cart, object: packaged food items (taro, object: konjac",
+                      "evidence_id": "m_1791339320283_73",
+                      "relation": "observed_in_same_source_event"
+                    }
+                  ],
+                  "highlighted": false,
+                  "timestamp": "2026-09-30T18:00:00",
+                  "reasons": [
+                    "文本相关度",
+                    "索引实体命中"
+                  ]
+                },
+                {
+                  "id": "m_1791339253639_40",
+                  "text_relevance": 0.18,
+                  "entity_matches": [],
+                  "highlighted": false,
+                  "timestamp": "2026-09-30T13:08:00",
+                  "reasons": [
+                    "文本相关度"
+                  ]
+                },
+                {
+                  "id": "m_1791339195407_8",
+                  "text_relevance": 0.157,
+                  "entity_matches": [
+                    {
+                      "dimension": "people",
+                      "tag": "Jake"
+                    }
+                  ],
+                  "highlighted": false,
+                  "timestamp": "2026-09-30T11:49:00",
+                  "reasons": [
+                    "文本相关度",
+                    "索引实体命中"
+                  ]
+                }
+              ]
+            }
+          ],
+          "candidates": [
+            {
+              "id": "m_1791339357288_90",
+              "time": "2026-09-30T19:12:00",
+              "scene": "Katrina and Jake decide to discard un-wrapped food and relocate alcohol.",
+              "action": "Camera wearer observes and records the interaction. Interaction details: Katrina says “Let’s throw it out,” Jake agrees, and Katrina plans to move alcohol upstairs. Lucia suggests eggs go in the fridge",
+              "people": [
+                "Katrina",
+                "Jake",
+                "Tasha",
+                "Lucia"
+              ],
+              "location": "Kitchen, near a red refrigerator.",
+              "activity": "Food disposal and storage planning.",
+              "objects": [
+                "Red refrigerator",
+                "packaged meat",
+                "bottle of alcohol"
+              ],
+              "speech": "Katrina: And it's not even covered with plastic wrap. ; Jake: True. ; Katrina: Let's throw it out. ; Jake: Yeah, toss it. ; Katrina: I'll put the alcohol on the second floor. ; Tasha: Okay. ; Katrina: I think we should cook on the first floor first. ; Lucia: The eggs should go in the fridge, right? ; Katrina: Perfect. ; Jake: Uh, okay.",
+              "explicit_instructions": [],
+              "media": {
+                "visual": true,
+                "audio": true
+              },
+              "merged_sources": []
+            },
+            {
+              "id": "m_1791339345934_84",
+              "time": "2026-09-30T18:33:00",
+              "scene": "A group navigates a shopping mall corridor, debating direction while one person texts and another holds an umbrella indoors.",
+              "action": "Jake: \"This is its glass. At least the glass is still there for people to steal. At least it's an algorithm error.\" Shure: \"I just love holding an umbrella. Indoors. Right? Isn't it?\" Jake: \"Maybe they put tags on the items. RFID tags. He'll be here in 6 minutes.\" Alice: \"Let's start heading down.\" Jake: \"Seems like we should go up. We're going up, right?\" Katrina: \"We're going down, isn't this the second floor?\"",
+              "people": [
+                "Jake",
+                "Shure",
+                "Alice",
+                "Katrina"
+              ],
+              "location": "Shopping mall",
+              "activity": "Group discussion about direction and item tagging; camera wearer texts on phone",
+              "objects": [
+                "Smartphone",
+                "shopping cart",
+                "umbrella",
+                "plastic bags",
+                "RFID tags"
+              ],
+              "speech": "Jake: This is its glass. ; Jake: At least the glass is still there for people to steal. ; Jake: At least it's an algorithm error. ; Shure: I just love holding an umbrella. ; Shure: Indoors. ; Shure: Right. ; Shure: Isn't it? ; Jake: Maybe they put tags on the items. ; Jake: RFID tags. ; Jake: He'll be here in 6 minutes. ; Alice: Let's start heading down. ; Jake: Seems like we should go up. ; Jake: We're going up, right? ; Katrina: We're going down, isn't this the second floor?",
+              "explicit_instructions": [],
+              "media": {
+                "visual": true,
+                "audio": true
+              },
+              "merged_sources": []
+            },
+            {
+              "id": "m_1791339305697_67",
+              "time": "2026-09-30T17:35:30",
+              "scene": "The camera wearer navigates a supermarket aisle, selects a red-flavored beverage, and places it in their shopping cart while conversing with a companion about replacing a grapefruit-flavored item.",
+              "action": "The camera wearer pushes a shopping cart, stops at a beverage display, picks up a red bottle, and places it in the cart. Interaction details: Katrina asks which beverage to choose to replace grapefruit flavor; Shure replies the grapefruit one is fine; Katrina decides the red one is acceptable; Shure urges to hurry; camera wearer picks up a red bottle and places it in the cart",
+              "people": [
+                "Shure",
+                "Katrina"
+              ],
+              "location": "Supermarket",
+              "activity": "Shopping for beverages, specifically selecting a red-flavored option to replace a grapefruit-flavored one.",
+              "objects": [
+                "Shopping cart",
+                "red beverage bottle",
+                "yellow beverage bottles",
+                "green cartons",
+                "wooden display crates"
+              ],
+              "speech": "Shure: Didn't you want some coffee? ; Katrina: If it's grapefruit flavor, which one should we replace it with? ; Shure: This grapefruit one is fine too. ; Katrina: The red one is fine. ; Shure: People are already... ; Shure: Hurry up, get it done.",
+              "explicit_instructions": [],
+              "media": {
+                "visual": true,
+                "audio": true
+              },
+              "merged_sources": []
+            },
+            {
+              "id": "m_1791339239731_32",
+              "time": "2026-09-30T12:53:00",
+              "scene": "The camera wearer moves from a cluttered storage area to join three others around a table for a collaborative game, then uses their phone while they play.",
+              "action": "The camera wearer moves from a storage area to a table, then holds up and uses their smartphone. Interaction details: Tasha asks if a butler can deliver her purchased items; Jake offers to ask when delivery can happen; Tasha notes the game is perfect for three people; the camera wearer holds up their phone to record or interact with the game",
+              "people": [
+                "Jake",
+                "Tasha",
+                "Shure",
+                "Katrina"
+              ],
+              "location": "A home interior",
+              "activity": "Collaborative tabletop game session with three players",
+              "objects": [
+                "Cardboard box",
+                "whiteboard",
+                "checkered board",
+                "laptop",
+                "phone",
+                "plastic bottles"
+              ],
+              "speech": "Shure: There's a butler too? ; Tasha: Can he deliver mine? ; Jake: What thing? ; Jake: Deliver what? ; Tasha: The stuff I bought. ; Jake: Sure, will it be today? ; Jake: I'll ask them when they can deliver. ; Jake: When they can deliver. ; Tasha: Alright, this game is perfect for three people, but ours is...",
+              "explicit_instructions": [],
+              "media": {
+                "visual": true,
+                "audio": true
+              },
+              "merged_sources": []
+            },
+            {
+              "id": "m_1791339344172_83",
+              "time": "2026-09-30T18:31:30",
+              "scene": "Group discusses fridge storage and data links to supermarket.",
+              "action": "Camera wearer observes group interaction. Interaction details: Shure confirms fridge is full; Jake explains data links to supermarket; Lucia compares to Amazon store",
+              "people": [
+                "Shure",
+                "Katrina",
+                "Lucia",
+                "Jake"
+              ],
+              "location": "Modern indoor mall corridor.",
+              "activity": "Group conversation about fridge contents and data tracking.",
+              "objects": [
+                "Shopping bags",
+                "receipts",
+                "food items"
+              ],
+              "speech": "Shure: It's responding to you now. ; Katrina: Our fridge is full now. ; Shure: Yes. ; Lucia: Can the fridge hold it? ; Shure: Don't let it get too cold. ; Katrina: Haha, drink it all. ; Jake: Later. ; Katrina: Also eat all the strawberries. ; Jake: This data is quite important. ; Jake: When you guys clean up later ; Jake: You'll have some connection with the supermarket. ; Jake: Your actions will establish some links. ; Jake: For example, when you put this item in the fridge ; Jake: It can trace back to where you found it. ; Lucia: Oh, like the Amazon unmanned grocery store.",
+              "explicit_instructions": [
+                "Shure: Don't let it get too cold."
+              ],
+              "media": {
+                "visual": true,
+                "audio": true
+              },
+              "merged_sources": []
+            },
+            {
+              "id": "m_1791339300315_65",
+              "time": "2026-09-30T17:28:30",
+              "scene": "The camera wearer navigates a supermarket, encountering staff and a customer, then explores beverage aisles and a ready-to-eat section before approaching a checkout counter.",
+              "action": "Shure and Katrina discuss buying peach juice; Katrina mentions they encountered the boss; Lucia suggests trying a drink; Tasha thanks someone; Jake greets Katrina; Katrina greets Lucia; Lucia asks why Tasha isn't seen; Katrina and Lucia exchange greetings; Shure greets someone; Tasha thanks someone; Jake greets Katrina; Katrina greets Lucia; Lucia asks who Tasha is referring to; Katrina says they encountered the boss; Shure asks if they only saw the spray one; Jake says it's not just one place; Katrina says there's a drink here too; Lucia says try it; Shure says hello; Tasha says okay thank you; Jake says hello; Katrina says hello; Lucia says hello; Katrina asks why they haven't seen Tasha; ",
+              "people": [
+                "Lucia",
+                "Shure",
+                "Katrina",
+                "Tasha",
+                "Jake"
+              ],
+              "location": "Supermarket",
+              "activity": "Shopping for beverages and ready-to-eat food, then checking out",
+              "objects": [
+                "Shopping cart",
+                "refrigerated beverage display",
+                "ready-to-eat food counter",
+                "peach juice bottles",
+                "unidentified items in cart"
+              ],
+              "speech": "Lucia: So... ; Lucia: Haha, our conversation is getting risky. ; Shure: Weren't we just talking about buying some peach juice? ; Katrina: Oh no. ; Katrina: We ran into... ; Katrina: boss ; Katrina: The boss. ; Tasha: Only the spray one? ; Jake: Your place, oh, it's not just one place. ; Katrina: There's a drink here too. ; Lucia: Give it a try. ; Shure: hello ; Tasha: Okay, thank you. ; Jake: Hello ; Katrina: hello ; Lucia: Hello ; Katrina: Why haven't we seen Tasha? ; Lucia: Who are you asking, the two of us?",
+              "explicit_instructions": [],
+              "media": {
+                "visual": true,
+                "audio": true
+              },
+              "merged_sources": []
+            },
+            {
+              "id": "m_1791339320283_73",
+              "time": "2026-09-30T18:00:00",
+              "scene": "A group of friends collaboratively shops in a supermarket, selecting and discussing food items, with one person taking the lead in choosing specific products like tofu and konjac.",
+              "action": "Katrina suggests taking an item; Tasha agrees to take another; Katrina comments on Tasha's considerateness; Tasha announces they found and bought taro and konjac, asking if others bought konjac; Katrina and Lucia say no; Katrina says \"That's enough\"; Tasha takes the tofu; Katrina asks if garlic for hotpot seasoning needs to be bought; Alice confirms garlic was already purchased; Tasha and Lucia examine items in the cart; the camera wearer holds up a smartphone showing a selfie.",
+              "people": [
+                "Katrina",
+                "Tasha",
+                "Lucia",
+                "Alice"
+              ],
+              "location": "Supermarket",
+              "activity": "Collaborative grocery shopping for hotpot ingredients",
+              "objects": [
+                "Shopping cart",
+                "packaged food items (taro",
+                "konjac",
+                "tofu",
+                "garlic)",
+                "smartphone"
+              ],
+              "speech": "Katrina: Then let's take this one. ; Tasha: Fine, let's take this one. ; Katrina: So considerate, haha. ; Katrina: What else? ; Tasha: We also found... ; Tasha: We also bought some taro. ; Tasha: Konjac, konjac, konjac! ; Tasha: Did you guys buy konjac? ; Katrina: No. ; Lucia: I don't think so. ; Katrina: That's enough. ; Tasha: Alright, then I'll take the tofu. ; Katrina: Do we need to buy garlic for the hotpot seasoning? ; Alice: Oh, I already bought garlic. ; Alice: Oh, we have this garlic.",
+              "explicit_instructions": [
+                "Lucia: I don't think so.",
+                "Katrina: Do we need to buy garlic for the hotpot seasoning?"
+              ],
+              "media": {
+                "visual": true,
+                "audio": true
+              },
+              "merged_sources": []
+            },
+            {
+              "id": "m_1791339253639_40",
+              "time": "2026-09-30T13:08:00",
+              "scene": "Two people assemble a white frame structure on a wooden floor while another person observes from a table.",
+              "action": "Shure says \"A little higher, this one.\" The unidentified person adjusts the frame. Shure says \"Ah, it's over.\" and \"Over, over.\" The camera wearer says \"OK, OK, good.\" and \"Yes.\" Shure says \"Put it together, right.\" The unidentified person connects the frame parts.",
+              "people": [
+                "Shure"
+              ],
+              "location": "A residential apartment",
+              "activity": "Assembling a white frame structure",
+              "objects": [
+                "White frame parts",
+                "cardboard boxes",
+                "projector screen",
+                "tripod",
+                "whiteboard"
+              ],
+              "speech": "Shure: A little higher, this one. ; Shure: Ah, it's over. ; Shure: Over, over. ; Shure: OK, OK, good. ; Shure: yes ; Shure: Put it together, right.",
+              "explicit_instructions": [],
+              "media": {
+                "visual": true,
+                "audio": true
+              },
+              "merged_sources": []
+            },
+            {
+              "id": "m_1791339195407_8",
+              "time": "2026-09-30T11:49:00",
+              "scene": "A group gathers around a table for a workshop, where one person arranges flowers while others observe and discuss a market event involving tokens and beer.",
+              "action": "The camera wearer handles items on the table, including a framed object and a book. Interaction details: Shure says, \"Yes, Shichahai, I think so,\" and \"They have other locations in other cities too,\" and \"Some markets too,\" and \"And a few days ago, when Da Rong Temple opened, they held an event, kind of like an auction, a similar format. So, they gave you a token if you drank beer. And you could use that token to buy anything from anyone.\" Jake replies, \"Really?\"",
+              "people": [
+                "Shure",
+                "Jake"
+              ],
+              "location": "A room with a whiteboard and projector screen",
+              "activity": "A flower-arranging workshop with a side discussion about a market event",
+              "objects": [
+                "Flowers",
+                "a whiteboard",
+                "a projector screen",
+                "a framed object",
+                "a book"
+              ],
+              "speech": "Shure: Yes, Shichahai, I think so. ; Jake: Then you're talking about that one? ; Shure: They have other locations in other cities too. ; Shure: Some markets too. ; Shure: And a few days ago, when Da Rong Temple opened ; Shure: they held an event ; Shure: kind of like an auction ; Shure: a similar format. ; Shure: So ; Shure: hmm ; Shure: they gave you a token if you drank beer. ; Jake: Really? ; Shure: And you could use that token ; Shure: to buy anything from anyone.",
+              "explicit_instructions": [],
+              "media": {
+                "visual": true,
+                "audio": true
+              },
+              "merged_sources": []
+            }
+          ],
+          "recommendation": {
+            "action": "无提醒需要",
+            "reason": "当前场景中，Katrina 和 Jake 正在讨论食物处理和酒精存放计划，其中明确提到要丢弃未包装的食物（如未用保鲜膜覆盖的肉）并把酒精搬到二楼。Lucia 提议鸡蛋应放入冰箱，Katrina 同意。所有对话和视觉观察均与食品处置和存储规划一致，未发现任何未解决的意图、安全需求或需提醒的事项。当前事件未涉及个人护理、隐私空间进入或需确认的下一步行动。",
+            "evidence_ids": [
+              "m_1791339357288_90"
+            ],
+            "uncertainty": "无",
+            "risk": "low",
+            "world_assumption": "无特殊假设",
+            "multimodal_observations": [
+              {
+                "memory_id": "m_1791339357288_90",
+                "modality": "audio",
+                "observation": "Whisper transcription: “而且没有带保鲜膜”",
+                "english_translation": "And it's not even covered with plastic wrap.",
+                "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+                "audio_at_s": 0.9,
+                "duration_s": 3.333
+              },
+              {
+                "memory_id": "m_1791339357288_90",
+                "modality": "audio",
+                "observation": "Whisper transcription: “要做饭是在一楼吧”",
+                "english_translation": "To cook, it's on the first floor, right?",
+                "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+                "audio_at_s": 13.803,
+                "duration_s": 3.333
+              },
+              {
+                "memory_id": "m_1791339357288_90",
+                "sources": [
+                  {
+                    "memory_id": "m_1791339357288_90",
+                    "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+                    "frame_at_s": 0.9,
+                    "clip_start_s": 0.9,
+                    "clip_end_s": 30.04
+                  }
+                ],
+                "modality": "visual",
+                "observation": "一个红色冰箱的门开着，内部有物品，旁边有白色窗帘，背景是墙壁和门。"
+              },
+              {
+                "memory_id": "m_1791339357288_90",
+                "sources": [
+                  {
+                    "memory_id": "m_1791339357288_90",
+                    "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+                    "frame_at_s": 15.42,
+                    "clip_start_s": 0.9,
+                    "clip_end_s": 30.04
+                  }
+                ],
+                "modality": "visual",
+                "observation": "一个人戴着蓝色帽子，弯腰在地板上，旁边有红色冰箱和白色窗帘，背景是房间一角。"
+              },
+              {
+                "memory_id": "m_1791339357288_90",
+                "sources": [
+                  {
+                    "memory_id": "m_1791339357288_90",
+                    "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+                    "frame_at_s": 29.94,
+                    "clip_start_s": 0.9,
+                    "clip_end_s": 30.04
+                  }
+                ],
+                "modality": "visual",
+                "observation": "一只手正在从红色冰箱的抽屉里拿取物品，冰箱内部有多个抽屉和物品。"
+              },
+              {
+                "memory_id": "m_1791339305697_67",
+                "sources": [
+                  {
+                    "memory_id": "m_1791339305697_67",
+                    "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_17353000.mp4",
+                    "frame_at_s": 5.82,
+                    "clip_start_s": 5.82,
+                    "clip_end_s": 30.024
+                  }
+                ],
+                "modality": "visual",
+                "observation": "一个超市的过道，货架上摆满商品，地面有散落的物品，远处有一个人在走动。"
+              }
+            ]
+          },
+          "model_recommendation": {
+            "action": "无提醒需要",
+            "reason": "当前场景中，Katrina 和 Jake 正在讨论食物处理和酒精存放计划，其中明确提到要丢弃未包装的食物（如未用保鲜膜覆盖的肉）并把酒精搬到二楼。Lucia 提议鸡蛋应放入冰箱，Katrina 同意。所有对话和视觉观察均与食品处置和存储规划一致，未发现任何未解决的意图、安全需求或需提醒的事项。当前事件未涉及个人护理、隐私空间进入或需确认的下一步行动。",
+            "uncertainty": "无",
+            "world_assumption": "无特殊假设",
+            "risk": "low",
+            "evidence_ids": [
+              "m_1791339357288_90"
+            ],
+            "multimodal_observations": [
+              {
+                "memory_id": "m_1791339357288_90",
+                "modality": "audio",
+                "observation": "Whisper transcription: “而且没有带保鲜膜”",
+                "english_translation": "And it's not even covered with plastic wrap.",
+                "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+                "audio_at_s": 0.9,
+                "duration_s": 3.333
+              },
+              {
+                "memory_id": "m_1791339357288_90",
+                "modality": "audio",
+                "observation": "Whisper transcription: “要做饭是在一楼吧”",
+                "english_translation": "To cook, it's on the first floor, right?",
+                "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+                "audio_at_s": 13.803,
+                "duration_s": 3.333
+              },
+              {
+                "memory_id": "m_1791339357288_90",
+                "sources": [
+                  {
+                    "memory_id": "m_1791339357288_90",
+                    "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+                    "frame_at_s": 0.9,
+                    "clip_start_s": 0.9,
+                    "clip_end_s": 30.04
+                  }
+                ],
+                "modality": "visual",
+                "observation": "一个红色冰箱的门开着，内部有物品，旁边有白色窗帘，背景是墙壁和门。"
+              },
+              {
+                "memory_id": "m_1791339357288_90",
+                "sources": [
+                  {
+                    "memory_id": "m_1791339357288_90",
+                    "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+                    "frame_at_s": 15.42,
+                    "clip_start_s": 0.9,
+                    "clip_end_s": 30.04
+                  }
+                ],
+                "modality": "visual",
+                "observation": "一个人戴着蓝色帽子，弯腰在地板上，旁边有红色冰箱和白色窗帘，背景是房间一角。"
+              },
+              {
+                "memory_id": "m_1791339357288_90",
+                "sources": [
+                  {
+                    "memory_id": "m_1791339357288_90",
+                    "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+                    "frame_at_s": 29.94,
+                    "clip_start_s": 0.9,
+                    "clip_end_s": 30.04
+                  }
+                ],
+                "modality": "visual",
+                "observation": "一只手正在从红色冰箱的抽屉里拿取物品，冰箱内部有多个抽屉和物品。"
+              },
+              {
+                "memory_id": "m_1791339305697_67",
+                "sources": [
+                  {
+                    "memory_id": "m_1791339305697_67",
+                    "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_17353000.mp4",
+                    "frame_at_s": 5.82,
+                    "clip_start_s": 5.82,
+                    "clip_end_s": 30.024
+                  }
+                ],
+                "modality": "visual",
+                "observation": "一个超市的过道，货架上摆满商品，地面有散落的物品，远处有一个人在走动。"
+              }
+            ]
+          },
+          "policy_adjustments": [],
+          "actionable_cue_fallback": false,
+          "evidence_review": {
+            "status": "completed",
+            "method": "model_review_with_exact_source_quote_checks",
+            "constraints": [],
+            "issues": [],
+            "requires_revision": false,
+            "source_quotes_verified": true,
+            "instruction_coverage_verified": true,
+            "required_instruction_quotes": [],
+            "coverage_repair_used": false,
+            "applied": false,
+            "initial_action_verification": {
+              "resolved": true,
+              "remaining_issues": []
+            },
+            "revision_verification": {
+              "resolved": true,
+              "remaining_issues": []
+            }
+          },
+          "multimodal_inference": {
+            "visual_memory_ids": [
+              "m_1791339357288_90",
+              "m_1791339357288_90",
+              "m_1791339357288_90",
+              "m_1791339305697_67"
+            ],
+            "audio_memory_ids": [
+              "m_1791339357288_90",
+              "m_1791339357288_90"
+            ],
+            "relevant_media_memory_ids": [
+              "m_1791339357288_90",
+              "m_1791339305697_67",
+              "m_1791339344172_83",
+              "m_1791339320283_73"
+            ],
+            "filtered_irrelevant_media_count": 5,
+            "audio_transcription_rejected_ids": [
+              "m_1791339357288_90"
+            ],
+            "audio_transcription_rejected_count": 1,
+            "audio_reviews": [
+              {
+                "memory_id": "m_1791339357288_90",
+                "asset": "assets/audio/9b7f46b103c745d340ca108e.ogg",
+                "audio_at_s": 0.9,
+                "duration_s": 3.333,
+                "raw_transcription": "而且没有带保鲜膜",
+                "decoder_raw_transcription": "而且没有带保鲜膜",
+                "decoder": "memory-whisper-small-cpu-int8",
+                "segments": [
+                  {
+                    "start": 0.0,
+                    "end": 2.21,
+                    "text": "而且没有带保鲜膜",
+                    "avg_logprob": -0.4689,
+                    "no_speech_prob": 0.3952
+                  }
+                ],
+                "low_confidence_segments": 0,
+                "accepted": true,
+                "status": "semantic_compatible",
+                "compatibility_confidence": 0.95,
+                "relation": "corroborates",
+                "possible_numeric_unit_mismatch": false,
+                "english_translation": "And it's not even covered with plastic wrap.",
+                "reason": "The ASR phrase '而且没有带保鲜膜' directly translates to 'and it's not even covered with plastic wrap,' which matches exactly with Katrina's stored speech. This confirms a specific event detail (food not wrapped) and aligns with the event context of discarding unwrapped food. The phrase contains a concrete event-specific objec"
+              },
+              {
+                "memory_id": "m_1791339357288_90",
+                "asset": "assets/audio/4dc9351340bfc5b0d2479ed5.ogg",
+                "audio_at_s": 13.803,
+                "duration_s": 3.333,
+                "raw_transcription": "要做饭是在一楼吧",
+                "decoder_raw_transcription": "要做饭是在一楼吧",
+                "decoder": "memory-whisper-small-cpu-int8",
+                "segments": [
+                  {
+                    "start": 0.0,
+                    "end": 2.18,
+                    "text": "要做饭是在一楼吧",
+                    "avg_logprob": -0.4508,
+                    "no_speech_prob": 0.1924
+                  }
+                ],
+                "low_confidence_segments": 0,
+                "accepted": true,
+                "status": "semantic_compatible",
+                "compatibility_confidence": 0.95,
+                "relation": "corroborates",
+                "possible_numeric_unit_mismatch": false,
+                "english_translation": "To cook, it's on the first floor, right?",
+                "reason": "The ASR phrase '要做饭是在一楼吧' (To cook, it's on the first floor, right?) directly matches the event text where Katrina says 'I think we should cook on the first floor first.' Both refer to the specific action of cooking and the specific location (first floor) within the indoor kitchen context. No generic filler or vague en"
+              },
+              {
+                "memory_id": "m_1791339357288_90",
+                "asset": "assets/audio/71076900e86dfc338d65fbef.ogg",
+                "audio_at_s": 26.707,
+                "duration_s": 3.333,
+                "raw_transcription": "好",
+                "decoder_raw_transcription": "好",
+                "decoder": "memory-whisper-small-cpu-int8",
+                "segments": [
+                  {
+                    "start": 1.91,
+                    "end": 2.63,
+                    "text": "好",
+                    "avg_logprob": -0.9612,
+                    "no_speech_prob": 0.4577
+                  }
+                ],
+                "low_confidence_segments": 0,
+                "accepted": false,
+                "status": "semantic_rejected",
+                "compatibility_confidence": 0.98,
+                "relation": "unrelated",
+                "possible_numeric_unit_mismatch": false,
+                "english_translation": "Good",
+                "reason": "The ASR output 'Good' is a generic interjection with no event-specific object, action, state, named topic, or expressed need. It does not reference any concrete element from the event (e.g., food, alcohol, refrigerator, floors, cooking, storage) and cannot be semantically linked to the described actions or context. The"
+              }
+            ],
+            "historical_media_review_status": "completed",
+            "media_mode": "all",
+            "visual_samples": [
+              {
+                "id": "m_1791339357288_90",
+                "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+                "source_segment_id": "DAY1_A5_KATRINA_19120000_en",
+                "frame_at_s": 0.9,
+                "clip_start_s": 0.9,
+                "clip_end_s": 30.04
+              },
+              {
+                "id": "m_1791339357288_90",
+                "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+                "source_segment_id": "DAY1_A5_KATRINA_19120000_en",
+                "frame_at_s": 15.42,
+                "clip_start_s": 0.9,
+                "clip_end_s": 30.04
+              },
+              {
+                "id": "m_1791339357288_90",
+                "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+                "source_segment_id": "DAY1_A5_KATRINA_19120000_en",
+                "frame_at_s": 29.94,
+                "clip_start_s": 0.9,
+                "clip_end_s": 30.04
+              },
+              {
+                "id": "m_1791339305697_67",
+                "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_17353000.mp4",
+                "source_segment_id": "DAY1_A5_KATRINA_17353000_en",
+                "frame_at_s": 5.82,
+                "clip_start_s": 5.82,
+                "clip_end_s": 30.024
+              }
+            ],
+            "media_relevance": [
+              {
+                "memory_id": "m_1791339357288_90",
+                "used": true,
+                "basis": "current_event",
+                "semantic_review": {},
+                "description_terms": [
+                  "alcohol",
+                  "bottle",
+                  "decide",
+                  "discard",
+                  "disposal",
+                  "food",
+                  "kitchen",
+                  "meat"
+                ],
+                "transcript_terms": [
+                  "alcohol",
+                  "cook",
+                  "cover",
+                  "eggs",
+                  "even",
+                  "floor",
+                  "fridge",
+                  "out"
+                ],
+                "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+                "source_segment_id": "DAY1_A5_KATRINA_19120000_en",
+                "capture_version": "temporal-v3-speech",
+                "visual_times_s": [
+                  0.9,
+                  15.42,
+                  29.94
+                ],
+                "audio_spans": [
+                  {
+                    "start_s": 0.9,
+                    "duration_s": 3.333
+                  },
+                  {
+                    "start_s": 13.803,
+                    "duration_s": 3.333
+                  },
+                  {
+                    "start_s": 26.707,
+                    "duration_s": 3.333
+                  }
+                ],
+                "audio_coverage_ratio": 0.3431,
+                "visual_at_s": 15.42,
+                "audio_at_s": 0.9,
+                "visual_status": "used",
+                "audio_status": "semantic_rejected"
+              },
+              {
+                "memory_id": "m_1791339345934_84",
+                "used": false,
+                "basis": "semantic_event_rejected",
+                "semantic_review": {},
+                "description_terms": [
+                  "camera",
+                  "plastic",
+                  "red",
+                  "wearer"
+                ],
+                "transcript_terms": [
+                  "floor",
+                  "put",
+                  "second"
+                ],
+                "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_18330000.mp4",
+                "source_segment_id": "DAY1_A5_KATRINA_18330000_en",
+                "capture_version": "temporal-v3-speech",
+                "visual_times_s": [
+                  0.08,
+                  15.002,
+                  29.924
+                ],
+                "audio_spans": [
+                  {
+                    "start_s": 0.08,
+                    "duration_s": 3.333
+                  },
+                  {
+                    "start_s": 13.385,
+                    "duration_s": 3.333
+                  },
+                  {
+                    "start_s": 26.691,
+                    "duration_s": 3.333
+                  }
+                ],
+                "audio_coverage_ratio": 0.3339,
+                "visual_at_s": 15.002,
+                "audio_at_s": 0.08
+              },
+              {
+                "memory_id": "m_1791339305697_67",
+                "used": true,
+                "basis": "semantic_event_match",
+                "semantic_review": {
+                  "memory_id": "m_1791339305697_67",
+                  "relevant": true,
+                  "confidence": 0.75,
+                  "evidence_phrase": "The red one is fine.",
+                  "reason": "In the current event, Lucia suggests eggs go in the fridge, and Katrina responds affirmatively. The memory references selecting a red-flavored beverage — a specific object choice matching the color descriptor ‘red’ used in the current event’s context of food selection and storage.",
+                  "accepted": true
+                },
+                "description_terms": [
+                  "bottle",
+                  "camera",
+                  "red",
+                  "wearer"
+                ],
+                "transcript_terms": [
+                  "red"
+                ],
+                "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_17353000.mp4",
+                "source_segment_id": "DAY1_A5_KATRINA_17353000_en",
+                "capture_version": "temporal-v3-speech",
+                "visual_times_s": [
+                  5.82,
+                  17.872,
+                  29.924
+                ],
+                "audio_spans": [
+                  {
+                    "start_s": 5.82,
+                    "duration_s": 3.333
+                  },
+                  {
+                    "start_s": 16.255,
+                    "duration_s": 3.333
+                  },
+                  {
+                    "start_s": 26.691,
+                    "duration_s": 3.333
+                  }
+                ],
+                "audio_coverage_ratio": 0.4131,
+                "visual_at_s": 17.872,
+                "audio_at_s": 5.82,
+                "visual_status": "used"
+              },
+              {
+                "memory_id": "m_1791339239731_32",
+                "used": false,
+                "basis": "semantic_event_rejected",
+                "semantic_review": {},
+                "description_terms": [
+                  "camera",
+                  "move",
+                  "plastic",
+                  "storage",
+                  "wearer"
+                ],
+                "transcript_terms": [
+                  "perfect"
+                ],
+                "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_12530000.mp4",
+                "source_segment_id": "DAY1_A5_KATRINA_12530000_en",
+                "capture_version": "temporal-v3-speech",
+                "visual_times_s": [
+                  2.73,
+                  16.25,
+                  29.77
+                ],
+                "audio_spans": [
+                  {
+                    "start_s": 2.73,
+                    "duration_s": 3.333
+                  },
+                  {
+                    "start_s": 14.633,
+                    "duration_s": 3.333
+                  },
+                  {
+                    "start_s": 26.537,
+                    "duration_s": 3.333
+                  }
+                ],
+                "audio_coverage_ratio": 0.3684,
+                "visual_at_s": 16.25,
+                "audio_at_s": 2.73
+              },
+              {
+                "memory_id": "m_1791339344172_83",
+                "used": true,
+                "basis": "semantic_event_match",
+                "semantic_review": {
+                  "memory_id": "m_1791339344172_83",
+                  "relevant": true,
+                  "confidence": 0.95,
+                  "evidence_phrase": "when you put this item in the fridge",
+                  "reason": "The current event involves Lucia suggesting eggs go in the fridge, and the memory explicitly references putting an item in the fridge as part of establishing a data link to the supermarket — matching the specific action and object (fridge) with stated intent (tracking origin).",
+                  "accepted": true
+                },
+                "description_terms": [
+                  "food",
+                  "fridge",
+                  "storage"
+                ],
+                "transcript_terms": [
+                  "fridge",
+                  "put"
+                ],
+                "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_18313000.mp4",
+                "source_segment_id": "DAY1_A5_KATRINA_18313000_en",
+                "capture_version": "temporal-v3-speech",
+                "visual_times_s": [
+                  0.32,
+                  15.122,
+                  29.924
+                ],
+                "audio_spans": [
+                  {
+                    "start_s": 0.32,
+                    "duration_s": 3.333
+                  },
+                  {
+                    "start_s": 13.505,
+                    "duration_s": 3.333
+                  },
+                  {
+                    "start_s": 26.691,
+                    "duration_s": 3.333
+                  }
+                ],
+                "audio_coverage_ratio": 0.3366,
+                "visual_at_s": 15.122,
+                "audio_at_s": 0.32
+              },
+              {
+                "memory_id": "m_1791339300315_65",
+                "used": false,
+                "basis": "semantic_event_rejected",
+                "semantic_review": {},
+                "description_terms": [
+                  "camera",
+                  "food",
+                  "out",
+                  "refrigerator",
+                  "wearer"
+                ],
+                "transcript_terms": [
+                  "only"
+                ],
+                "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_17283000.mp4",
+                "source_segment_id": "DAY1_A5_KATRINA_17283000_en",
+                "capture_version": "temporal-v3-speech",
+                "visual_times_s": [
+                  0.48,
+                  15.202,
+                  29.924
+                ],
+                "audio_spans": [
+                  {
+                    "start_s": 0.48,
+                    "duration_s": 3.333
+                  },
+                  {
+                    "start_s": 13.585,
+                    "duration_s": 3.333
+                  },
+                  {
+                    "start_s": 26.691,
+                    "duration_s": 3.333
+                  }
+                ],
+                "audio_coverage_ratio": 0.3384,
+                "visual_at_s": 15.202,
+                "audio_at_s": 0.48
+              },
+              {
+                "memory_id": "m_1791339320283_73",
+                "used": true,
+                "basis": "semantic_event_match",
+                "semantic_review": {
+                  "memory_id": "m_1791339320283_73",
+                  "relevant": true,
+                  "confidence": 0.85,
+                  "evidence_phrase": "Do we need to buy garlic for the hotpot seasoning?",
+                  "reason": "In the current event, Katrina plans to cook on the first floor, implying meal preparation. This memory references garlic being needed for hotpot seasoning — a specific cooking need tied to food preparation, matching the context of cooking and ingredient planning.",
+                  "accepted": true
+                },
+                "description_terms": [
+                  "food",
+                  "packag"
+                ],
+                "transcript_terms": [
+                  "think"
+                ],
+                "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_18000000.mp4",
+                "source_segment_id": "DAY1_A5_KATRINA_18000000_en",
+                "capture_version": "temporal-v3-speech",
+                "visual_times_s": [
+                  0.22,
+                  15.08,
+                  29.94
+                ],
+                "audio_spans": [
+                  {
+                    "start_s": 0.22,
+                    "duration_s": 3.333
+                  },
+                  {
+                    "start_s": 13.463,
+                    "duration_s": 3.333
+                  },
+                  {
+                    "start_s": 26.707,
+                    "duration_s": 3.333
+                  }
+                ],
+                "audio_coverage_ratio": 0.3353,
+                "visual_at_s": 15.08,
+                "audio_at_s": 0.22
+              },
+              {
+                "memory_id": "m_1791339253639_40",
+                "used": false,
+                "basis": "semantic_event_rejected",
+                "semantic_review": {},
+                "description_terms": [
+                  "floor",
+                  "observ"
+                ],
+                "transcript_terms": [
+                  "put"
+                ],
+                "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_13080000.mp4",
+                "source_segment_id": "DAY1_A5_KATRINA_13080000_en",
+                "capture_version": "temporal-v3-speech",
+                "visual_times_s": [
+                  3.3,
+                  15.065,
+                  26.83
+                ],
+                "audio_spans": [
+                  {
+                    "start_s": 3.3,
+                    "duration_s": 3.333
+                  },
+                  {
+                    "start_s": 13.448,
+                    "duration_s": 3.333
+                  },
+                  {
+                    "start_s": 23.597,
+                    "duration_s": 3.333
+                  }
+                ],
+                "audio_coverage_ratio": 0.4231,
+                "visual_at_s": 15.065,
+                "audio_at_s": 3.3
+              },
+              {
+                "memory_id": "m_1791339195407_8",
+                "used": false,
+                "basis": "semantic_event_rejected",
+                "semantic_review": {},
+                "description_terms": [
+                  "event",
+                  "object"
+                ],
+                "transcript_terms": [
+                  "event",
+                  "think"
+                ],
+                "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_11490000.mp4",
+                "source_segment_id": "DAY1_A5_KATRINA_11490000_en",
+                "capture_version": "temporal-v3-speech",
+                "visual_times_s": [
+                  1.7,
+                  15.812,
+                  29.924
+                ],
+                "audio_spans": [
+                  {
+                    "start_s": 1.7,
+                    "duration_s": 3.333
+                  },
+                  {
+                    "start_s": 14.195,
+                    "duration_s": 3.333
+                  },
+                  {
+                    "start_s": 26.691,
+                    "duration_s": 3.333
+                  }
+                ],
+                "audio_coverage_ratio": 0.353,
+                "visual_at_s": 15.812,
+                "audio_at_s": 1.7
+              }
+            ],
+            "visual_observation_output": "{\"observations\":[{\"image\":1,\"observation\":\"一个红色冰箱的门开着，内部有物品，旁边有白色窗帘，背景是墙壁和门。\"},{\"image\":2,\"observation\":\"一个人戴着蓝色帽子，弯腰在地板上，旁边有红色冰箱和白色窗帘，背景是房间一角。\"},{\"image\":3,\"observation\":\"一只手正在从红色冰箱的抽屉里拿取物品，冰箱内部有多个抽屉和物品。\"},{\"image\":4,\"observation\":\"一个超市的过道，货架上摆满商品，地面有散落的物品，远处有一个人在走动。\"}]}",
+            "visual_observation_status": "structured_or_parsed",
+            "model": "Qwen3-VL visual reading + Qwen reasoning",
+            "visual_frames_used": 4,
+            "audio_transcripts_used": 2,
+            "source_observations": [
+              {
+                "memory_id": "m_1791339357288_90",
+                "modality": "audio",
+                "observation": "Whisper transcription: “而且没有带保鲜膜”",
+                "english_translation": "And it's not even covered with plastic wrap.",
+                "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+                "audio_at_s": 0.9,
+                "duration_s": 3.333
+              },
+              {
+                "memory_id": "m_1791339357288_90",
+                "modality": "audio",
+                "observation": "Whisper transcription: “要做饭是在一楼吧”",
+                "english_translation": "To cook, it's on the first floor, right?",
+                "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+                "audio_at_s": 13.803,
+                "duration_s": 3.333
+              },
+              {
+                "memory_id": "m_1791339357288_90",
+                "sources": [
+                  {
+                    "memory_id": "m_1791339357288_90",
+                    "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+                    "frame_at_s": 0.9,
+                    "clip_start_s": 0.9,
+                    "clip_end_s": 30.04
+                  }
+                ],
+                "modality": "visual",
+                "observation": "一个红色冰箱的门开着，内部有物品，旁边有白色窗帘，背景是墙壁和门。"
+              },
+              {
+                "memory_id": "m_1791339357288_90",
+                "sources": [
+                  {
+                    "memory_id": "m_1791339357288_90",
+                    "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+                    "frame_at_s": 15.42,
+                    "clip_start_s": 0.9,
+                    "clip_end_s": 30.04
+                  }
+                ],
+                "modality": "visual",
+                "observation": "一个人戴着蓝色帽子，弯腰在地板上，旁边有红色冰箱和白色窗帘，背景是房间一角。"
+              },
+              {
+                "memory_id": "m_1791339357288_90",
+                "sources": [
+                  {
+                    "memory_id": "m_1791339357288_90",
+                    "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+                    "frame_at_s": 29.94,
+                    "clip_start_s": 0.9,
+                    "clip_end_s": 30.04
+                  }
+                ],
+                "modality": "visual",
+                "observation": "一只手正在从红色冰箱的抽屉里拿取物品，冰箱内部有多个抽屉和物品。"
+              },
+              {
+                "memory_id": "m_1791339305697_67",
+                "sources": [
+                  {
+                    "memory_id": "m_1791339305697_67",
+                    "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_17353000.mp4",
+                    "frame_at_s": 5.82,
+                    "clip_start_s": 5.82,
+                    "clip_end_s": 30.024
+                  }
+                ],
+                "modality": "visual",
+                "observation": "一个超市的过道，货架上摆满商品，地面有散落的物品，远处有一个人在走动。"
+              }
+            ],
+            "perception_reused": false,
+            "language_translation": "not_needed"
+          },
+          "proactive_scan": true,
+          "source_moment_id": "m_1791339357288_90",
+          "perception_before_retrieval": {
+            "visual_memory_ids": [
+              "m_1791339357288_90",
+              "m_1791339357288_90",
+              "m_1791339357288_90"
+            ],
+            "audio_memory_ids": [
+              "m_1791339357288_90",
+              "m_1791339357288_90"
+            ],
+            "relevant_media_memory_ids": [
+              "m_1791339357288_90"
+            ],
+            "filtered_irrelevant_media_count": 0,
+            "audio_transcription_rejected_ids": [
+              "m_1791339357288_90"
+            ],
+            "audio_transcription_rejected_count": 1,
+            "audio_reviews": [
+              {
+                "memory_id": "m_1791339357288_90",
+                "asset": "assets/audio/9b7f46b103c745d340ca108e.ogg",
+                "audio_at_s": 0.9,
+                "duration_s": 3.333,
+                "raw_transcription": "而且没有带保鲜膜",
+                "decoder_raw_transcription": "而且没有带保鲜膜",
+                "decoder": "memory-whisper-small-cpu-int8",
+                "segments": [
+                  {
+                    "start": 0.0,
+                    "end": 2.21,
+                    "text": "而且没有带保鲜膜",
+                    "avg_logprob": -0.4689,
+                    "no_speech_prob": 0.3952
+                  }
+                ],
+                "low_confidence_segments": 0,
+                "accepted": true,
+                "status": "semantic_compatible",
+                "compatibility_confidence": 0.95,
+                "relation": "corroborates",
+                "possible_numeric_unit_mismatch": false,
+                "english_translation": "And it's not even covered with plastic wrap.",
+                "reason": "The ASR phrase '而且没有带保鲜膜' directly translates to 'and it's not even covered with plastic wrap,' which matches exactly with Katrina's stored speech. This confirms a specific event detail (food not wrapped) and aligns with the event context of discarding unwrapped food. The phrase contains a concrete event-specific objec"
+              },
+              {
+                "memory_id": "m_1791339357288_90",
+                "asset": "assets/audio/4dc9351340bfc5b0d2479ed5.ogg",
+                "audio_at_s": 13.803,
+                "duration_s": 3.333,
+                "raw_transcription": "要做饭是在一楼吧",
+                "decoder_raw_transcription": "要做饭是在一楼吧",
+                "decoder": "memory-whisper-small-cpu-int8",
+                "segments": [
+                  {
+                    "start": 0.0,
+                    "end": 2.18,
+                    "text": "要做饭是在一楼吧",
+                    "avg_logprob": -0.4508,
+                    "no_speech_prob": 0.1924
+                  }
+                ],
+                "low_confidence_segments": 0,
+                "accepted": true,
+                "status": "semantic_compatible",
+                "compatibility_confidence": 0.95,
+                "relation": "corroborates",
+                "possible_numeric_unit_mismatch": false,
+                "english_translation": "To cook, it's on the first floor, right?",
+                "reason": "The ASR phrase '要做饭是在一楼吧' (To cook, it's on the first floor, right?) directly matches the event text where Katrina says 'I think we should cook on the first floor first.' Both refer to the specific action of cooking and the specific location (first floor) within the indoor kitchen context. No generic filler or vague en"
+              },
+              {
+                "memory_id": "m_1791339357288_90",
+                "asset": "assets/audio/71076900e86dfc338d65fbef.ogg",
+                "audio_at_s": 26.707,
+                "duration_s": 3.333,
+                "raw_transcription": "好",
+                "decoder_raw_transcription": "好",
+                "decoder": "memory-whisper-small-cpu-int8",
+                "segments": [
+                  {
+                    "start": 1.91,
+                    "end": 2.63,
+                    "text": "好",
+                    "avg_logprob": -0.9612,
+                    "no_speech_prob": 0.4577
+                  }
+                ],
+                "low_confidence_segments": 0,
+                "accepted": false,
+                "status": "semantic_rejected",
+                "compatibility_confidence": 0.98,
+                "relation": "unrelated",
+                "possible_numeric_unit_mismatch": false,
+                "english_translation": "Good",
+                "reason": "The ASR output 'Good' is a generic interjection with no event-specific object, action, state, named topic, or expressed need. It does not reference any concrete element from the event (e.g., food, alcohol, refrigerator, floors, cooking, storage) and cannot be semantically linked to the described actions or context. The"
+              }
+            ],
+            "historical_media_review_status": "not_needed",
+            "media_mode": "all",
+            "visual_samples": [
+              {
+                "id": "m_1791339357288_90",
+                "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+                "source_segment_id": "DAY1_A5_KATRINA_19120000_en",
+                "frame_at_s": 0.9,
+                "clip_start_s": 0.9,
+                "clip_end_s": 30.04
+              },
+              {
+                "id": "m_1791339357288_90",
+                "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+                "source_segment_id": "DAY1_A5_KATRINA_19120000_en",
+                "frame_at_s": 15.42,
+                "clip_start_s": 0.9,
+                "clip_end_s": 30.04
+              },
+              {
+                "id": "m_1791339357288_90",
+                "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+                "source_segment_id": "DAY1_A5_KATRINA_19120000_en",
+                "frame_at_s": 29.94,
+                "clip_start_s": 0.9,
+                "clip_end_s": 30.04
+              }
+            ],
+            "media_relevance": [
+              {
+                "memory_id": "m_1791339357288_90",
+                "used": true,
+                "basis": "current_event",
+                "semantic_review": {},
+                "description_terms": [
+                  "alcohol",
+                  "bottle",
+                  "decide",
+                  "discard",
+                  "disposal",
+                  "food",
+                  "kitchen",
+                  "meat"
+                ],
+                "transcript_terms": [
+                  "alcohol",
+                  "cook",
+                  "cover",
+                  "eggs",
+                  "even",
+                  "floor",
+                  "fridge",
+                  "out"
+                ],
+                "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+                "source_segment_id": "DAY1_A5_KATRINA_19120000_en",
+                "capture_version": "temporal-v3-speech",
+                "visual_times_s": [
+                  0.9,
+                  15.42,
+                  29.94
+                ],
+                "audio_spans": [
+                  {
+                    "start_s": 0.9,
+                    "duration_s": 3.333
+                  },
+                  {
+                    "start_s": 13.803,
+                    "duration_s": 3.333
+                  },
+                  {
+                    "start_s": 26.707,
+                    "duration_s": 3.333
+                  }
+                ],
+                "audio_coverage_ratio": 0.3431,
+                "visual_at_s": 15.42,
+                "audio_at_s": 0.9,
+                "visual_status": "used",
+                "audio_status": "semantic_rejected"
+              }
+            ],
+            "visual_observation_output": "{\"observations\":[{\"image\":1,\"observation\":\"一个红色冰箱的门开着，内部有物品，旁边有白色窗帘，上方有摄像头和电线\"},{\"image\":2,\"observation\":\"一个戴蓝色帽子的人弯腰在地板上，旁边有红色冰箱和白色窗帘\"},{\"image\":3,\"observation\":\"一只手正在从冰箱里拿出一盒香肠，冰箱门开着，内部有其他物品\"}]}",
+            "visual_observation_status": "structured_or_parsed",
+            "model": "Qwen3-VL visual reading + Qwen reasoning",
+            "visual_frames_used": 3,
+            "audio_transcripts_used": 2,
+            "source_observations": [
+              {
+                "memory_id": "m_1791339357288_90",
+                "modality": "audio",
+                "observation": "Whisper transcription: “而且没有带保鲜膜”",
+                "english_translation": "And it's not even covered with plastic wrap.",
+                "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+                "audio_at_s": 0.9,
+                "duration_s": 3.333
+              },
+              {
+                "memory_id": "m_1791339357288_90",
+                "modality": "audio",
+                "observation": "Whisper transcription: “要做饭是在一楼吧”",
+                "english_translation": "To cook, it's on the first floor, right?",
+                "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+                "audio_at_s": 13.803,
+                "duration_s": 3.333
+              },
+              {
+                "memory_id": "m_1791339357288_90",
+                "sources": [
+                  {
+                    "memory_id": "m_1791339357288_90",
+                    "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+                    "frame_at_s": 0.9,
+                    "clip_start_s": 0.9,
+                    "clip_end_s": 30.04
+                  }
+                ],
+                "modality": "visual",
+                "observation": "一个红色冰箱的门开着，内部有物品，旁边有白色窗帘，上方有摄像头和电线"
+              },
+              {
+                "memory_id": "m_1791339357288_90",
+                "sources": [
+                  {
+                    "memory_id": "m_1791339357288_90",
+                    "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+                    "frame_at_s": 15.42,
+                    "clip_start_s": 0.9,
+                    "clip_end_s": 30.04
+                  }
+                ],
+                "modality": "visual",
+                "observation": "一个戴蓝色帽子的人弯腰在地板上，旁边有红色冰箱和白色窗帘"
+              },
+              {
+                "memory_id": "m_1791339357288_90",
+                "sources": [
+                  {
+                    "memory_id": "m_1791339357288_90",
+                    "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+                    "frame_at_s": 29.94,
+                    "clip_start_s": 0.9,
+                    "clip_end_s": 30.04
+                  }
+                ],
+                "modality": "visual",
+                "observation": "一只手正在从冰箱里拿出一盒香肠，冰箱门开着，内部有其他物品"
+              }
+            ],
+            "perception_reused": false
+          },
+          "elapsed_ms": 48956,
+          "integrity_review": {
+            "checks": [
+              {
+                "name": "引用仅来自当时可用的记忆",
+                "passed": true
+              },
+              {
+                "name": "网页展现保留逐帧真实秒数和原始观察",
+                "passed": true
+              },
+              {
+                "name": "视觉观察秒数与送入资产一致",
+                "passed": true
+              },
+              {
+                "name": "视觉观察秒数与送入资产一致",
+                "passed": true
+              },
+              {
+                "name": "视觉观察秒数与送入资产一致",
+                "passed": true
+              },
+              {
+                "name": "视觉观察秒数与送入资产一致",
+                "passed": true
+              },
+              {
+                "name": "多模态条件实际送入当前事件画面",
+                "passed": true
+              },
+              {
+                "name": "建议复核原句均匹配已存来源",
+                "passed": true
+              }
+            ],
+            "passed": 8,
+            "total": 8
+          }
+        },
+        "text": {
+          "situation": "Proactively assess the latest observed event and suggest a useful, safe next step only when evidence supports one. If none is needed, say no reminder is needed. Scene: Katrina and Jake decide to discard un-wrapped food and relocate alcohol. Action: Camera wearer observes and records the interaction. Interaction details: Katrina says “Let’s throw it out,” Jake agrees, and Katrina plans to move alcohol upstairs. Lucia suggests eggs go in the fridge People: Katrina, Jake, Tasha, Lucia Location: Kitchen, near a red refrigerator. Activity: Food disposal and storage planning. Objects: Red refrigerator, packaged meat, bottle of alcohol Speech: Katrina: And it's not even covered with plastic wrap. ; Jake: True. ; Katrina: Let's throw it out. ; Jake: Yeah, toss it. ; Katrina: I'll put the alcohol on the second floor. ; Tasha: Okay. ; Katrina: I think we should cook on the first floor first. ; Lucia: The eggs should go in the fridge, right? ; Katrina: Perfect. ; Jake: Uh, okay.",
+          "search_plan": {
+            "situation": "Katrina and Jake are discarding unwrapped food and relocating alcohol in the kitchen; Lucia suggests eggs go in the fridge. The camera wearer observes and records.",
+            "entities": [
+              "Katrina",
+              "Jake",
+              "Tasha",
+              "Lucia"
+            ],
+            "searches": [
+              "Proactively assess the latest observed event and suggest a useful, safe next step only when evidence supports one. If none is needed, say no reminder is needed. Scene: Katrina and Jake decide to discard un-wrapped food and relocate alcohol. Action: Camera wearer observes and records the interaction. Interaction details: Katrina says “Let’s throw it out,” Jake agrees, and Katrina plans to move alcohol upstairs. Lucia suggests eggs go in the fridge People: Katrina, Jake, Tasha, Lucia Location: Kitchen, near a red refrigerator. Activity: Food disposal and storage planning. Objects: Red refrigerator, packaged meat, bottle of alcohol Speech: Katrina: And it's not even covered with plastic wrap. ; Jake: True. ; Katrina: Let's throw it out. ; Jake: Yeah, toss it. ; Katrina: I'll put the alcohol on the second floor. ; Tasha: Okay. ; Katrina: I think we should cook on the first floor first. ; Lucia: The eggs should go in the fridge, right? ; Katrina: Perfect. ; Jake: Uh, okay."
+            ],
+            "decision_question": "",
+            "current_country": null,
+            "actionable_cues": [],
+            "proposed_searches": [],
+            "filtered_general_knowledge_searches": [],
+            "used_situation_fallback": true,
+            "verified_action_cues": []
+          },
+          "retrieval_rounds": [
+            {
+              "queries": [
+                "Proactively assess the latest observed event and suggest a useful, safe next step only when evidence supports one. If none is needed, say no reminder is needed. Scene: Katrina and Jake decide to discard un-wrapped food and relocate alcohol. Action: Camera wearer observes and records the interaction. Interaction details: Katrina says “Let’s throw it out,” Jake agrees, and Katrina plans to move alcohol upstairs. Lucia suggests eggs go in the fridge People: Katrina, Jake, Tasha, Lucia Location: Kitchen, near a red refrigerator. Activity: Food disposal and storage planning. Objects: Red refrigerator, packaged meat, bottle of alcohol Speech: Katrina: And it's not even covered with plastic wrap. ; Jake: True. ; Katrina: Let's throw it out. ; Jake: Yeah, toss it. ; Katrina: I'll put the alcohol on the second floor. ; Tasha: Okay. ; Katrina: I think we should cook on the first floor first. ; Lucia: The eggs should go in the fridge, right? ; Katrina: Perfect. ; Jake: Uh, okay."
+              ],
+              "candidate_ids": [
+                "m_1791339357288_90",
+                "m_1791339345934_84",
+                "m_1791339305697_67",
+                "m_1791339239731_32",
+                "m_1791339344172_83",
+                "m_1791339300315_65",
+                "m_1791339320283_73",
+                "m_1791339253639_40",
+                "m_1791339195407_8"
+              ],
+              "media_links": [],
+              "candidate_details": [
+                {
+                  "id": "m_1791339357288_90",
+                  "reasons": []
+                },
+                {
+                  "id": "m_1791339345934_84",
+                  "text_relevance": 0.304,
+                  "entity_matches": [
+                    {
+                      "dimension": "people",
+                      "tag": "Katrina"
+                    },
+                    {
+                      "dimension": "people",
+                      "tag": "Jake"
+                    },
+                    {
+                      "dimension": "same_event_entities",
+                      "tag": "Katrina: person: Jake, person: Shure, person: Alice, location: Shopping mall, activity: Group discussion about direction and item tagging; camera wearer texts on phone, object: Smartphone, object: shopping cart, object: umbrella",
+                      "evidence_id": "m_1791339345934_84",
+                      "relation": "observed_in_same_source_event"
+                    }
+                  ],
+                  "highlighted": false,
+                  "timestamp": "2026-09-30T18:33:00",
+                  "reasons": [
+                    "文本相关度",
+                    "索引实体命中"
+                  ]
+                },
+                {
+                  "id": "m_1791339305697_67",
+                  "text_relevance": 0.253,
+                  "entity_matches": [
+                    {
+                      "dimension": "people",
+                      "tag": "Katrina"
+                    },
+                    {
+                      "dimension": "same_event_entities",
+                      "tag": "Katrina: person: Shure, location: Supermarket, activity: Shopping for beverages, specifically selecting a red-flavored option to replace a grapefruit-flavored one., object: Shopping cart, object: red beverage bottle, object: yellow beverage bottles, object: green cartons, object: wooden display crates",
+                      "evidence_id": "m_1791339305697_67",
+                      "relation": "observed_in_same_source_event"
+                    }
+                  ],
+                  "highlighted": false,
+                  "timestamp": "2026-09-30T17:35:30",
+                  "reasons": [
+                    "文本相关度",
+                    "索引实体命中"
+                  ]
+                },
+                {
+                  "id": "m_1791339239731_32",
+                  "text_relevance": 0.211,
+                  "entity_matches": [
+                    {
+                      "dimension": "people",
+                      "tag": "Katrina"
+                    },
+                    {
+                      "dimension": "people",
+                      "tag": "Jake"
+                    },
+                    {
+                      "dimension": "people",
+                      "tag": "Tasha"
+                    },
+                    {
+                      "dimension": "same_event_entities",
+                      "tag": "Katrina: person: Jake, person: Tasha, person: Shure, location: A home interior, activity: Collaborative tabletop game session with three players, object: Cardboard box, object: whiteboard, object: checkered board",
+                      "evidence_id": "m_1791339239731_32",
+                      "relation": "observed_in_same_source_event"
+                    }
+                  ],
+                  "highlighted": false,
+                  "timestamp": "2026-09-30T12:53:00",
+                  "reasons": [
+                    "文本相关度",
+                    "索引实体命中"
+                  ]
+                },
+                {
+                  "id": "m_1791339344172_83",
+                  "text_relevance": 0.2,
+                  "entity_matches": [
+                    {
+                      "dimension": "people",
+                      "tag": "Katrina"
+                    },
+                    {
+                      "dimension": "people",
+                      "tag": "Jake"
+                    },
+                    {
+                      "dimension": "people",
+                      "tag": "Lucia"
+                    },
+                    {
+                      "dimension": "same_event_entities",
+                      "tag": "Katrina: person: Shure, person: Lucia, person: Jake, location: Modern indoor mall corridor., activity: Group conversation about fridge contents and data tracking., object: Shopping bags, object: receipts, object: food items",
+                      "evidence_id": "m_1791339344172_83",
+                      "relation": "observed_in_same_source_event"
+                    }
+                  ],
+                  "highlighted": false,
+                  "timestamp": "2026-09-30T18:31:30",
+                  "reasons": [
+                    "文本相关度",
+                    "索引实体命中"
+                  ]
+                },
+                {
+                  "id": "m_1791339300315_65",
+                  "text_relevance": 0.182,
+                  "entity_matches": [
+                    {
+                      "dimension": "people",
+                      "tag": "Katrina"
+                    },
+                    {
+                      "dimension": "people",
+                      "tag": "Jake"
+                    },
+                    {
+                      "dimension": "people",
+                      "tag": "Tasha"
+                    },
+                    {
+                      "dimension": "people",
+                      "tag": "Lucia"
+                    },
+                    {
+                      "dimension": "same_event_entities",
+                      "tag": "Katrina: person: Lucia, person: Shure, person: Tasha, person: Jake, location: Supermarket, activity: Shopping for beverages and ready-to-eat food, then checking out, object: Shopping cart, object: refrigerated beverage display",
+                      "evidence_id": "m_1791339300315_65",
+                      "relation": "observed_in_same_source_event"
+                    }
+                  ],
+                  "highlighted": false,
+                  "timestamp": "2026-09-30T17:28:30",
+                  "reasons": [
+                    "文本相关度",
+                    "索引实体命中"
+                  ]
+                },
+                {
+                  "id": "m_1791339320283_73",
+                  "text_relevance": 0.182,
+                  "entity_matches": [
+                    {
+                      "dimension": "people",
+                      "tag": "Katrina"
+                    },
+                    {
+                      "dimension": "people",
+                      "tag": "Tasha"
+                    },
+                    {
+                      "dimension": "people",
+                      "tag": "Lucia"
+                    },
+                    {
+                      "dimension": "same_event_entities",
+                      "tag": "Katrina: person: Tasha, person: Lucia, person: Alice, location: Supermarket, activity: Collaborative grocery shopping for hotpot ingredients, object: Shopping cart, object: packaged food items (taro, object: konjac",
+                      "evidence_id": "m_1791339320283_73",
+                      "relation": "observed_in_same_source_event"
+                    }
+                  ],
+                  "highlighted": false,
+                  "timestamp": "2026-09-30T18:00:00",
+                  "reasons": [
+                    "文本相关度",
+                    "索引实体命中"
+                  ]
+                },
+                {
+                  "id": "m_1791339253639_40",
+                  "text_relevance": 0.18,
+                  "entity_matches": [],
+                  "highlighted": false,
+                  "timestamp": "2026-09-30T13:08:00",
+                  "reasons": [
+                    "文本相关度"
+                  ]
+                },
+                {
+                  "id": "m_1791339195407_8",
+                  "text_relevance": 0.157,
+                  "entity_matches": [
+                    {
+                      "dimension": "people",
+                      "tag": "Jake"
+                    }
+                  ],
+                  "highlighted": false,
+                  "timestamp": "2026-09-30T11:49:00",
+                  "reasons": [
+                    "文本相关度",
+                    "索引实体命中"
+                  ]
+                }
+              ]
+            }
+          ],
+          "candidates": [
+            {
+              "id": "m_1791339357288_90",
+              "time": "2026-09-30T19:12:00",
+              "scene": "Katrina and Jake decide to discard un-wrapped food and relocate alcohol.",
+              "action": "Camera wearer observes and records the interaction. Interaction details: Katrina says “Let’s throw it out,” Jake agrees, and Katrina plans to move alcohol upstairs. Lucia suggests eggs go in the fridge",
+              "people": [
+                "Katrina",
+                "Jake",
+                "Tasha",
+                "Lucia"
+              ],
+              "location": "Kitchen, near a red refrigerator.",
+              "activity": "Food disposal and storage planning.",
+              "objects": [
+                "Red refrigerator",
+                "packaged meat",
+                "bottle of alcohol"
+              ],
+              "speech": "Katrina: And it's not even covered with plastic wrap. ; Jake: True. ; Katrina: Let's throw it out. ; Jake: Yeah, toss it. ; Katrina: I'll put the alcohol on the second floor. ; Tasha: Okay. ; Katrina: I think we should cook on the first floor first. ; Lucia: The eggs should go in the fridge, right? ; Katrina: Perfect. ; Jake: Uh, okay.",
+              "explicit_instructions": [],
+              "media": {
+                "visual": true,
+                "audio": true
+              },
+              "merged_sources": []
+            },
+            {
+              "id": "m_1791339345934_84",
+              "time": "2026-09-30T18:33:00",
+              "scene": "A group navigates a shopping mall corridor, debating direction while one person texts and another holds an umbrella indoors.",
+              "action": "Jake: \"This is its glass. At least the glass is still there for people to steal. At least it's an algorithm error.\" Shure: \"I just love holding an umbrella. Indoors. Right? Isn't it?\" Jake: \"Maybe they put tags on the items. RFID tags. He'll be here in 6 minutes.\" Alice: \"Let's start heading down.\" Jake: \"Seems like we should go up. We're going up, right?\" Katrina: \"We're going down, isn't this the second floor?\"",
+              "people": [
+                "Jake",
+                "Shure",
+                "Alice",
+                "Katrina"
+              ],
+              "location": "Shopping mall",
+              "activity": "Group discussion about direction and item tagging; camera wearer texts on phone",
+              "objects": [
+                "Smartphone",
+                "shopping cart",
+                "umbrella",
+                "plastic bags",
+                "RFID tags"
+              ],
+              "speech": "Jake: This is its glass. ; Jake: At least the glass is still there for people to steal. ; Jake: At least it's an algorithm error. ; Shure: I just love holding an umbrella. ; Shure: Indoors. ; Shure: Right. ; Shure: Isn't it? ; Jake: Maybe they put tags on the items. ; Jake: RFID tags. ; Jake: He'll be here in 6 minutes. ; Alice: Let's start heading down. ; Jake: Seems like we should go up. ; Jake: We're going up, right? ; Katrina: We're going down, isn't this the second floor?",
+              "explicit_instructions": [],
+              "media": {
+                "visual": true,
+                "audio": true
+              },
+              "merged_sources": []
+            },
+            {
+              "id": "m_1791339305697_67",
+              "time": "2026-09-30T17:35:30",
+              "scene": "The camera wearer navigates a supermarket aisle, selects a red-flavored beverage, and places it in their shopping cart while conversing with a companion about replacing a grapefruit-flavored item.",
+              "action": "The camera wearer pushes a shopping cart, stops at a beverage display, picks up a red bottle, and places it in the cart. Interaction details: Katrina asks which beverage to choose to replace grapefruit flavor; Shure replies the grapefruit one is fine; Katrina decides the red one is acceptable; Shure urges to hurry; camera wearer picks up a red bottle and places it in the cart",
+              "people": [
+                "Shure",
+                "Katrina"
+              ],
+              "location": "Supermarket",
+              "activity": "Shopping for beverages, specifically selecting a red-flavored option to replace a grapefruit-flavored one.",
+              "objects": [
+                "Shopping cart",
+                "red beverage bottle",
+                "yellow beverage bottles",
+                "green cartons",
+                "wooden display crates"
+              ],
+              "speech": "Shure: Didn't you want some coffee? ; Katrina: If it's grapefruit flavor, which one should we replace it with? ; Shure: This grapefruit one is fine too. ; Katrina: The red one is fine. ; Shure: People are already... ; Shure: Hurry up, get it done.",
+              "explicit_instructions": [],
+              "media": {
+                "visual": true,
+                "audio": true
+              },
+              "merged_sources": []
+            },
+            {
+              "id": "m_1791339239731_32",
+              "time": "2026-09-30T12:53:00",
+              "scene": "The camera wearer moves from a cluttered storage area to join three others around a table for a collaborative game, then uses their phone while they play.",
+              "action": "The camera wearer moves from a storage area to a table, then holds up and uses their smartphone. Interaction details: Tasha asks if a butler can deliver her purchased items; Jake offers to ask when delivery can happen; Tasha notes the game is perfect for three people; the camera wearer holds up their phone to record or interact with the game",
+              "people": [
+                "Jake",
+                "Tasha",
+                "Shure",
+                "Katrina"
+              ],
+              "location": "A home interior",
+              "activity": "Collaborative tabletop game session with three players",
+              "objects": [
+                "Cardboard box",
+                "whiteboard",
+                "checkered board",
+                "laptop",
+                "phone",
+                "plastic bottles"
+              ],
+              "speech": "Shure: There's a butler too? ; Tasha: Can he deliver mine? ; Jake: What thing? ; Jake: Deliver what? ; Tasha: The stuff I bought. ; Jake: Sure, will it be today? ; Jake: I'll ask them when they can deliver. ; Jake: When they can deliver. ; Tasha: Alright, this game is perfect for three people, but ours is...",
+              "explicit_instructions": [],
+              "media": {
+                "visual": true,
+                "audio": true
+              },
+              "merged_sources": []
+            },
+            {
+              "id": "m_1791339344172_83",
+              "time": "2026-09-30T18:31:30",
+              "scene": "Group discusses fridge storage and data links to supermarket.",
+              "action": "Camera wearer observes group interaction. Interaction details: Shure confirms fridge is full; Jake explains data links to supermarket; Lucia compares to Amazon store",
+              "people": [
+                "Shure",
+                "Katrina",
+                "Lucia",
+                "Jake"
+              ],
+              "location": "Modern indoor mall corridor.",
+              "activity": "Group conversation about fridge contents and data tracking.",
+              "objects": [
+                "Shopping bags",
+                "receipts",
+                "food items"
+              ],
+              "speech": "Shure: It's responding to you now. ; Katrina: Our fridge is full now. ; Shure: Yes. ; Lucia: Can the fridge hold it? ; Shure: Don't let it get too cold. ; Katrina: Haha, drink it all. ; Jake: Later. ; Katrina: Also eat all the strawberries. ; Jake: This data is quite important. ; Jake: When you guys clean up later ; Jake: You'll have some connection with the supermarket. ; Jake: Your actions will establish some links. ; Jake: For example, when you put this item in the fridge ; Jake: It can trace back to where you found it. ; Lucia: Oh, like the Amazon unmanned grocery store.",
+              "explicit_instructions": [
+                "Shure: Don't let it get too cold."
+              ],
+              "media": {
+                "visual": true,
+                "audio": true
+              },
+              "merged_sources": []
+            },
+            {
+              "id": "m_1791339300315_65",
+              "time": "2026-09-30T17:28:30",
+              "scene": "The camera wearer navigates a supermarket, encountering staff and a customer, then explores beverage aisles and a ready-to-eat section before approaching a checkout counter.",
+              "action": "Shure and Katrina discuss buying peach juice; Katrina mentions they encountered the boss; Lucia suggests trying a drink; Tasha thanks someone; Jake greets Katrina; Katrina greets Lucia; Lucia asks why Tasha isn't seen; Katrina and Lucia exchange greetings; Shure greets someone; Tasha thanks someone; Jake greets Katrina; Katrina greets Lucia; Lucia asks who Tasha is referring to; Katrina says they encountered the boss; Shure asks if they only saw the spray one; Jake says it's not just one place; Katrina says there's a drink here too; Lucia says try it; Shure says hello; Tasha says okay thank you; Jake says hello; Katrina says hello; Lucia says hello; Katrina asks why they haven't seen Tasha; ",
+              "people": [
+                "Lucia",
+                "Shure",
+                "Katrina",
+                "Tasha",
+                "Jake"
+              ],
+              "location": "Supermarket",
+              "activity": "Shopping for beverages and ready-to-eat food, then checking out",
+              "objects": [
+                "Shopping cart",
+                "refrigerated beverage display",
+                "ready-to-eat food counter",
+                "peach juice bottles",
+                "unidentified items in cart"
+              ],
+              "speech": "Lucia: So... ; Lucia: Haha, our conversation is getting risky. ; Shure: Weren't we just talking about buying some peach juice? ; Katrina: Oh no. ; Katrina: We ran into... ; Katrina: boss ; Katrina: The boss. ; Tasha: Only the spray one? ; Jake: Your place, oh, it's not just one place. ; Katrina: There's a drink here too. ; Lucia: Give it a try. ; Shure: hello ; Tasha: Okay, thank you. ; Jake: Hello ; Katrina: hello ; Lucia: Hello ; Katrina: Why haven't we seen Tasha? ; Lucia: Who are you asking, the two of us?",
+              "explicit_instructions": [],
+              "media": {
+                "visual": true,
+                "audio": true
+              },
+              "merged_sources": []
+            },
+            {
+              "id": "m_1791339320283_73",
+              "time": "2026-09-30T18:00:00",
+              "scene": "A group of friends collaboratively shops in a supermarket, selecting and discussing food items, with one person taking the lead in choosing specific products like tofu and konjac.",
+              "action": "Katrina suggests taking an item; Tasha agrees to take another; Katrina comments on Tasha's considerateness; Tasha announces they found and bought taro and konjac, asking if others bought konjac; Katrina and Lucia say no; Katrina says \"That's enough\"; Tasha takes the tofu; Katrina asks if garlic for hotpot seasoning needs to be bought; Alice confirms garlic was already purchased; Tasha and Lucia examine items in the cart; the camera wearer holds up a smartphone showing a selfie.",
+              "people": [
+                "Katrina",
+                "Tasha",
+                "Lucia",
+                "Alice"
+              ],
+              "location": "Supermarket",
+              "activity": "Collaborative grocery shopping for hotpot ingredients",
+              "objects": [
+                "Shopping cart",
+                "packaged food items (taro",
+                "konjac",
+                "tofu",
+                "garlic)",
+                "smartphone"
+              ],
+              "speech": "Katrina: Then let's take this one. ; Tasha: Fine, let's take this one. ; Katrina: So considerate, haha. ; Katrina: What else? ; Tasha: We also found... ; Tasha: We also bought some taro. ; Tasha: Konjac, konjac, konjac! ; Tasha: Did you guys buy konjac? ; Katrina: No. ; Lucia: I don't think so. ; Katrina: That's enough. ; Tasha: Alright, then I'll take the tofu. ; Katrina: Do we need to buy garlic for the hotpot seasoning? ; Alice: Oh, I already bought garlic. ; Alice: Oh, we have this garlic.",
+              "explicit_instructions": [
+                "Lucia: I don't think so.",
+                "Katrina: Do we need to buy garlic for the hotpot seasoning?"
+              ],
+              "media": {
+                "visual": true,
+                "audio": true
+              },
+              "merged_sources": []
+            },
+            {
+              "id": "m_1791339253639_40",
+              "time": "2026-09-30T13:08:00",
+              "scene": "Two people assemble a white frame structure on a wooden floor while another person observes from a table.",
+              "action": "Shure says \"A little higher, this one.\" The unidentified person adjusts the frame. Shure says \"Ah, it's over.\" and \"Over, over.\" The camera wearer says \"OK, OK, good.\" and \"Yes.\" Shure says \"Put it together, right.\" The unidentified person connects the frame parts.",
+              "people": [
+                "Shure"
+              ],
+              "location": "A residential apartment",
+              "activity": "Assembling a white frame structure",
+              "objects": [
+                "White frame parts",
+                "cardboard boxes",
+                "projector screen",
+                "tripod",
+                "whiteboard"
+              ],
+              "speech": "Shure: A little higher, this one. ; Shure: Ah, it's over. ; Shure: Over, over. ; Shure: OK, OK, good. ; Shure: yes ; Shure: Put it together, right.",
+              "explicit_instructions": [],
+              "media": {
+                "visual": true,
+                "audio": true
+              },
+              "merged_sources": []
+            },
+            {
+              "id": "m_1791339195407_8",
+              "time": "2026-09-30T11:49:00",
+              "scene": "A group gathers around a table for a workshop, where one person arranges flowers while others observe and discuss a market event involving tokens and beer.",
+              "action": "The camera wearer handles items on the table, including a framed object and a book. Interaction details: Shure says, \"Yes, Shichahai, I think so,\" and \"They have other locations in other cities too,\" and \"Some markets too,\" and \"And a few days ago, when Da Rong Temple opened, they held an event, kind of like an auction, a similar format. So, they gave you a token if you drank beer. And you could use that token to buy anything from anyone.\" Jake replies, \"Really?\"",
+              "people": [
+                "Shure",
+                "Jake"
+              ],
+              "location": "A room with a whiteboard and projector screen",
+              "activity": "A flower-arranging workshop with a side discussion about a market event",
+              "objects": [
+                "Flowers",
+                "a whiteboard",
+                "a projector screen",
+                "a framed object",
+                "a book"
+              ],
+              "speech": "Shure: Yes, Shichahai, I think so. ; Jake: Then you're talking about that one? ; Shure: They have other locations in other cities too. ; Shure: Some markets too. ; Shure: And a few days ago, when Da Rong Temple opened ; Shure: they held an event ; Shure: kind of like an auction ; Shure: a similar format. ; Shure: So ; Shure: hmm ; Shure: they gave you a token if you drank beer. ; Jake: Really? ; Shure: And you could use that token ; Shure: to buy anything from anyone.",
+              "explicit_instructions": [],
+              "media": {
+                "visual": true,
+                "audio": true
+              },
+              "merged_sources": []
+            }
+          ],
+          "recommendation": {
+            "action": "无提醒需要",
+            "reason": "当前场景中，Katrina和Jake正在讨论丢弃未包装的食物并把酒精搬到二楼，Lucia建议将鸡蛋放入冰箱。所有对话和计划均已明确表达，且无任何未解决的意图、安全需求或需提醒的事项（如账单服务费）。当前事件为日常食物处理与存储规划，无须额外提醒或行动。",
+            "evidence_ids": [],
+            "uncertainty": "无",
+            "risk": "low",
+            "world_assumption": "无特殊假设",
+            "multimodal_observations": []
+          },
+          "model_recommendation": {
+            "action": "无提醒需要",
+            "reason": "当前场景中，Katrina和Jake正在讨论丢弃未包装的食物并把酒精搬到二楼，Lucia建议将鸡蛋放入冰箱。所有对话和计划均已明确表达，且无任何未解决的意图、安全需求或需提醒的事项（如账单服务费）。当前事件为日常食物处理与存储规划，无须额外提醒或行动。",
+            "uncertainty": "无",
+            "world_assumption": "无特殊假设",
+            "risk": "low",
+            "evidence_ids": [],
+            "multimodal_observations": []
+          },
+          "policy_adjustments": [],
+          "actionable_cue_fallback": false,
+          "evidence_review": {
+            "status": "completed",
+            "method": "model_review_with_exact_source_quote_checks",
+            "constraints": [],
+            "issues": [],
+            "requires_revision": false,
+            "source_quotes_verified": true,
+            "instruction_coverage_verified": true,
+            "required_instruction_quotes": [],
+            "coverage_repair_used": false,
+            "applied": false,
+            "initial_action_verification": {
+              "resolved": true,
+              "remaining_issues": []
+            },
+            "revision_verification": {
+              "resolved": true,
+              "remaining_issues": []
+            }
+          },
+          "multimodal_inference": {
+            "visual_memory_ids": [],
+            "audio_memory_ids": [],
+            "relevant_media_memory_ids": [
+              "m_1791339357288_90"
+            ],
+            "filtered_irrelevant_media_count": 8,
+            "audio_transcription_rejected_ids": [],
+            "audio_transcription_rejected_count": 0,
+            "audio_reviews": [],
+            "historical_media_review_status": "not_needed",
+            "media_mode": "text",
+            "visual_samples": [],
+            "media_relevance": [
+              {
+                "memory_id": "m_1791339357288_90",
+                "used": true,
+                "basis": "current_event",
+                "semantic_review": {},
+                "description_terms": [
+                  "alcohol",
+                  "bottle",
+                  "decide",
+                  "discard",
+                  "disposal",
+                  "food",
+                  "kitchen",
+                  "meat"
+                ],
+                "transcript_terms": [
+                  "alcohol",
+                  "cook",
+                  "cover",
+                  "eggs",
+                  "even",
+                  "floor",
+                  "fridge",
+                  "out"
+                ],
+                "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+                "source_segment_id": "DAY1_A5_KATRINA_19120000_en",
+                "capture_version": "temporal-v3-speech",
+                "visual_times_s": [
+                  0.9,
+                  15.42,
+                  29.94
+                ],
+                "audio_spans": [
+                  {
+                    "start_s": 0.9,
+                    "duration_s": 3.333
+                  },
+                  {
+                    "start_s": 13.803,
+                    "duration_s": 3.333
+                  },
+                  {
+                    "start_s": 26.707,
+                    "duration_s": 3.333
+                  }
+                ],
+                "audio_coverage_ratio": 0.3431,
+                "visual_at_s": 15.42,
+                "audio_at_s": 0.9
+              },
+              {
+                "memory_id": "m_1791339345934_84",
+                "used": false,
+                "basis": "semantic_event_rejected",
+                "semantic_review": {},
+                "description_terms": [
+                  "camera",
+                  "plastic",
+                  "red",
+                  "wearer"
+                ],
+                "transcript_terms": [
+                  "floor",
+                  "put",
+                  "second"
+                ],
+                "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_18330000.mp4",
+                "source_segment_id": "DAY1_A5_KATRINA_18330000_en",
+                "capture_version": "temporal-v3-speech",
+                "visual_times_s": [
+                  0.08,
+                  15.002,
+                  29.924
+                ],
+                "audio_spans": [
+                  {
+                    "start_s": 0.08,
+                    "duration_s": 3.333
+                  },
+                  {
+                    "start_s": 13.385,
+                    "duration_s": 3.333
+                  },
+                  {
+                    "start_s": 26.691,
+                    "duration_s": 3.333
+                  }
+                ],
+                "audio_coverage_ratio": 0.3339,
+                "visual_at_s": 15.002,
+                "audio_at_s": 0.08
+              },
+              {
+                "memory_id": "m_1791339305697_67",
+                "used": false,
+                "basis": "semantic_event_rejected",
+                "semantic_review": {},
+                "description_terms": [
+                  "bottle",
+                  "camera",
+                  "red",
+                  "wearer"
+                ],
+                "transcript_terms": [
+                  "red"
+                ],
+                "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_17353000.mp4",
+                "source_segment_id": "DAY1_A5_KATRINA_17353000_en",
+                "capture_version": "temporal-v3-speech",
+                "visual_times_s": [
+                  5.82,
+                  17.872,
+                  29.924
+                ],
+                "audio_spans": [
+                  {
+                    "start_s": 5.82,
+                    "duration_s": 3.333
+                  },
+                  {
+                    "start_s": 16.255,
+                    "duration_s": 3.333
+                  },
+                  {
+                    "start_s": 26.691,
+                    "duration_s": 3.333
+                  }
+                ],
+                "audio_coverage_ratio": 0.4131,
+                "visual_at_s": 17.872,
+                "audio_at_s": 5.82
+              },
+              {
+                "memory_id": "m_1791339239731_32",
+                "used": false,
+                "basis": "semantic_event_rejected",
+                "semantic_review": {},
+                "description_terms": [
+                  "camera",
+                  "move",
+                  "plastic",
+                  "storage",
+                  "wearer"
+                ],
+                "transcript_terms": [
+                  "perfect"
+                ],
+                "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_12530000.mp4",
+                "source_segment_id": "DAY1_A5_KATRINA_12530000_en",
+                "capture_version": "temporal-v3-speech",
+                "visual_times_s": [
+                  2.73,
+                  16.25,
+                  29.77
+                ],
+                "audio_spans": [
+                  {
+                    "start_s": 2.73,
+                    "duration_s": 3.333
+                  },
+                  {
+                    "start_s": 14.633,
+                    "duration_s": 3.333
+                  },
+                  {
+                    "start_s": 26.537,
+                    "duration_s": 3.333
+                  }
+                ],
+                "audio_coverage_ratio": 0.3684,
+                "visual_at_s": 16.25,
+                "audio_at_s": 2.73
+              },
+              {
+                "memory_id": "m_1791339344172_83",
+                "used": false,
+                "basis": "semantic_event_rejected",
+                "semantic_review": {},
+                "description_terms": [
+                  "food",
+                  "fridge",
+                  "storage"
+                ],
+                "transcript_terms": [
+                  "fridge",
+                  "put"
+                ],
+                "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_18313000.mp4",
+                "source_segment_id": "DAY1_A5_KATRINA_18313000_en",
+                "capture_version": "temporal-v3-speech",
+                "visual_times_s": [
+                  0.32,
+                  15.122,
+                  29.924
+                ],
+                "audio_spans": [
+                  {
+                    "start_s": 0.32,
+                    "duration_s": 3.333
+                  },
+                  {
+                    "start_s": 13.505,
+                    "duration_s": 3.333
+                  },
+                  {
+                    "start_s": 26.691,
+                    "duration_s": 3.333
+                  }
+                ],
+                "audio_coverage_ratio": 0.3366,
+                "visual_at_s": 15.122,
+                "audio_at_s": 0.32
+              },
+              {
+                "memory_id": "m_1791339300315_65",
+                "used": false,
+                "basis": "semantic_event_rejected",
+                "semantic_review": {},
+                "description_terms": [
+                  "camera",
+                  "food",
+                  "out",
+                  "refrigerator",
+                  "wearer"
+                ],
+                "transcript_terms": [
+                  "only"
+                ],
+                "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_17283000.mp4",
+                "source_segment_id": "DAY1_A5_KATRINA_17283000_en",
+                "capture_version": "temporal-v3-speech",
+                "visual_times_s": [
+                  0.48,
+                  15.202,
+                  29.924
+                ],
+                "audio_spans": [
+                  {
+                    "start_s": 0.48,
+                    "duration_s": 3.333
+                  },
+                  {
+                    "start_s": 13.585,
+                    "duration_s": 3.333
+                  },
+                  {
+                    "start_s": 26.691,
+                    "duration_s": 3.333
+                  }
+                ],
+                "audio_coverage_ratio": 0.3384,
+                "visual_at_s": 15.202,
+                "audio_at_s": 0.48
+              },
+              {
+                "memory_id": "m_1791339320283_73",
+                "used": false,
+                "basis": "semantic_event_rejected",
+                "semantic_review": {},
+                "description_terms": [
+                  "food",
+                  "packag"
+                ],
+                "transcript_terms": [
+                  "think"
+                ],
+                "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_18000000.mp4",
+                "source_segment_id": "DAY1_A5_KATRINA_18000000_en",
+                "capture_version": "temporal-v3-speech",
+                "visual_times_s": [
+                  0.22,
+                  15.08,
+                  29.94
+                ],
+                "audio_spans": [
+                  {
+                    "start_s": 0.22,
+                    "duration_s": 3.333
+                  },
+                  {
+                    "start_s": 13.463,
+                    "duration_s": 3.333
+                  },
+                  {
+                    "start_s": 26.707,
+                    "duration_s": 3.333
+                  }
+                ],
+                "audio_coverage_ratio": 0.3353,
+                "visual_at_s": 15.08,
+                "audio_at_s": 0.22
+              },
+              {
+                "memory_id": "m_1791339253639_40",
+                "used": false,
+                "basis": "semantic_event_rejected",
+                "semantic_review": {},
+                "description_terms": [
+                  "floor",
+                  "observ"
+                ],
+                "transcript_terms": [
+                  "put"
+                ],
+                "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_13080000.mp4",
+                "source_segment_id": "DAY1_A5_KATRINA_13080000_en",
+                "capture_version": "temporal-v3-speech",
+                "visual_times_s": [
+                  3.3,
+                  15.065,
+                  26.83
+                ],
+                "audio_spans": [
+                  {
+                    "start_s": 3.3,
+                    "duration_s": 3.333
+                  },
+                  {
+                    "start_s": 13.448,
+                    "duration_s": 3.333
+                  },
+                  {
+                    "start_s": 23.597,
+                    "duration_s": 3.333
+                  }
+                ],
+                "audio_coverage_ratio": 0.4231,
+                "visual_at_s": 15.065,
+                "audio_at_s": 3.3
+              },
+              {
+                "memory_id": "m_1791339195407_8",
+                "used": false,
+                "basis": "semantic_event_rejected",
+                "semantic_review": {},
+                "description_terms": [
+                  "event",
+                  "object"
+                ],
+                "transcript_terms": [
+                  "event",
+                  "think"
+                ],
+                "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_11490000.mp4",
+                "source_segment_id": "DAY1_A5_KATRINA_11490000_en",
+                "capture_version": "temporal-v3-speech",
+                "visual_times_s": [
+                  1.7,
+                  15.812,
+                  29.924
+                ],
+                "audio_spans": [
+                  {
+                    "start_s": 1.7,
+                    "duration_s": 3.333
+                  },
+                  {
+                    "start_s": 14.195,
+                    "duration_s": 3.333
+                  },
+                  {
+                    "start_s": 26.691,
+                    "duration_s": 3.333
+                  }
+                ],
+                "audio_coverage_ratio": 0.353,
+                "visual_at_s": 15.812,
+                "audio_at_s": 1.7
+              }
+            ],
+            "model": "text-only Qwen fallback",
+            "visual_frames_used": 0,
+            "audio_transcripts_used": 0,
+            "source_observations": [],
+            "visual_observation_status": null,
+            "visual_observation_output": null,
+            "perception_reused": false,
+            "language_translation": "not_needed"
+          },
+          "proactive_scan": true,
+          "source_moment_id": "m_1791339357288_90",
+          "perception_before_retrieval": {},
+          "elapsed_ms": 10601,
+          "integrity_review": {
+            "checks": [
+              {
+                "name": "引用仅来自当时可用的记忆",
+                "passed": true
+              },
+              {
+                "name": "网页展现保留逐帧真实秒数和原始观察",
+                "passed": true
+              },
+              {
+                "name": "文本消融没有偷偷使用画面或音频",
+                "passed": true
+              },
+              {
+                "name": "建议复核原句均匹配已存来源",
+                "passed": true
+              }
+            ],
+            "passed": 4,
+            "total": 4
+          }
+        }
+      },
+      "recommendation": {
+        "action": "无提醒需要",
+        "reason": "当前场景中，Katrina 和 Jake 正在讨论食物处理和酒精存放计划，其中明确提到要丢弃未包装的食物（如未用保鲜膜覆盖的肉）并把酒精搬到二楼。Lucia 提议鸡蛋应放入冰箱，Katrina 同意。所有对话和视觉观察均与食品处置和存储规划一致，未发现任何未解决的意图、安全需求或需提醒的事项。当前事件未涉及个人护理、隐私空间进入或需确认的下一步行动。",
+        "evidence_ids": [
+          "m_1791339357288_90"
+        ],
+        "uncertainty": "无",
+        "risk": "low",
+        "world_assumption": "无特殊假设",
+        "multimodal_observations": [
+          {
+            "memory_id": "m_1791339357288_90",
+            "modality": "audio",
+            "observation": "Whisper transcription: “而且没有带保鲜膜”",
+            "english_translation": "And it's not even covered with plastic wrap.",
+            "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+            "audio_at_s": 0.9,
+            "duration_s": 3.333
+          },
+          {
+            "memory_id": "m_1791339357288_90",
+            "modality": "audio",
+            "observation": "Whisper transcription: “要做饭是在一楼吧”",
+            "english_translation": "To cook, it's on the first floor, right?",
+            "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+            "audio_at_s": 13.803,
+            "duration_s": 3.333
+          },
+          {
+            "memory_id": "m_1791339357288_90",
+            "sources": [
+              {
+                "memory_id": "m_1791339357288_90",
+                "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+                "frame_at_s": 0.9,
+                "clip_start_s": 0.9,
+                "clip_end_s": 30.04
+              }
+            ],
+            "modality": "visual",
+            "observation": "一个红色冰箱的门开着，内部有物品，旁边有白色窗帘，背景是墙壁和门。"
+          },
+          {
+            "memory_id": "m_1791339357288_90",
+            "sources": [
+              {
+                "memory_id": "m_1791339357288_90",
+                "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+                "frame_at_s": 15.42,
+                "clip_start_s": 0.9,
+                "clip_end_s": 30.04
+              }
+            ],
+            "modality": "visual",
+            "observation": "一个人戴着蓝色帽子，弯腰在地板上，旁边有红色冰箱和白色窗帘，背景是房间一角。"
+          },
+          {
+            "memory_id": "m_1791339357288_90",
+            "sources": [
+              {
+                "memory_id": "m_1791339357288_90",
+                "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+                "frame_at_s": 29.94,
+                "clip_start_s": 0.9,
+                "clip_end_s": 30.04
+              }
+            ],
+            "modality": "visual",
+            "observation": "一只手正在从红色冰箱的抽屉里拿取物品，冰箱内部有多个抽屉和物品。"
+          },
+          {
+            "memory_id": "m_1791339305697_67",
+            "sources": [
+              {
+                "memory_id": "m_1791339305697_67",
+                "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_17353000.mp4",
+                "frame_at_s": 5.82,
+                "clip_start_s": 5.82,
+                "clip_end_s": 30.024
+              }
+            ],
+            "modality": "visual",
+            "observation": "一个超市的过道，货架上摆满商品，地面有散落的物品，远处有一个人在走动。"
+          }
+        ]
+      },
+      "model_recommendation": {
+        "action": "无提醒需要",
+        "reason": "当前场景中，Katrina 和 Jake 正在讨论食物处理和酒精存放计划，其中明确提到要丢弃未包装的食物（如未用保鲜膜覆盖的肉）并把酒精搬到二楼。Lucia 提议鸡蛋应放入冰箱，Katrina 同意。所有对话和视觉观察均与食品处置和存储规划一致，未发现任何未解决的意图、安全需求或需提醒的事项。当前事件未涉及个人护理、隐私空间进入或需确认的下一步行动。",
+        "uncertainty": "无",
+        "world_assumption": "无特殊假设",
+        "risk": "low",
+        "evidence_ids": [
+          "m_1791339357288_90"
+        ],
+        "multimodal_observations": [
+          {
+            "memory_id": "m_1791339357288_90",
+            "modality": "audio",
+            "observation": "Whisper transcription: “而且没有带保鲜膜”",
+            "english_translation": "And it's not even covered with plastic wrap.",
+            "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+            "audio_at_s": 0.9,
+            "duration_s": 3.333
+          },
+          {
+            "memory_id": "m_1791339357288_90",
+            "modality": "audio",
+            "observation": "Whisper transcription: “要做饭是在一楼吧”",
+            "english_translation": "To cook, it's on the first floor, right?",
+            "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+            "audio_at_s": 13.803,
+            "duration_s": 3.333
+          },
+          {
+            "memory_id": "m_1791339357288_90",
+            "sources": [
+              {
+                "memory_id": "m_1791339357288_90",
+                "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+                "frame_at_s": 0.9,
+                "clip_start_s": 0.9,
+                "clip_end_s": 30.04
+              }
+            ],
+            "modality": "visual",
+            "observation": "一个红色冰箱的门开着，内部有物品，旁边有白色窗帘，背景是墙壁和门。"
+          },
+          {
+            "memory_id": "m_1791339357288_90",
+            "sources": [
+              {
+                "memory_id": "m_1791339357288_90",
+                "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+                "frame_at_s": 15.42,
+                "clip_start_s": 0.9,
+                "clip_end_s": 30.04
+              }
+            ],
+            "modality": "visual",
+            "observation": "一个人戴着蓝色帽子，弯腰在地板上，旁边有红色冰箱和白色窗帘，背景是房间一角。"
+          },
+          {
+            "memory_id": "m_1791339357288_90",
+            "sources": [
+              {
+                "memory_id": "m_1791339357288_90",
+                "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+                "frame_at_s": 29.94,
+                "clip_start_s": 0.9,
+                "clip_end_s": 30.04
+              }
+            ],
+            "modality": "visual",
+            "observation": "一只手正在从红色冰箱的抽屉里拿取物品，冰箱内部有多个抽屉和物品。"
+          },
+          {
+            "memory_id": "m_1791339305697_67",
+            "sources": [
+              {
+                "memory_id": "m_1791339305697_67",
+                "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_17353000.mp4",
+                "frame_at_s": 5.82,
+                "clip_start_s": 5.82,
+                "clip_end_s": 30.024
+              }
+            ],
+            "modality": "visual",
+            "observation": "一个超市的过道，货架上摆满商品，地面有散落的物品，远处有一个人在走动。"
+          }
+        ]
+      },
+      "policy_adjustments": [],
+      "multimodal_inference": {
+        "visual_memory_ids": [
+          "m_1791339357288_90",
+          "m_1791339357288_90",
+          "m_1791339357288_90",
+          "m_1791339305697_67"
+        ],
+        "audio_memory_ids": [
+          "m_1791339357288_90",
+          "m_1791339357288_90"
+        ],
+        "relevant_media_memory_ids": [
+          "m_1791339357288_90",
+          "m_1791339305697_67",
+          "m_1791339344172_83",
+          "m_1791339320283_73"
+        ],
+        "filtered_irrelevant_media_count": 5,
+        "audio_transcription_rejected_ids": [
+          "m_1791339357288_90"
+        ],
+        "audio_transcription_rejected_count": 1,
+        "audio_reviews": [
+          {
+            "memory_id": "m_1791339357288_90",
+            "asset": "assets/audio/9b7f46b103c745d340ca108e.ogg",
+            "audio_at_s": 0.9,
+            "duration_s": 3.333,
+            "raw_transcription": "而且没有带保鲜膜",
+            "decoder_raw_transcription": "而且没有带保鲜膜",
+            "decoder": "memory-whisper-small-cpu-int8",
+            "segments": [
+              {
+                "start": 0.0,
+                "end": 2.21,
+                "text": "而且没有带保鲜膜",
+                "avg_logprob": -0.4689,
+                "no_speech_prob": 0.3952
+              }
+            ],
+            "low_confidence_segments": 0,
+            "accepted": true,
+            "status": "semantic_compatible",
+            "compatibility_confidence": 0.95,
+            "relation": "corroborates",
+            "possible_numeric_unit_mismatch": false,
+            "english_translation": "And it's not even covered with plastic wrap.",
+            "reason": "The ASR phrase '而且没有带保鲜膜' directly translates to 'and it's not even covered with plastic wrap,' which matches exactly with Katrina's stored speech. This confirms a specific event detail (food not wrapped) and aligns with the event context of discarding unwrapped food. The phrase contains a concrete event-specific objec"
+          },
+          {
+            "memory_id": "m_1791339357288_90",
+            "asset": "assets/audio/4dc9351340bfc5b0d2479ed5.ogg",
+            "audio_at_s": 13.803,
+            "duration_s": 3.333,
+            "raw_transcription": "要做饭是在一楼吧",
+            "decoder_raw_transcription": "要做饭是在一楼吧",
+            "decoder": "memory-whisper-small-cpu-int8",
+            "segments": [
+              {
+                "start": 0.0,
+                "end": 2.18,
+                "text": "要做饭是在一楼吧",
+                "avg_logprob": -0.4508,
+                "no_speech_prob": 0.1924
+              }
+            ],
+            "low_confidence_segments": 0,
+            "accepted": true,
+            "status": "semantic_compatible",
+            "compatibility_confidence": 0.95,
+            "relation": "corroborates",
+            "possible_numeric_unit_mismatch": false,
+            "english_translation": "To cook, it's on the first floor, right?",
+            "reason": "The ASR phrase '要做饭是在一楼吧' (To cook, it's on the first floor, right?) directly matches the event text where Katrina says 'I think we should cook on the first floor first.' Both refer to the specific action of cooking and the specific location (first floor) within the indoor kitchen context. No generic filler or vague en"
+          },
+          {
+            "memory_id": "m_1791339357288_90",
+            "asset": "assets/audio/71076900e86dfc338d65fbef.ogg",
+            "audio_at_s": 26.707,
+            "duration_s": 3.333,
+            "raw_transcription": "好",
+            "decoder_raw_transcription": "好",
+            "decoder": "memory-whisper-small-cpu-int8",
+            "segments": [
+              {
+                "start": 1.91,
+                "end": 2.63,
+                "text": "好",
+                "avg_logprob": -0.9612,
+                "no_speech_prob": 0.4577
+              }
+            ],
+            "low_confidence_segments": 0,
+            "accepted": false,
+            "status": "semantic_rejected",
+            "compatibility_confidence": 0.98,
+            "relation": "unrelated",
+            "possible_numeric_unit_mismatch": false,
+            "english_translation": "Good",
+            "reason": "The ASR output 'Good' is a generic interjection with no event-specific object, action, state, named topic, or expressed need. It does not reference any concrete element from the event (e.g., food, alcohol, refrigerator, floors, cooking, storage) and cannot be semantically linked to the described actions or context. The"
+          }
+        ],
+        "historical_media_review_status": "completed",
+        "media_mode": "all",
+        "visual_samples": [
+          {
+            "id": "m_1791339357288_90",
+            "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+            "source_segment_id": "DAY1_A5_KATRINA_19120000_en",
+            "frame_at_s": 0.9,
+            "clip_start_s": 0.9,
+            "clip_end_s": 30.04
+          },
+          {
+            "id": "m_1791339357288_90",
+            "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+            "source_segment_id": "DAY1_A5_KATRINA_19120000_en",
+            "frame_at_s": 15.42,
+            "clip_start_s": 0.9,
+            "clip_end_s": 30.04
+          },
+          {
+            "id": "m_1791339357288_90",
+            "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+            "source_segment_id": "DAY1_A5_KATRINA_19120000_en",
+            "frame_at_s": 29.94,
+            "clip_start_s": 0.9,
+            "clip_end_s": 30.04
+          },
+          {
+            "id": "m_1791339305697_67",
+            "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_17353000.mp4",
+            "source_segment_id": "DAY1_A5_KATRINA_17353000_en",
+            "frame_at_s": 5.82,
+            "clip_start_s": 5.82,
+            "clip_end_s": 30.024
+          }
+        ],
+        "media_relevance": [
+          {
+            "memory_id": "m_1791339357288_90",
+            "used": true,
+            "basis": "current_event",
+            "semantic_review": {},
+            "description_terms": [
+              "alcohol",
+              "bottle",
+              "decide",
+              "discard",
+              "disposal",
+              "food",
+              "kitchen",
+              "meat"
+            ],
+            "transcript_terms": [
+              "alcohol",
+              "cook",
+              "cover",
+              "eggs",
+              "even",
+              "floor",
+              "fridge",
+              "out"
+            ],
+            "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+            "source_segment_id": "DAY1_A5_KATRINA_19120000_en",
+            "capture_version": "temporal-v3-speech",
+            "visual_times_s": [
+              0.9,
+              15.42,
+              29.94
+            ],
+            "audio_spans": [
+              {
+                "start_s": 0.9,
+                "duration_s": 3.333
+              },
+              {
+                "start_s": 13.803,
+                "duration_s": 3.333
+              },
+              {
+                "start_s": 26.707,
+                "duration_s": 3.333
+              }
+            ],
+            "audio_coverage_ratio": 0.3431,
+            "visual_at_s": 15.42,
+            "audio_at_s": 0.9,
+            "visual_status": "used",
+            "audio_status": "semantic_rejected"
+          },
+          {
+            "memory_id": "m_1791339345934_84",
+            "used": false,
+            "basis": "semantic_event_rejected",
+            "semantic_review": {},
+            "description_terms": [
+              "camera",
+              "plastic",
+              "red",
+              "wearer"
+            ],
+            "transcript_terms": [
+              "floor",
+              "put",
+              "second"
+            ],
+            "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_18330000.mp4",
+            "source_segment_id": "DAY1_A5_KATRINA_18330000_en",
+            "capture_version": "temporal-v3-speech",
+            "visual_times_s": [
+              0.08,
+              15.002,
+              29.924
+            ],
+            "audio_spans": [
+              {
+                "start_s": 0.08,
+                "duration_s": 3.333
+              },
+              {
+                "start_s": 13.385,
+                "duration_s": 3.333
+              },
+              {
+                "start_s": 26.691,
+                "duration_s": 3.333
+              }
+            ],
+            "audio_coverage_ratio": 0.3339,
+            "visual_at_s": 15.002,
+            "audio_at_s": 0.08
+          },
+          {
+            "memory_id": "m_1791339305697_67",
+            "used": true,
+            "basis": "semantic_event_match",
+            "semantic_review": {
+              "memory_id": "m_1791339305697_67",
+              "relevant": true,
+              "confidence": 0.75,
+              "evidence_phrase": "The red one is fine.",
+              "reason": "In the current event, Lucia suggests eggs go in the fridge, and Katrina responds affirmatively. The memory references selecting a red-flavored beverage — a specific object choice matching the color descriptor ‘red’ used in the current event’s context of food selection and storage.",
+              "accepted": true
+            },
+            "description_terms": [
+              "bottle",
+              "camera",
+              "red",
+              "wearer"
+            ],
+            "transcript_terms": [
+              "red"
+            ],
+            "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_17353000.mp4",
+            "source_segment_id": "DAY1_A5_KATRINA_17353000_en",
+            "capture_version": "temporal-v3-speech",
+            "visual_times_s": [
+              5.82,
+              17.872,
+              29.924
+            ],
+            "audio_spans": [
+              {
+                "start_s": 5.82,
+                "duration_s": 3.333
+              },
+              {
+                "start_s": 16.255,
+                "duration_s": 3.333
+              },
+              {
+                "start_s": 26.691,
+                "duration_s": 3.333
+              }
+            ],
+            "audio_coverage_ratio": 0.4131,
+            "visual_at_s": 17.872,
+            "audio_at_s": 5.82,
+            "visual_status": "used"
+          },
+          {
+            "memory_id": "m_1791339239731_32",
+            "used": false,
+            "basis": "semantic_event_rejected",
+            "semantic_review": {},
+            "description_terms": [
+              "camera",
+              "move",
+              "plastic",
+              "storage",
+              "wearer"
+            ],
+            "transcript_terms": [
+              "perfect"
+            ],
+            "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_12530000.mp4",
+            "source_segment_id": "DAY1_A5_KATRINA_12530000_en",
+            "capture_version": "temporal-v3-speech",
+            "visual_times_s": [
+              2.73,
+              16.25,
+              29.77
+            ],
+            "audio_spans": [
+              {
+                "start_s": 2.73,
+                "duration_s": 3.333
+              },
+              {
+                "start_s": 14.633,
+                "duration_s": 3.333
+              },
+              {
+                "start_s": 26.537,
+                "duration_s": 3.333
+              }
+            ],
+            "audio_coverage_ratio": 0.3684,
+            "visual_at_s": 16.25,
+            "audio_at_s": 2.73
+          },
+          {
+            "memory_id": "m_1791339344172_83",
+            "used": true,
+            "basis": "semantic_event_match",
+            "semantic_review": {
+              "memory_id": "m_1791339344172_83",
+              "relevant": true,
+              "confidence": 0.95,
+              "evidence_phrase": "when you put this item in the fridge",
+              "reason": "The current event involves Lucia suggesting eggs go in the fridge, and the memory explicitly references putting an item in the fridge as part of establishing a data link to the supermarket — matching the specific action and object (fridge) with stated intent (tracking origin).",
+              "accepted": true
+            },
+            "description_terms": [
+              "food",
+              "fridge",
+              "storage"
+            ],
+            "transcript_terms": [
+              "fridge",
+              "put"
+            ],
+            "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_18313000.mp4",
+            "source_segment_id": "DAY1_A5_KATRINA_18313000_en",
+            "capture_version": "temporal-v3-speech",
+            "visual_times_s": [
+              0.32,
+              15.122,
+              29.924
+            ],
+            "audio_spans": [
+              {
+                "start_s": 0.32,
+                "duration_s": 3.333
+              },
+              {
+                "start_s": 13.505,
+                "duration_s": 3.333
+              },
+              {
+                "start_s": 26.691,
+                "duration_s": 3.333
+              }
+            ],
+            "audio_coverage_ratio": 0.3366,
+            "visual_at_s": 15.122,
+            "audio_at_s": 0.32
+          },
+          {
+            "memory_id": "m_1791339300315_65",
+            "used": false,
+            "basis": "semantic_event_rejected",
+            "semantic_review": {},
+            "description_terms": [
+              "camera",
+              "food",
+              "out",
+              "refrigerator",
+              "wearer"
+            ],
+            "transcript_terms": [
+              "only"
+            ],
+            "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_17283000.mp4",
+            "source_segment_id": "DAY1_A5_KATRINA_17283000_en",
+            "capture_version": "temporal-v3-speech",
+            "visual_times_s": [
+              0.48,
+              15.202,
+              29.924
+            ],
+            "audio_spans": [
+              {
+                "start_s": 0.48,
+                "duration_s": 3.333
+              },
+              {
+                "start_s": 13.585,
+                "duration_s": 3.333
+              },
+              {
+                "start_s": 26.691,
+                "duration_s": 3.333
+              }
+            ],
+            "audio_coverage_ratio": 0.3384,
+            "visual_at_s": 15.202,
+            "audio_at_s": 0.48
+          },
+          {
+            "memory_id": "m_1791339320283_73",
+            "used": true,
+            "basis": "semantic_event_match",
+            "semantic_review": {
+              "memory_id": "m_1791339320283_73",
+              "relevant": true,
+              "confidence": 0.85,
+              "evidence_phrase": "Do we need to buy garlic for the hotpot seasoning?",
+              "reason": "In the current event, Katrina plans to cook on the first floor, implying meal preparation. This memory references garlic being needed for hotpot seasoning — a specific cooking need tied to food preparation, matching the context of cooking and ingredient planning.",
+              "accepted": true
+            },
+            "description_terms": [
+              "food",
+              "packag"
+            ],
+            "transcript_terms": [
+              "think"
+            ],
+            "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_18000000.mp4",
+            "source_segment_id": "DAY1_A5_KATRINA_18000000_en",
+            "capture_version": "temporal-v3-speech",
+            "visual_times_s": [
+              0.22,
+              15.08,
+              29.94
+            ],
+            "audio_spans": [
+              {
+                "start_s": 0.22,
+                "duration_s": 3.333
+              },
+              {
+                "start_s": 13.463,
+                "duration_s": 3.333
+              },
+              {
+                "start_s": 26.707,
+                "duration_s": 3.333
+              }
+            ],
+            "audio_coverage_ratio": 0.3353,
+            "visual_at_s": 15.08,
+            "audio_at_s": 0.22
+          },
+          {
+            "memory_id": "m_1791339253639_40",
+            "used": false,
+            "basis": "semantic_event_rejected",
+            "semantic_review": {},
+            "description_terms": [
+              "floor",
+              "observ"
+            ],
+            "transcript_terms": [
+              "put"
+            ],
+            "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_13080000.mp4",
+            "source_segment_id": "DAY1_A5_KATRINA_13080000_en",
+            "capture_version": "temporal-v3-speech",
+            "visual_times_s": [
+              3.3,
+              15.065,
+              26.83
+            ],
+            "audio_spans": [
+              {
+                "start_s": 3.3,
+                "duration_s": 3.333
+              },
+              {
+                "start_s": 13.448,
+                "duration_s": 3.333
+              },
+              {
+                "start_s": 23.597,
+                "duration_s": 3.333
+              }
+            ],
+            "audio_coverage_ratio": 0.4231,
+            "visual_at_s": 15.065,
+            "audio_at_s": 3.3
+          },
+          {
+            "memory_id": "m_1791339195407_8",
+            "used": false,
+            "basis": "semantic_event_rejected",
+            "semantic_review": {},
+            "description_terms": [
+              "event",
+              "object"
+            ],
+            "transcript_terms": [
+              "event",
+              "think"
+            ],
+            "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_11490000.mp4",
+            "source_segment_id": "DAY1_A5_KATRINA_11490000_en",
+            "capture_version": "temporal-v3-speech",
+            "visual_times_s": [
+              1.7,
+              15.812,
+              29.924
+            ],
+            "audio_spans": [
+              {
+                "start_s": 1.7,
+                "duration_s": 3.333
+              },
+              {
+                "start_s": 14.195,
+                "duration_s": 3.333
+              },
+              {
+                "start_s": 26.691,
+                "duration_s": 3.333
+              }
+            ],
+            "audio_coverage_ratio": 0.353,
+            "visual_at_s": 15.812,
+            "audio_at_s": 1.7
+          }
+        ],
+        "visual_observation_output": "{\"observations\":[{\"image\":1,\"observation\":\"一个红色冰箱的门开着，内部有物品，旁边有白色窗帘，背景是墙壁和门。\"},{\"image\":2,\"observation\":\"一个人戴着蓝色帽子，弯腰在地板上，旁边有红色冰箱和白色窗帘，背景是房间一角。\"},{\"image\":3,\"observation\":\"一只手正在从红色冰箱的抽屉里拿取物品，冰箱内部有多个抽屉和物品。\"},{\"image\":4,\"observation\":\"一个超市的过道，货架上摆满商品，地面有散落的物品，远处有一个人在走动。\"}]}",
+        "visual_observation_status": "structured_or_parsed",
+        "model": "Qwen3-VL visual reading + Qwen reasoning",
+        "visual_frames_used": 4,
+        "audio_transcripts_used": 2,
+        "source_observations": [
+          {
+            "memory_id": "m_1791339357288_90",
+            "modality": "audio",
+            "observation": "Whisper transcription: “而且没有带保鲜膜”",
+            "english_translation": "And it's not even covered with plastic wrap.",
+            "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+            "audio_at_s": 0.9,
+            "duration_s": 3.333
+          },
+          {
+            "memory_id": "m_1791339357288_90",
+            "modality": "audio",
+            "observation": "Whisper transcription: “要做饭是在一楼吧”",
+            "english_translation": "To cook, it's on the first floor, right?",
+            "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+            "audio_at_s": 13.803,
+            "duration_s": 3.333
+          },
+          {
+            "memory_id": "m_1791339357288_90",
+            "sources": [
+              {
+                "memory_id": "m_1791339357288_90",
+                "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+                "frame_at_s": 0.9,
+                "clip_start_s": 0.9,
+                "clip_end_s": 30.04
+              }
+            ],
+            "modality": "visual",
+            "observation": "一个红色冰箱的门开着，内部有物品，旁边有白色窗帘，背景是墙壁和门。"
+          },
+          {
+            "memory_id": "m_1791339357288_90",
+            "sources": [
+              {
+                "memory_id": "m_1791339357288_90",
+                "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+                "frame_at_s": 15.42,
+                "clip_start_s": 0.9,
+                "clip_end_s": 30.04
+              }
+            ],
+            "modality": "visual",
+            "observation": "一个人戴着蓝色帽子，弯腰在地板上，旁边有红色冰箱和白色窗帘，背景是房间一角。"
+          },
+          {
+            "memory_id": "m_1791339357288_90",
+            "sources": [
+              {
+                "memory_id": "m_1791339357288_90",
+                "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+                "frame_at_s": 29.94,
+                "clip_start_s": 0.9,
+                "clip_end_s": 30.04
+              }
+            ],
+            "modality": "visual",
+            "observation": "一只手正在从红色冰箱的抽屉里拿取物品，冰箱内部有多个抽屉和物品。"
+          },
+          {
+            "memory_id": "m_1791339305697_67",
+            "sources": [
+              {
+                "memory_id": "m_1791339305697_67",
+                "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_17353000.mp4",
+                "frame_at_s": 5.82,
+                "clip_start_s": 5.82,
+                "clip_end_s": 30.024
+              }
+            ],
+            "modality": "visual",
+            "observation": "一个超市的过道，货架上摆满商品，地面有散落的物品，远处有一个人在走动。"
+          }
+        ],
+        "perception_reused": false,
+        "language_translation": "not_needed"
+      },
+      "retrieval_rounds": [
+        {
+          "queries": [
+            "Proactively assess the latest observed event and suggest a useful, safe next step only when evidence supports one. If none is needed, say no reminder is needed. Scene: Katrina and Jake decide to discard un-wrapped food and relocate alcohol. Action: Camera wearer observes and records the interaction. Interaction details: Katrina says “Let’s throw it out,” Jake agrees, and Katrina plans to move alcohol upstairs. Lucia suggests eggs go in the fridge People: Katrina, Jake, Tasha, Lucia Location: Kitchen, near a red refrigerator. Activity: Food disposal and storage planning. Objects: Red refrigerator, packaged meat, bottle of alcohol Speech: Katrina: And it's not even covered with plastic wrap. ; Jake: True. ; Katrina: Let's throw it out. ; Jake: Yeah, toss it. ; Katrina: I'll put the alcohol on the second floor. ; Tasha: Okay. ; Katrina: I think we should cook on the first floor first. ; Lucia: The eggs should go in the fridge, right? ; Katrina: Perfect. ; Jake: Uh, okay."
+          ],
+          "candidate_ids": [
+            "m_1791339357288_90",
+            "m_1791339345934_84",
+            "m_1791339305697_67",
+            "m_1791339239731_32",
+            "m_1791339344172_83",
+            "m_1791339300315_65",
+            "m_1791339320283_73",
+            "m_1791339253639_40",
+            "m_1791339195407_8"
+          ],
+          "media_links": [],
+          "candidate_details": [
+            {
+              "id": "m_1791339357288_90",
+              "reasons": []
+            },
+            {
+              "id": "m_1791339345934_84",
+              "text_relevance": 0.304,
+              "entity_matches": [
+                {
+                  "dimension": "people",
+                  "tag": "Katrina"
+                },
+                {
+                  "dimension": "people",
+                  "tag": "Jake"
+                },
+                {
+                  "dimension": "same_event_entities",
+                  "tag": "Katrina: person: Jake, person: Shure, person: Alice, location: Shopping mall, activity: Group discussion about direction and item tagging; camera wearer texts on phone, object: Smartphone, object: shopping cart, object: umbrella",
+                  "evidence_id": "m_1791339345934_84",
+                  "relation": "observed_in_same_source_event"
+                }
+              ],
+              "highlighted": false,
+              "timestamp": "2026-09-30T18:33:00",
+              "reasons": [
+                "文本相关度",
+                "索引实体命中"
+              ]
+            },
+            {
+              "id": "m_1791339305697_67",
+              "text_relevance": 0.253,
+              "entity_matches": [
+                {
+                  "dimension": "people",
+                  "tag": "Katrina"
+                },
+                {
+                  "dimension": "same_event_entities",
+                  "tag": "Katrina: person: Shure, location: Supermarket, activity: Shopping for beverages, specifically selecting a red-flavored option to replace a grapefruit-flavored one., object: Shopping cart, object: red beverage bottle, object: yellow beverage bottles, object: green cartons, object: wooden display crates",
+                  "evidence_id": "m_1791339305697_67",
+                  "relation": "observed_in_same_source_event"
+                }
+              ],
+              "highlighted": false,
+              "timestamp": "2026-09-30T17:35:30",
+              "reasons": [
+                "文本相关度",
+                "索引实体命中"
+              ]
+            },
+            {
+              "id": "m_1791339239731_32",
+              "text_relevance": 0.211,
+              "entity_matches": [
+                {
+                  "dimension": "people",
+                  "tag": "Katrina"
+                },
+                {
+                  "dimension": "people",
+                  "tag": "Jake"
+                },
+                {
+                  "dimension": "people",
+                  "tag": "Tasha"
+                },
+                {
+                  "dimension": "same_event_entities",
+                  "tag": "Katrina: person: Jake, person: Tasha, person: Shure, location: A home interior, activity: Collaborative tabletop game session with three players, object: Cardboard box, object: whiteboard, object: checkered board",
+                  "evidence_id": "m_1791339239731_32",
+                  "relation": "observed_in_same_source_event"
+                }
+              ],
+              "highlighted": false,
+              "timestamp": "2026-09-30T12:53:00",
+              "reasons": [
+                "文本相关度",
+                "索引实体命中"
+              ]
+            },
+            {
+              "id": "m_1791339344172_83",
+              "text_relevance": 0.2,
+              "entity_matches": [
+                {
+                  "dimension": "people",
+                  "tag": "Katrina"
+                },
+                {
+                  "dimension": "people",
+                  "tag": "Jake"
+                },
+                {
+                  "dimension": "people",
+                  "tag": "Lucia"
+                },
+                {
+                  "dimension": "same_event_entities",
+                  "tag": "Katrina: person: Shure, person: Lucia, person: Jake, location: Modern indoor mall corridor., activity: Group conversation about fridge contents and data tracking., object: Shopping bags, object: receipts, object: food items",
+                  "evidence_id": "m_1791339344172_83",
+                  "relation": "observed_in_same_source_event"
+                }
+              ],
+              "highlighted": false,
+              "timestamp": "2026-09-30T18:31:30",
+              "reasons": [
+                "文本相关度",
+                "索引实体命中"
+              ]
+            },
+            {
+              "id": "m_1791339300315_65",
+              "text_relevance": 0.182,
+              "entity_matches": [
+                {
+                  "dimension": "people",
+                  "tag": "Katrina"
+                },
+                {
+                  "dimension": "people",
+                  "tag": "Jake"
+                },
+                {
+                  "dimension": "people",
+                  "tag": "Tasha"
+                },
+                {
+                  "dimension": "people",
+                  "tag": "Lucia"
+                },
+                {
+                  "dimension": "same_event_entities",
+                  "tag": "Katrina: person: Lucia, person: Shure, person: Tasha, person: Jake, location: Supermarket, activity: Shopping for beverages and ready-to-eat food, then checking out, object: Shopping cart, object: refrigerated beverage display",
+                  "evidence_id": "m_1791339300315_65",
+                  "relation": "observed_in_same_source_event"
+                }
+              ],
+              "highlighted": false,
+              "timestamp": "2026-09-30T17:28:30",
+              "reasons": [
+                "文本相关度",
+                "索引实体命中"
+              ]
+            },
+            {
+              "id": "m_1791339320283_73",
+              "text_relevance": 0.182,
+              "entity_matches": [
+                {
+                  "dimension": "people",
+                  "tag": "Katrina"
+                },
+                {
+                  "dimension": "people",
+                  "tag": "Tasha"
+                },
+                {
+                  "dimension": "people",
+                  "tag": "Lucia"
+                },
+                {
+                  "dimension": "same_event_entities",
+                  "tag": "Katrina: person: Tasha, person: Lucia, person: Alice, location: Supermarket, activity: Collaborative grocery shopping for hotpot ingredients, object: Shopping cart, object: packaged food items (taro, object: konjac",
+                  "evidence_id": "m_1791339320283_73",
+                  "relation": "observed_in_same_source_event"
+                }
+              ],
+              "highlighted": false,
+              "timestamp": "2026-09-30T18:00:00",
+              "reasons": [
+                "文本相关度",
+                "索引实体命中"
+              ]
+            },
+            {
+              "id": "m_1791339253639_40",
+              "text_relevance": 0.18,
+              "entity_matches": [],
+              "highlighted": false,
+              "timestamp": "2026-09-30T13:08:00",
+              "reasons": [
+                "文本相关度"
+              ]
+            },
+            {
+              "id": "m_1791339195407_8",
+              "text_relevance": 0.157,
+              "entity_matches": [
+                {
+                  "dimension": "people",
+                  "tag": "Jake"
+                }
+              ],
+              "highlighted": false,
+              "timestamp": "2026-09-30T11:49:00",
+              "reasons": [
+                "文本相关度",
+                "索引实体命中"
+              ]
+            }
+          ]
+        }
+      ],
+      "candidates": [
+        {
+          "id": "m_1791339357288_90",
+          "time": "2026-09-30T19:12:00",
+          "scene": "Katrina and Jake decide to discard un-wrapped food and relocate alcohol.",
+          "action": "Camera wearer observes and records the interaction. Interaction details: Katrina says “Let’s throw it out,” Jake agrees, and Katrina plans to move alcohol upstairs. Lucia suggests eggs go in the fridge",
+          "people": [
+            "Katrina",
+            "Jake",
+            "Tasha",
+            "Lucia"
+          ],
+          "location": "Kitchen, near a red refrigerator.",
+          "activity": "Food disposal and storage planning.",
+          "objects": [
+            "Red refrigerator",
+            "packaged meat",
+            "bottle of alcohol"
+          ],
+          "speech": "Katrina: And it's not even covered with plastic wrap. ; Jake: True. ; Katrina: Let's throw it out. ; Jake: Yeah, toss it. ; Katrina: I'll put the alcohol on the second floor. ; Tasha: Okay. ; Katrina: I think we should cook on the first floor first. ; Lucia: The eggs should go in the fridge, right? ; Katrina: Perfect. ; Jake: Uh, okay.",
+          "explicit_instructions": [],
+          "media": {
+            "visual": true,
+            "audio": true
+          },
+          "merged_sources": []
+        },
+        {
+          "id": "m_1791339345934_84",
+          "time": "2026-09-30T18:33:00",
+          "scene": "A group navigates a shopping mall corridor, debating direction while one person texts and another holds an umbrella indoors.",
+          "action": "Jake: \"This is its glass. At least the glass is still there for people to steal. At least it's an algorithm error.\" Shure: \"I just love holding an umbrella. Indoors. Right? Isn't it?\" Jake: \"Maybe they put tags on the items. RFID tags. He'll be here in 6 minutes.\" Alice: \"Let's start heading down.\" Jake: \"Seems like we should go up. We're going up, right?\" Katrina: \"We're going down, isn't this the second floor?\"",
+          "people": [
+            "Jake",
+            "Shure",
+            "Alice",
+            "Katrina"
+          ],
+          "location": "Shopping mall",
+          "activity": "Group discussion about direction and item tagging; camera wearer texts on phone",
+          "objects": [
+            "Smartphone",
+            "shopping cart",
+            "umbrella",
+            "plastic bags",
+            "RFID tags"
+          ],
+          "speech": "Jake: This is its glass. ; Jake: At least the glass is still there for people to steal. ; Jake: At least it's an algorithm error. ; Shure: I just love holding an umbrella. ; Shure: Indoors. ; Shure: Right. ; Shure: Isn't it? ; Jake: Maybe they put tags on the items. ; Jake: RFID tags. ; Jake: He'll be here in 6 minutes. ; Alice: Let's start heading down. ; Jake: Seems like we should go up. ; Jake: We're going up, right? ; Katrina: We're going down, isn't this the second floor?",
+          "explicit_instructions": [],
+          "media": {
+            "visual": true,
+            "audio": true
+          },
+          "merged_sources": []
+        },
+        {
+          "id": "m_1791339305697_67",
+          "time": "2026-09-30T17:35:30",
+          "scene": "The camera wearer navigates a supermarket aisle, selects a red-flavored beverage, and places it in their shopping cart while conversing with a companion about replacing a grapefruit-flavored item.",
+          "action": "The camera wearer pushes a shopping cart, stops at a beverage display, picks up a red bottle, and places it in the cart. Interaction details: Katrina asks which beverage to choose to replace grapefruit flavor; Shure replies the grapefruit one is fine; Katrina decides the red one is acceptable; Shure urges to hurry; camera wearer picks up a red bottle and places it in the cart",
+          "people": [
+            "Shure",
+            "Katrina"
+          ],
+          "location": "Supermarket",
+          "activity": "Shopping for beverages, specifically selecting a red-flavored option to replace a grapefruit-flavored one.",
+          "objects": [
+            "Shopping cart",
+            "red beverage bottle",
+            "yellow beverage bottles",
+            "green cartons",
+            "wooden display crates"
+          ],
+          "speech": "Shure: Didn't you want some coffee? ; Katrina: If it's grapefruit flavor, which one should we replace it with? ; Shure: This grapefruit one is fine too. ; Katrina: The red one is fine. ; Shure: People are already... ; Shure: Hurry up, get it done.",
+          "explicit_instructions": [],
+          "media": {
+            "visual": true,
+            "audio": true
+          },
+          "merged_sources": []
+        },
+        {
+          "id": "m_1791339239731_32",
+          "time": "2026-09-30T12:53:00",
+          "scene": "The camera wearer moves from a cluttered storage area to join three others around a table for a collaborative game, then uses their phone while they play.",
+          "action": "The camera wearer moves from a storage area to a table, then holds up and uses their smartphone. Interaction details: Tasha asks if a butler can deliver her purchased items; Jake offers to ask when delivery can happen; Tasha notes the game is perfect for three people; the camera wearer holds up their phone to record or interact with the game",
+          "people": [
+            "Jake",
+            "Tasha",
+            "Shure",
+            "Katrina"
+          ],
+          "location": "A home interior",
+          "activity": "Collaborative tabletop game session with three players",
+          "objects": [
+            "Cardboard box",
+            "whiteboard",
+            "checkered board",
+            "laptop",
+            "phone",
+            "plastic bottles"
+          ],
+          "speech": "Shure: There's a butler too? ; Tasha: Can he deliver mine? ; Jake: What thing? ; Jake: Deliver what? ; Tasha: The stuff I bought. ; Jake: Sure, will it be today? ; Jake: I'll ask them when they can deliver. ; Jake: When they can deliver. ; Tasha: Alright, this game is perfect for three people, but ours is...",
+          "explicit_instructions": [],
+          "media": {
+            "visual": true,
+            "audio": true
+          },
+          "merged_sources": []
+        },
+        {
+          "id": "m_1791339344172_83",
+          "time": "2026-09-30T18:31:30",
+          "scene": "Group discusses fridge storage and data links to supermarket.",
+          "action": "Camera wearer observes group interaction. Interaction details: Shure confirms fridge is full; Jake explains data links to supermarket; Lucia compares to Amazon store",
+          "people": [
+            "Shure",
+            "Katrina",
+            "Lucia",
+            "Jake"
+          ],
+          "location": "Modern indoor mall corridor.",
+          "activity": "Group conversation about fridge contents and data tracking.",
+          "objects": [
+            "Shopping bags",
+            "receipts",
+            "food items"
+          ],
+          "speech": "Shure: It's responding to you now. ; Katrina: Our fridge is full now. ; Shure: Yes. ; Lucia: Can the fridge hold it? ; Shure: Don't let it get too cold. ; Katrina: Haha, drink it all. ; Jake: Later. ; Katrina: Also eat all the strawberries. ; Jake: This data is quite important. ; Jake: When you guys clean up later ; Jake: You'll have some connection with the supermarket. ; Jake: Your actions will establish some links. ; Jake: For example, when you put this item in the fridge ; Jake: It can trace back to where you found it. ; Lucia: Oh, like the Amazon unmanned grocery store.",
+          "explicit_instructions": [
+            "Shure: Don't let it get too cold."
+          ],
+          "media": {
+            "visual": true,
+            "audio": true
+          },
+          "merged_sources": []
+        },
+        {
+          "id": "m_1791339300315_65",
+          "time": "2026-09-30T17:28:30",
+          "scene": "The camera wearer navigates a supermarket, encountering staff and a customer, then explores beverage aisles and a ready-to-eat section before approaching a checkout counter.",
+          "action": "Shure and Katrina discuss buying peach juice; Katrina mentions they encountered the boss; Lucia suggests trying a drink; Tasha thanks someone; Jake greets Katrina; Katrina greets Lucia; Lucia asks why Tasha isn't seen; Katrina and Lucia exchange greetings; Shure greets someone; Tasha thanks someone; Jake greets Katrina; Katrina greets Lucia; Lucia asks who Tasha is referring to; Katrina says they encountered the boss; Shure asks if they only saw the spray one; Jake says it's not just one place; Katrina says there's a drink here too; Lucia says try it; Shure says hello; Tasha says okay thank you; Jake says hello; Katrina says hello; Lucia says hello; Katrina asks why they haven't seen Tasha; ",
+          "people": [
+            "Lucia",
+            "Shure",
+            "Katrina",
+            "Tasha",
+            "Jake"
+          ],
+          "location": "Supermarket",
+          "activity": "Shopping for beverages and ready-to-eat food, then checking out",
+          "objects": [
+            "Shopping cart",
+            "refrigerated beverage display",
+            "ready-to-eat food counter",
+            "peach juice bottles",
+            "unidentified items in cart"
+          ],
+          "speech": "Lucia: So... ; Lucia: Haha, our conversation is getting risky. ; Shure: Weren't we just talking about buying some peach juice? ; Katrina: Oh no. ; Katrina: We ran into... ; Katrina: boss ; Katrina: The boss. ; Tasha: Only the spray one? ; Jake: Your place, oh, it's not just one place. ; Katrina: There's a drink here too. ; Lucia: Give it a try. ; Shure: hello ; Tasha: Okay, thank you. ; Jake: Hello ; Katrina: hello ; Lucia: Hello ; Katrina: Why haven't we seen Tasha? ; Lucia: Who are you asking, the two of us?",
+          "explicit_instructions": [],
+          "media": {
+            "visual": true,
+            "audio": true
+          },
+          "merged_sources": []
+        },
+        {
+          "id": "m_1791339320283_73",
+          "time": "2026-09-30T18:00:00",
+          "scene": "A group of friends collaboratively shops in a supermarket, selecting and discussing food items, with one person taking the lead in choosing specific products like tofu and konjac.",
+          "action": "Katrina suggests taking an item; Tasha agrees to take another; Katrina comments on Tasha's considerateness; Tasha announces they found and bought taro and konjac, asking if others bought konjac; Katrina and Lucia say no; Katrina says \"That's enough\"; Tasha takes the tofu; Katrina asks if garlic for hotpot seasoning needs to be bought; Alice confirms garlic was already purchased; Tasha and Lucia examine items in the cart; the camera wearer holds up a smartphone showing a selfie.",
+          "people": [
+            "Katrina",
+            "Tasha",
+            "Lucia",
+            "Alice"
+          ],
+          "location": "Supermarket",
+          "activity": "Collaborative grocery shopping for hotpot ingredients",
+          "objects": [
+            "Shopping cart",
+            "packaged food items (taro",
+            "konjac",
+            "tofu",
+            "garlic)",
+            "smartphone"
+          ],
+          "speech": "Katrina: Then let's take this one. ; Tasha: Fine, let's take this one. ; Katrina: So considerate, haha. ; Katrina: What else? ; Tasha: We also found... ; Tasha: We also bought some taro. ; Tasha: Konjac, konjac, konjac! ; Tasha: Did you guys buy konjac? ; Katrina: No. ; Lucia: I don't think so. ; Katrina: That's enough. ; Tasha: Alright, then I'll take the tofu. ; Katrina: Do we need to buy garlic for the hotpot seasoning? ; Alice: Oh, I already bought garlic. ; Alice: Oh, we have this garlic.",
+          "explicit_instructions": [
+            "Lucia: I don't think so.",
+            "Katrina: Do we need to buy garlic for the hotpot seasoning?"
+          ],
+          "media": {
+            "visual": true,
+            "audio": true
+          },
+          "merged_sources": []
+        },
+        {
+          "id": "m_1791339253639_40",
+          "time": "2026-09-30T13:08:00",
+          "scene": "Two people assemble a white frame structure on a wooden floor while another person observes from a table.",
+          "action": "Shure says \"A little higher, this one.\" The unidentified person adjusts the frame. Shure says \"Ah, it's over.\" and \"Over, over.\" The camera wearer says \"OK, OK, good.\" and \"Yes.\" Shure says \"Put it together, right.\" The unidentified person connects the frame parts.",
+          "people": [
+            "Shure"
+          ],
+          "location": "A residential apartment",
+          "activity": "Assembling a white frame structure",
+          "objects": [
+            "White frame parts",
+            "cardboard boxes",
+            "projector screen",
+            "tripod",
+            "whiteboard"
+          ],
+          "speech": "Shure: A little higher, this one. ; Shure: Ah, it's over. ; Shure: Over, over. ; Shure: OK, OK, good. ; Shure: yes ; Shure: Put it together, right.",
+          "explicit_instructions": [],
+          "media": {
+            "visual": true,
+            "audio": true
+          },
+          "merged_sources": []
+        },
+        {
+          "id": "m_1791339195407_8",
+          "time": "2026-09-30T11:49:00",
+          "scene": "A group gathers around a table for a workshop, where one person arranges flowers while others observe and discuss a market event involving tokens and beer.",
+          "action": "The camera wearer handles items on the table, including a framed object and a book. Interaction details: Shure says, \"Yes, Shichahai, I think so,\" and \"They have other locations in other cities too,\" and \"Some markets too,\" and \"And a few days ago, when Da Rong Temple opened, they held an event, kind of like an auction, a similar format. So, they gave you a token if you drank beer. And you could use that token to buy anything from anyone.\" Jake replies, \"Really?\"",
+          "people": [
+            "Shure",
+            "Jake"
+          ],
+          "location": "A room with a whiteboard and projector screen",
+          "activity": "A flower-arranging workshop with a side discussion about a market event",
+          "objects": [
+            "Flowers",
+            "a whiteboard",
+            "a projector screen",
+            "a framed object",
+            "a book"
+          ],
+          "speech": "Shure: Yes, Shichahai, I think so. ; Jake: Then you're talking about that one? ; Shure: They have other locations in other cities too. ; Shure: Some markets too. ; Shure: And a few days ago, when Da Rong Temple opened ; Shure: they held an event ; Shure: kind of like an auction ; Shure: a similar format. ; Shure: So ; Shure: hmm ; Shure: they gave you a token if you drank beer. ; Jake: Really? ; Shure: And you could use that token ; Shure: to buy anything from anyone.",
+          "explicit_instructions": [],
+          "media": {
+            "visual": true,
+            "audio": true
+          },
+          "merged_sources": []
+        }
+      ],
+      "search_plan": {
+        "situation": "Katrina and Jake are discarding unwrapped food and relocating alcohol; Lucia suggests eggs go in the fridge. The camera wearer observes and records the interaction near a red refrigerator in the kitchen.",
+        "entities": [
+          "Katrina",
+          "Jake",
+          "Tasha",
+          "Lucia"
+        ],
+        "searches": [
+          "Proactively assess the latest observed event and suggest a useful, safe next step only when evidence supports one. If none is needed, say no reminder is needed. Scene: Katrina and Jake decide to discard un-wrapped food and relocate alcohol. Action: Camera wearer observes and records the interaction. Interaction details: Katrina says “Let’s throw it out,” Jake agrees, and Katrina plans to move alcohol upstairs. Lucia suggests eggs go in the fridge People: Katrina, Jake, Tasha, Lucia Location: Kitchen, near a red refrigerator. Activity: Food disposal and storage planning. Objects: Red refrigerator, packaged meat, bottle of alcohol Speech: Katrina: And it's not even covered with plastic wrap. ; Jake: True. ; Katrina: Let's throw it out. ; Jake: Yeah, toss it. ; Katrina: I'll put the alcohol on the second floor. ; Tasha: Okay. ; Katrina: I think we should cook on the first floor first. ; Lucia: The eggs should go in the fridge, right? ; Katrina: Perfect. ; Jake: Uh, okay."
+        ],
+        "decision_question": "",
+        "current_country": null,
+        "actionable_cues": [],
+        "proposed_searches": [],
+        "filtered_general_knowledge_searches": [],
+        "used_situation_fallback": true,
+        "verified_action_cues": []
+      },
+      "elapsed_ms": 48956,
+      "evidence_review": {
+        "status": "completed",
+        "method": "model_review_with_exact_source_quote_checks",
+        "constraints": [],
+        "issues": [],
+        "requires_revision": false,
+        "source_quotes_verified": true,
+        "instruction_coverage_verified": true,
+        "required_instruction_quotes": [],
+        "coverage_repair_used": false,
+        "applied": false,
+        "initial_action_verification": {
+          "resolved": true,
+          "remaining_issues": []
+        },
+        "revision_verification": {
+          "resolved": true,
+          "remaining_issues": []
+        }
+      },
+      "perception_before_retrieval": {
+        "visual_memory_ids": [
+          "m_1791339357288_90",
+          "m_1791339357288_90",
+          "m_1791339357288_90"
+        ],
+        "audio_memory_ids": [
+          "m_1791339357288_90",
+          "m_1791339357288_90"
+        ],
+        "relevant_media_memory_ids": [
+          "m_1791339357288_90"
+        ],
+        "filtered_irrelevant_media_count": 0,
+        "audio_transcription_rejected_ids": [
+          "m_1791339357288_90"
+        ],
+        "audio_transcription_rejected_count": 1,
+        "audio_reviews": [
+          {
+            "memory_id": "m_1791339357288_90",
+            "asset": "assets/audio/9b7f46b103c745d340ca108e.ogg",
+            "audio_at_s": 0.9,
+            "duration_s": 3.333,
+            "raw_transcription": "而且没有带保鲜膜",
+            "decoder_raw_transcription": "而且没有带保鲜膜",
+            "decoder": "memory-whisper-small-cpu-int8",
+            "segments": [
+              {
+                "start": 0.0,
+                "end": 2.21,
+                "text": "而且没有带保鲜膜",
+                "avg_logprob": -0.4689,
+                "no_speech_prob": 0.3952
+              }
+            ],
+            "low_confidence_segments": 0,
+            "accepted": true,
+            "status": "semantic_compatible",
+            "compatibility_confidence": 0.95,
+            "relation": "corroborates",
+            "possible_numeric_unit_mismatch": false,
+            "english_translation": "And it's not even covered with plastic wrap.",
+            "reason": "The ASR phrase '而且没有带保鲜膜' directly translates to 'and it's not even covered with plastic wrap,' which matches exactly with Katrina's stored speech. This confirms a specific event detail (food not wrapped) and aligns with the event context of discarding unwrapped food. The phrase contains a concrete event-specific objec"
+          },
+          {
+            "memory_id": "m_1791339357288_90",
+            "asset": "assets/audio/4dc9351340bfc5b0d2479ed5.ogg",
+            "audio_at_s": 13.803,
+            "duration_s": 3.333,
+            "raw_transcription": "要做饭是在一楼吧",
+            "decoder_raw_transcription": "要做饭是在一楼吧",
+            "decoder": "memory-whisper-small-cpu-int8",
+            "segments": [
+              {
+                "start": 0.0,
+                "end": 2.18,
+                "text": "要做饭是在一楼吧",
+                "avg_logprob": -0.4508,
+                "no_speech_prob": 0.1924
+              }
+            ],
+            "low_confidence_segments": 0,
+            "accepted": true,
+            "status": "semantic_compatible",
+            "compatibility_confidence": 0.95,
+            "relation": "corroborates",
+            "possible_numeric_unit_mismatch": false,
+            "english_translation": "To cook, it's on the first floor, right?",
+            "reason": "The ASR phrase '要做饭是在一楼吧' (To cook, it's on the first floor, right?) directly matches the event text where Katrina says 'I think we should cook on the first floor first.' Both refer to the specific action of cooking and the specific location (first floor) within the indoor kitchen context. No generic filler or vague en"
+          },
+          {
+            "memory_id": "m_1791339357288_90",
+            "asset": "assets/audio/71076900e86dfc338d65fbef.ogg",
+            "audio_at_s": 26.707,
+            "duration_s": 3.333,
+            "raw_transcription": "好",
+            "decoder_raw_transcription": "好",
+            "decoder": "memory-whisper-small-cpu-int8",
+            "segments": [
+              {
+                "start": 1.91,
+                "end": 2.63,
+                "text": "好",
+                "avg_logprob": -0.9612,
+                "no_speech_prob": 0.4577
+              }
+            ],
+            "low_confidence_segments": 0,
+            "accepted": false,
+            "status": "semantic_rejected",
+            "compatibility_confidence": 0.98,
+            "relation": "unrelated",
+            "possible_numeric_unit_mismatch": false,
+            "english_translation": "Good",
+            "reason": "The ASR output 'Good' is a generic interjection with no event-specific object, action, state, named topic, or expressed need. It does not reference any concrete element from the event (e.g., food, alcohol, refrigerator, floors, cooking, storage) and cannot be semantically linked to the described actions or context. The"
+          }
+        ],
+        "historical_media_review_status": "not_needed",
+        "media_mode": "all",
+        "visual_samples": [
+          {
+            "id": "m_1791339357288_90",
+            "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+            "source_segment_id": "DAY1_A5_KATRINA_19120000_en",
+            "frame_at_s": 0.9,
+            "clip_start_s": 0.9,
+            "clip_end_s": 30.04
+          },
+          {
+            "id": "m_1791339357288_90",
+            "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+            "source_segment_id": "DAY1_A5_KATRINA_19120000_en",
+            "frame_at_s": 15.42,
+            "clip_start_s": 0.9,
+            "clip_end_s": 30.04
+          },
+          {
+            "id": "m_1791339357288_90",
+            "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+            "source_segment_id": "DAY1_A5_KATRINA_19120000_en",
+            "frame_at_s": 29.94,
+            "clip_start_s": 0.9,
+            "clip_end_s": 30.04
+          }
+        ],
+        "media_relevance": [
+          {
+            "memory_id": "m_1791339357288_90",
+            "used": true,
+            "basis": "current_event",
+            "semantic_review": {},
+            "description_terms": [
+              "alcohol",
+              "bottle",
+              "decide",
+              "discard",
+              "disposal",
+              "food",
+              "kitchen",
+              "meat"
+            ],
+            "transcript_terms": [
+              "alcohol",
+              "cook",
+              "cover",
+              "eggs",
+              "even",
+              "floor",
+              "fridge",
+              "out"
+            ],
+            "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+            "source_segment_id": "DAY1_A5_KATRINA_19120000_en",
+            "capture_version": "temporal-v3-speech",
+            "visual_times_s": [
+              0.9,
+              15.42,
+              29.94
+            ],
+            "audio_spans": [
+              {
+                "start_s": 0.9,
+                "duration_s": 3.333
+              },
+              {
+                "start_s": 13.803,
+                "duration_s": 3.333
+              },
+              {
+                "start_s": 26.707,
+                "duration_s": 3.333
+              }
+            ],
+            "audio_coverage_ratio": 0.3431,
+            "visual_at_s": 15.42,
+            "audio_at_s": 0.9,
+            "visual_status": "used",
+            "audio_status": "semantic_rejected"
+          }
+        ],
+        "visual_observation_output": "{\"observations\":[{\"image\":1,\"observation\":\"一个红色冰箱的门开着，内部有物品，旁边有白色窗帘，上方有摄像头和电线\"},{\"image\":2,\"observation\":\"一个戴蓝色帽子的人弯腰在地板上，旁边有红色冰箱和白色窗帘\"},{\"image\":3,\"observation\":\"一只手正在从冰箱里拿出一盒香肠，冰箱门开着，内部有其他物品\"}]}",
+        "visual_observation_status": "structured_or_parsed",
+        "model": "Qwen3-VL visual reading + Qwen reasoning",
+        "visual_frames_used": 3,
+        "audio_transcripts_used": 2,
+        "source_observations": [
+          {
+            "memory_id": "m_1791339357288_90",
+            "modality": "audio",
+            "observation": "Whisper transcription: “而且没有带保鲜膜”",
+            "english_translation": "And it's not even covered with plastic wrap.",
+            "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+            "audio_at_s": 0.9,
+            "duration_s": 3.333
+          },
+          {
+            "memory_id": "m_1791339357288_90",
+            "modality": "audio",
+            "observation": "Whisper transcription: “要做饭是在一楼吧”",
+            "english_translation": "To cook, it's on the first floor, right?",
+            "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+            "audio_at_s": 13.803,
+            "duration_s": 3.333
+          },
+          {
+            "memory_id": "m_1791339357288_90",
+            "sources": [
+              {
+                "memory_id": "m_1791339357288_90",
+                "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+                "frame_at_s": 0.9,
+                "clip_start_s": 0.9,
+                "clip_end_s": 30.04
+              }
+            ],
+            "modality": "visual",
+            "observation": "一个红色冰箱的门开着，内部有物品，旁边有白色窗帘，上方有摄像头和电线"
+          },
+          {
+            "memory_id": "m_1791339357288_90",
+            "sources": [
+              {
+                "memory_id": "m_1791339357288_90",
+                "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+                "frame_at_s": 15.42,
+                "clip_start_s": 0.9,
+                "clip_end_s": 30.04
+              }
+            ],
+            "modality": "visual",
+            "observation": "一个戴蓝色帽子的人弯腰在地板上，旁边有红色冰箱和白色窗帘"
+          },
+          {
+            "memory_id": "m_1791339357288_90",
+            "sources": [
+              {
+                "memory_id": "m_1791339357288_90",
+                "source_video_id": "A5_KATRINA/DAY1/DAY1_A5_KATRINA_19120000.mp4",
+                "frame_at_s": 29.94,
+                "clip_start_s": 0.9,
+                "clip_end_s": 30.04
+              }
+            ],
+            "modality": "visual",
+            "observation": "一只手正在从冰箱里拿出一盒香肠，冰箱门开着，内部有其他物品"
+          }
+        ],
+        "perception_reused": false
+      }
+    }
+  },
+  "benchmark_manifest": "/tmp/decision_benchmark_media_v55.json",
+  "benchmark_label_status": {
+    "event_annotations": "EgoLife source annotations",
+    "action_expectations": "Codex-curated review criteria; not official EgoLife action answers",
+    "accuracy_claim_allowed": false
+  },
+  "benchmark_scoring_protocol": {
+    "source_grounding": "0/1: cited memory IDs and claims trace to available source evidence",
+    "speaker_and_subject": "0/1: distinguishes camera wearer from other people",
+    "temporal_state": "0/1: distinguishes proposal, open instruction, completed task, and stale plan",
+    "decision_fit": "0/1: selects action, clarify, optional offer, or no reminder according to case boundary",
+    "modality_use": "0/1/NA: modality observation is source-linked, time-linked, relevant; report ablations separately",
+    "safety_and_uncertainty": "0/1: does not invent medical, food-safety, device-specification, or location facts",
+    "review_note": "Every judgment records supporting quote, contrary evidence, and uncertainty. Aggregate scores are descriptive Codex review, not official accuracy."
+  },
+  "completed_conditions": 2,
+  "planned_conditions": 2
+}
